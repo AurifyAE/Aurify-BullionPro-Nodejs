@@ -1,0 +1,4555 @@
+import mongoose from "mongoose";
+import MetalTransaction from "../../models/modules/MetalTransaction.js";
+import Registry from "../../models/modules/Registry.js";
+import Account from "../../models/modules/AccountType.js";
+import { createAppError } from "../../utils/errorHandler.js";
+import InventoryLog from "../../models/modules/InventoryLog.js";
+import Inventory from "../../models/modules/inventory.js";
+import MetalStock from "../../models/modules/MetalStock.js";
+import InventoryService from "./inventoryService.js";
+
+class MetalTransactionService {
+  static async createMetalTransaction(transactionData, adminId) {
+    const session = await mongoose.startSession();
+    let createdTransaction;
+    try {
+      await session.withTransaction(async () => {
+
+        this.validateTransactionData(transactionData);
+
+        const [party, metalTransaction] = await Promise.all([
+          this.validateParty(transactionData.partyCode, session),
+          this.createTransaction(transactionData, adminId),
+        ]);
+
+        await metalTransaction.save({ session });
+        createdTransaction = metalTransaction;
+        await Promise.all([
+          this.createRegistryEntries(metalTransaction, party, adminId, session),
+          this.updateAccountBalances(party, metalTransaction, session),
+        ]);
+
+        return metalTransaction;
+      });
+
+      return await this.getMetalTransactionById(createdTransaction._id);
+    } catch (error) {
+      throw this.handleError(error);
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  static async validateParty(partyCode, session) {
+    const party = await Account.findById(partyCode)
+      .select("_id isActive accountCode customerName balances")
+      .session(session)
+      .lean();
+
+    if (!party?.isActive) {
+      throw createAppError("Party not found or inactive", 400, "INVALID_PARTY");
+    }
+    return party;
+  }
+
+  static createTransaction(transactionData, adminId) {
+    const transaction = new MetalTransaction({
+      ...transactionData,
+      createdBy: adminId,
+    });
+
+    if (!transactionData.totalAmountSession?.totalAmountAED) {
+      transaction.calculateSessionTotals();
+    }
+
+    return transaction;
+  }
+
+  static async createRegistryEntries(
+    metalTransaction,
+    party,
+    adminId,
+    session
+  ) {
+    const entries = this.buildRegistryEntries(metalTransaction, party, adminId);
+    if (entries.length === 0) return [];
+    return await Registry.insertMany(entries, { session, ordered: false });
+  }
+
+  static async deleteRegistryEntry(metalTransaction, session = null) {
+    try {
+      const query = Registry.deleteMany({
+        metalTransactionId: metalTransaction._id,
+      });
+
+      // Apply session if provided
+      if (session) {
+        query.session(session);
+      }
+
+      const result = await query;
+      console.log(`[DELETE_REGISTRY] Deleted ${result.deletedCount} registry entries for transaction ${metalTransaction._id}`);
+      return result;
+    } catch (error) {
+      console.error(`[DELETE_REGISTRY_ERROR] Failed to delete registry entries for transaction ${metalTransaction._id}`, error);
+      throw createAppError(
+        `Failed to delete registry entries: ${error.message}`,
+        500,
+        "DELETE_REGISTRY_FAILED"
+      );
+    }
+  }
+  static async deleteStcoks(voucherCode) {
+    try {
+      console.log(`[CLEANUP] Deleting data for voucher: ${voucherCode}`);
+      // Delete Inventory Logs
+      await InventoryLog.deleteMany({ voucherCode });
+      console.log(`[CLEANUP] Deletion complete for voucher: ${voucherCode}`);
+    } catch (error) {
+      console.error(`[CLEANUP_ERROR] Failed to delete data for voucher: ${voucherCode}`, error);
+      throw error;
+    }
+  }
+
+  static async updateInventory(transaction, isSale, admin) {
+    try {
+      const updated = [];
+
+      for (const item of transaction.stockItems || []) {
+        const metalId = item.stockCode?._id;
+        if (!metalId) continue;
+
+        const [inventory, metal] = await Promise.all([
+          Inventory.findOne({ metal: new mongoose.Types.ObjectId(metalId) }),
+          MetalStock.findById(metalId),
+        ]);
+
+        if (!inventory) {
+          throw createAppError(
+            `Inventory not found for metal: ${item.stockCode.code}`,
+            404,
+            "INVENTORY_NOT_FOUND"
+          );
+        }
+
+        const factor = isSale ? -1 : 1;
+        const pcsDelta = factor * (item.pieces || 0);
+        const weightDelta = factor * (item.grossWeight || 0);
+
+        // Optional: stock validation
+        // if (inventory.pcsCount + pcsDelta < 0 || inventory.grossWeight + weightDelta < 0) {
+        //   throw createAppError(`Insufficient stock for metal: ${metal.code}`, 400, "INSUFFICIENT_STOCK");
+        // }
+
+        inventory.pcsCount += pcsDelta;
+        inventory.grossWeight += weightDelta;
+        inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
+
+        await inventory.save();
+        updated.push(inventory);
+
+        // Inventory Log
+        await InventoryLog.create({
+          code: metal.code,
+          stockCode: metal._id,
+          voucherCode: transaction.voucherNumber || item.voucherNumber || '',
+          voucherDate: transaction.voucherDate || new Date(),
+          grossWeight: item.grossWeight || 0,
+          action: isSale ? "remove" : "add",
+          transactionType: transaction.transactionType || (isSale ? "sale" : "purchase"),
+          createdBy: transaction.createdBy || admin || null,
+          pcs: !!item.pieces,  // whether it's piece-based
+          note: isSale
+            ? "Inventory reduced due to sale transaction"
+            : "Inventory increased due to purchase transaction"
+        });
+      }
+
+      return updated;
+    } catch (error) {
+      if (error.name === "AppError") throw error;
+      throw createAppError(
+        error.message || "Failed to update inventory",
+        500,
+        "INVENTORY_UPDATE_FAILED"
+      );
+    }
+  }
+
+  static buildRegistryEntries(metalTransaction, party, adminId) {
+
+    const {
+      transactionType,
+      _id,
+      fixed,
+      unfix,
+      stockItems,
+      totalAmountSession,
+      voucherDate,
+      voucherNumber,
+      metalRateRequirements
+    } = metalTransaction;
+
+    const baseTransactionId = this.generateTransactionId();
+    const mode = this.getTransactionMode(fixed, unfix);
+
+    const entries = [];
+
+    // Loop over each stock item
+    for (let i = 0; i < stockItems.length; i++) {
+      const item = stockItems[i];
+      const totals = this.calculateTotals([item], totalAmountSession); // Pass only one item
+
+      switch (transactionType) {
+        case "purchase":
+          entries.push(
+            ...this.buildPurchaseEntries(
+              mode,
+              _id,
+              totals,
+              party,
+              baseTransactionId,
+              voucherDate,
+              voucherNumber,
+              adminId,
+              item // optionally pass item if needed
+            )
+          );
+          break;
+
+        case "sale":
+          entries.push(
+            ...this.buildSaleEntries(
+              mode,
+              _id,
+              totals,
+              party,
+              baseTransactionId,
+              voucherDate,
+              voucherNumber,
+              adminId,
+              item
+            )
+          );
+          break;
+
+        case "purchaseReturn":
+          entries.push(
+            ...this.buildPurchaseReturnEntries(
+              mode,
+              _id,
+              totals,
+              party,
+              baseTransactionId,
+              voucherDate,
+              voucherNumber,
+              adminId,
+              item
+            )
+          );
+          break;
+
+        case "saleReturn":
+          entries.push(
+            ...this.buildSaleReturnEntries(
+              mode,
+              _id,
+              totals,
+              party,
+              baseTransactionId,
+              voucherDate,
+              voucherNumber,
+              adminId,
+              item
+            )
+          );
+          break;
+      }
+    }
+
+    return entries.filter(Boolean);
+  }
+
+
+  static getTransactionMode(fixed, unfix) {
+    if (fixed && !unfix) return "fix";
+    if (unfix && !fixed) return "unfix";
+    if (!fixed && !unfix) return "unfix";
+    return "fix";
+  }
+
+  static buildPurchaseEntries(
+    mode,
+    metalTransactionId,
+    totals,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    return mode === "fix"
+      ? this.buildPurchaseFixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      )
+      : this.buildPurchaseUnfixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      );
+  }
+
+  static buildSaleEntries(
+    mode,
+    metalTransactionId,
+    totals,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    return mode === "fix"
+      ? this.buildSaleFixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      )
+      : this.buildSaleUnfixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      );
+  }
+
+  static buildPurchaseReturnEntries(
+    mode,
+    metalTransactionId,
+    totals,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    return mode === "fix"
+      ? this.buildPurchaseReturnFixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      )
+      : this.buildPurchaseReturnUnfixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      );
+  }
+
+  static buildSaleReturnEntries(
+    mode,
+    metalTransactionId,
+    totals,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    return mode === "fix"
+      ? this.buildSaleReturnFixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      )
+      : this.buildSaleReturnUnfixEntries(
+        totals,
+        metalTransactionId,
+        party,
+        baseTransactionId,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        item
+      );
+  }
+
+  static buildPurchaseFixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+
+
+    // Purchase-fixing entry
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "PARTY-GOLD",
+          "purchase-fixing",
+          `Party gold balance - Purchase from ${partyName}`,
+          party._id,
+          true,
+          totals.pureWeight,
+          totals.pureWeight,
+          {
+            debit: 0,
+            goldCredit: totals.pureWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.goldValue > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_CASH_BALANCE",
+          `Party cash balance - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.goldValue,
+          totals.goldValue,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "002",
+          "MAKING_CHARGES",
+          `Party making charges - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          totals.makingCharges,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          totals.otherChargesAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          totals.vatAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "PREMIUM",
+          `Party premium - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          totals.premium,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          0,
+          {
+            debit: totals.discount,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "GOLD",
+          `Gold inventory - Purchase from ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          0,
+          {
+            debit: totals.pureWeight,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD_STOCK",
+          `Gold stock - Purchase from ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          0,
+          {
+            debit: totals.grossWeight,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+
+  static buildPurchaseUnfixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+
+    // Party Gold Balance - CREDIT
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_GOLD_BALANCE",
+          `Party gold balance - Unfix purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.pureWeight,
+          totals.pureWeight,
+          { debit: 0, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+    // Making Charges - CREDIT
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "MAKING_CHARGES",
+          `Party making charges - Unfix purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          totals.makingCharges,
+          { debit: 0, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          totals.otherChargesAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          totals.vatAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    // Premium Discount - CREDIT
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "PREMIUM",
+          `Party premium - Unfix purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          totals.premium,
+          { debit: 0, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+    // Premium Discount - debit
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Unfix purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          0,
+          { debit: totals.discount, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    // Gold Inventory - DEBIT
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD",
+          `Gold inventory - Unfix purchase from ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          0,
+          { debit: totals.pureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+    // Gold Stock - DEBIT
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "GOLD_STOCK",
+          `Gold stock - Unfix purchase from ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          0,
+          {
+            debit: totals.grossWeight,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+
+  static buildPurchaseReturnFixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+    console.log('====================================');
+    console.log(totals);
+    console.log('====================================');
+    // Purchase-return-fixing entry
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "PARTY-GOLD",
+          "purchase-fixing",
+          `Party gold balance - Purchase return from ${partyName}`,
+          party._id,
+          true,
+          totals.pureWeight,
+          0,
+          {
+            debit: totals.pureWeight,
+            goldDebit: totals.pureWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.totalAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_CASH_BALANCE",
+          `Party cash balance - Purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.totalAmount,
+          0,
+          {
+            debit: totals.totalAmount,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "002",
+          "MAKING_CHARGES",
+          `Party making charges - Purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          0,
+          {
+            debit: totals.makingCharges,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          totals.otherChargesAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          0,
+          {
+            debit: totals.vatAmount,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "PREMIUM",
+          `Party premium - Purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          0,
+          {
+            debit: totals.premium,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          totals.discount,
+          {
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "GOLD",
+          `Gold inventory - Purchase return from ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          totals.pureWeight,
+          {
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD_STOCK",
+          `Gold stock - Purchase return from ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          totals.grossWeight,
+          {
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+
+  static buildPurchaseReturnUnfixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_GOLD_BALANCE",
+          `Party gold balance - Unfix purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.pureWeight,
+          0, {
+          debit: totals.pureWeight,
+          grossWeight: totals.grossWeight,
+          pureWeight: totals.pureWeight,
+          purity: totals.purity,
+          goldBidValue: totals.goldBidValue
+        },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "MAKING_CHARGES",
+          `Party making charges - Unfix purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          0,
+          {
+            debit: totals.makingCharges,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          0,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount - Purchase from ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          totals.vatAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "PREMIUM",
+          `Party premium - Unfix purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          0,
+          { debit: totals.premium, goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Unfix purchase return from ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          totals.discount,
+          {},
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD",
+          `Gold inventory - Unfix purchase return from ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          totals.pureWeight,
+          {},
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "GOLD_STOCK",
+          `Gold stock - Unfix purchase return from ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          totals.grossWeight,
+          {
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+
+  static buildSaleFixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+
+    // Sales-fixing entry
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "PARTY-GOLD",
+          "sales-fixing",
+          `Party gold balance - Sale to ${partyName}`,
+          party._id,
+          true,
+          totals.pureWeight,
+          0,
+          {
+            debit: totals.pureWeight,
+            goldDebit: totals.pureWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.totalAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_CASH_BALANCE",
+          `Party cash balance - Sale to ${partyName}`,
+          party._id,
+          false,
+          totals.totalAmount,
+          0,
+          {
+            debit: totals.totalAmount,
+            goldCredit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "002",
+          "MAKING_CHARGES",
+          `Party making charges - Sale to ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          0,
+          {
+            debit: totals.makingCharges,
+            goldCredit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges - sale to ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          0,
+          {
+            debit: totals.otherChargesAmount,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount - sale to ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          0,
+          {
+            debit: totals.vatAmount,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "PREMIUM",
+          `Party premium - Sale to ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          0,
+          {
+            debit: totals.premium,
+            goldCredit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Sale to ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          totals.discount,
+          {
+            goldCredit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "GOLD",
+          `Gold inventory - Sale to ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          totals.pureWeight,
+          {
+            goldCredit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD_STOCK",
+          `Gold stock - Sale to ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          totals.grossWeight,
+          {
+            goldCredit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+  static buildSaleUnfixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_GOLD_BALANCE",
+          `Party gold balance - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.pureWeight,
+          0,
+          {
+            debit: totals.pureWeight,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "MAKING_CHARGES",
+          `Party making charges - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          0,
+          {
+            debit: totals.makingCharges,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          0,
+          {
+            debit: totals.otherChargesAmount,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          0,
+          {
+            debit: totals.vatAmount,
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "PREMIUM",
+          `Party premium - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          0,
+          {
+            debit: totals.premium,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          totals.discount,
+          {
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD",
+          `Gold inventory - Unfix Sale return from ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          totals.pureWeight,
+          {
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "GOLD_STOCK",
+          `Gold stock - Unfix Sale return from ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          totals.grossWeight,
+          {
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+  static buildSaleReturnUnfixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_GOLD_BALANCE",
+          `Party gold balance - Unfix sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.pureWeight,
+          totals.pureWeight,
+          { grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "MAKING_CHARGES",
+          `Party making charges - Unfix sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          totals.makingCharges,
+          { grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          totals.otherChargesAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount - Unfix Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          totals.vatAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "PREMIUM",
+          `Party premium - Unfix sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          totals.premium,
+          { grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Unfix sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          0,
+          { debit: totals.discount, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD",
+          `Gold inventory - Unfix sale return from ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          0,
+          { debit: totals.pureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "GOLD_STOCK",
+          `Gold stock - Unfix sale return from ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          0,
+          {
+            debit: totals.grossWeight,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+
+  static buildSaleReturnFixEntries(
+    totals,
+    metalTransactionId,
+    party,
+    baseTransactionId,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    item
+  ) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+
+    // Sale-return-fixing entry
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "PARTY-GOLD",
+          "sale-fixing",
+          `Party gold balance - Sale return from ${partyName}`,
+          party._id,
+          true,
+          totals.pureWeight,
+          totals.pureWeight,
+          {
+            debit: 0,
+            goldCredit: totals.pureWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.totalAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "001",
+          "PARTY_CASH_BALANCE",
+          `Party cash balance - Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.totalAmount,
+          totals.totalAmount,
+          {
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.makingCharges > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "002",
+          "MAKING_CHARGES",
+          `Party making charges - Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.makingCharges,
+          totals.makingCharges,
+          {
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+    if (totals.otherChargesAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "008",
+          "OTHER_CHARGES",
+          `${item.otherCharges.description} charges -  Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.otherChargesAmount,
+          totals.otherChargesAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.vatAmount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "009",
+          "VAT_AMOUNT",
+          `Party Vat amount -  Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.vatAmount,
+          totals.vatAmount,
+          {
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.premium > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "003",
+          "PREMIUM",
+          `Party premium - Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.premium,
+          totals.premium,
+          {
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.discount > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "007",
+          "DISCOUNT",
+          `Party discount - Sale return from ${partyName}`,
+          party._id,
+          false,
+          totals.discount,
+          0,
+          {
+            debit: totals.discount,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.pureWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "004",
+          "GOLD",
+          `Gold inventory - Sale return from ${partyName}`,
+          null,
+          true,
+          totals.pureWeight,
+          0,
+          {
+            debit: totals.pureWeight,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            purity: totals.purity,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.grossWeight > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "005",
+          "GOLD_STOCK",
+          `Gold stock - Sale return from ${partyName}`,
+          null,
+          true,
+          totals.grossWeight,
+          0,
+          {
+            debit: totals.grossWeight,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries;
+  }
+
+  static calculateTotals(stockItems, totalAmountSession) {
+
+    const totals = stockItems.reduce(
+      (acc, item) => {
+        const makingChargesAmount =
+          item.itemTotal?.makingChargesTotal || item.makingCharges?.amount || 0;
+        const premiumDiscountAmount =
+          item.itemTotal?.premiumTotal || item.premium?.amount || 0;
+        const vatAmount = item.vat?.amount;
+        const otherChargesAmount = item.otherCharges?.amount;
+        const goldValue = item.itemTotal?.baseAmount || 0;
+        const pureWeight = item.pureWeight || 0;
+        const purity = item.purity || 0;
+        const grossWeight = item.grossWeight || 0;
+        const premium = premiumDiscountAmount > 0 ? premiumDiscountAmount : 0;
+        const discount =
+          premiumDiscountAmount < 0 ? Math.abs(premiumDiscountAmount) : 0;
+
+        return {
+          makingCharges: acc.makingCharges + makingChargesAmount,
+          premium: acc.premium + premium,
+          vatAmount: acc.vatAmount + vatAmount,
+          otherChargesAmount: acc.otherChargesAmount + otherChargesAmount,
+          premium: acc.premium + premium,
+          discount: acc.discount + discount,
+          goldValue: acc.goldValue + goldValue,
+          pureWeight: acc.pureWeight + pureWeight,
+          grossWeight: acc.grossWeight + grossWeight,
+          purity: acc.purity + purity,
+          goldBidValue: acc.goldBidValue || item.metalRateRequirements?.rate || 0, // Take the first valid goldBidValue
+        };
+      },
+      {
+        makingCharges: 0,
+        premium: 0,
+        discount: 0,
+        goldValue: 0,
+        pureWeight: 0,
+        grossWeight: 0,
+        purity: 0,
+        vatAmount: 0,
+        otherChargesAmount: 0,
+        goldBidValue: 0,
+      }
+    );
+
+    totals.totalAmount = totalAmountSession?.totalAmountAED || 0;
+    return totals;
+  }
+
+  static createRegistryEntry(
+    baseId,
+    metalTransactionId,
+    suffix,
+    type,
+    description,
+    partyId,
+    isBullion,
+    value,
+    credit,
+    {
+      cashDebit = 0,
+      goldCredit = 0,
+      cashCredit = 0,
+      goldDebit = 0,
+      debit = 0,
+      grossWeight,
+      pureWeight,
+      purity,
+      goldBidValue
+    } = {},
+    voucherDate,
+    reference,
+    adminId
+  ) {
+
+    if (value <= 0 && !["sales-fixing", "sale-return-fixing"].includes(type))
+      return null;
+
+    return {
+      transactionId: `${baseId}-${suffix}`,
+      metalTransactionId,
+      type,
+      description,
+      party: partyId,
+      isBullion,
+      value: parseFloat(value) || 0,
+      credit: parseFloat(credit) || 0,
+      cashDebit: parseFloat(cashDebit) || 0,
+      goldCredit: parseFloat(goldCredit) || 0,
+      cashCredit: parseFloat(cashCredit) || 0,
+      goldDebit: parseFloat(goldDebit) || 0,
+      debit: parseFloat(debit) || 0,
+      goldBidValue: goldBidValue,
+      transactionDate: new Date() || voucherDate,
+      reference,
+      createdBy: adminId,
+      createdAt: new Date(),
+      grossWeight,   // ✅ now it will come from the destructured params correctly
+      pureWeight,
+      purity,
+    };
+  }
+
+  static async updateAccountBalances(party, metalTransaction, session) {
+    const { transactionType, fixed, unfix, stockItems, totalAmountSession } = metalTransaction;
+    const totals = this.calculateTotals(stockItems, totalAmountSession);
+    const mode = this.getTransactionMode(fixed, unfix);
+    const balanceChanges = this.calculateBalanceChanges(
+      transactionType,
+      mode,
+      totals
+    );
+    const updateOps = this.buildUpdateOperations(balanceChanges);
+
+    if (Object.keys(updateOps).length > 0) {
+      await Account.findByIdAndUpdate(party._id, updateOps, {
+        session,
+        new: true,
+      });
+    }
+  }
+
+  static buildUpdateOperations(balanceChanges) {
+
+    const incObj = {};
+    const setObj = {};
+
+    if (balanceChanges.goldBalance !== 0) {
+      incObj["balances.goldBalance.totalGrams"] = balanceChanges.goldBalance;
+      incObj["balances.goldBalance.totalValue"] = balanceChanges.goldValue;
+      setObj["balances.goldBalance.lastUpdated"] = new Date();
+    }
+
+    const netCashChange =
+      balanceChanges.cashBalance +
+      balanceChanges.premiumBalance +
+      // balanceChanges.otherCharges +
+      balanceChanges.discountBalance;
+
+    if (netCashChange !== 0) {
+      incObj["balances.cashBalance.amount"] = parseFloat(
+        netCashChange.toFixed(2)
+      );
+      setObj["balances.cashBalance.lastUpdated"] = new Date();
+    }
+
+    setObj["balances.lastBalanceUpdate"] = new Date();
+
+    const updateOps = {};
+    if (Object.keys(incObj).length > 0) updateOps.$inc = incObj;
+    if (Object.keys(setObj).length > 0) updateOps.$set = setObj;
+
+    return updateOps;
+  }
+
+  static calculateBalanceChanges(transactionType, mode, totals) {
+    const balanceMatrix = {
+      purchase: {
+        unfix: {
+          goldBalance: totals.pureWeight,
+          goldValue: totals.goldValue,
+          cashBalance: totals.makingCharges,
+          premiumBalance: totals.premium,
+          discountBalance: -totals.discount,
+          otherCharges: totals.otherChargesAmount,
+        },
+        fix: {
+          goldBalance: 0,
+          goldValue: 0,
+          cashBalance: totals.totalAmount,
+          premiumBalance: 0,
+          discountBalance: 0,
+          otherCharges: 0,
+        },
+      },
+      sale: {
+        unfix: {
+          goldBalance: -totals.pureWeight,
+          goldValue: -totals.goldValue,
+          cashBalance: -totals.makingCharges,
+          otherCharges: -totals.otherChargesAmount,
+          premiumBalance: -totals.premium,
+          discountBalance: totals.discount,
+        },
+        fix: {
+          goldBalance: 0,
+          goldValue: 0,
+          cashBalance: -totals.totalAmount,
+          premiumBalance: 0,
+          discountBalance: 0,
+          otherCharges: 0
+        },
+      },
+      purchaseReturn: {
+        unfix: {
+          goldBalance: -totals.pureWeight,
+          goldValue: -totals.goldValue,
+          cashBalance: -totals.makingCharges,
+          otherCharges: -totals.otherChargesAmount,
+          premiumBalance: -totals.premium,
+          discountBalance: totals.discount,
+        },
+        fix: {
+          goldBalance: 0,
+          goldValue: 0,
+          cashBalance: -totals.totalAmount,
+          premiumBalance: 0,
+          discountBalance: 0,
+          otherCharges: 0
+        },
+      },
+      saleReturn: {
+        unfix: {
+          goldBalance: totals.pureWeight,
+          goldValue: totals.goldValue,
+          cashBalance: totals.makingCharges,
+          otherCharges: totals.otherChargesAmount,
+          premiumBalance: totals.premium,
+          discountBalance: -totals.discount,
+        },
+        fix: {
+          goldBalance: 0,
+          goldValue: 0,
+          cashBalance: totals.totalAmount,
+          premiumBalance: 0,
+          discountBalance: 0,
+          otherCharges: 0
+        },
+      },
+    };
+
+    return (
+      balanceMatrix[transactionType]?.[mode] || {
+        goldBalance: 0,
+        goldValue: 0,
+        cashBalance: 0,
+        otherCharges: 0,
+        premiumBalance: 0,
+        discountBalance: 0,
+      }
+    );
+  }
+
+  static generateTransactionId() {
+    const timestamp = Date.now();
+    const currentYear = new Date().getFullYear();
+    const randomNum = Math.floor(Math.random() * 900) + 100;
+    return `TXN-${currentYear}-${randomNum}`;
+  }
+
+  static handleError(error) {
+    if (error.name === "ValidationError") {
+      const errors = Object.values(error.errors).map((err) => err.message);
+      throw createAppError(
+        `Validation failed: ${errors.join(", ")}`,
+        400,
+        "VALIDATION_ERROR"
+      );
+    }
+
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      throw createAppError(
+        `Duplicate ${field} detected`,
+        409,
+        "DUPLICATE_TRANSACTION"
+      );
+    }
+
+    if (error.name === "CastError") {
+      throw createAppError(
+        "Invalid data format provided",
+        400,
+        "INVALID_DATA_FORMAT"
+      );
+    }
+
+    if (error.name === "MongoNetworkError") {
+      throw createAppError(
+        "Database connection error",
+        503,
+        "DATABASE_CONNECTION_ERROR"
+      );
+    }
+
+    if (error.statusCode) {
+      throw error;
+    }
+
+    throw createAppError(
+      "Internal server error occurred",
+      500,
+      "INTERNAL_SERVER_ERROR"
+    );
+  }
+
+  static validateTransactionData(transactionData, adminId) {
+    const required = [
+      "partyCode",
+      "transactionType",
+      "stockItems",
+      "voucherDate",
+      "voucherNumber",
+    ];
+    const missing = required.filter((field) => !transactionData[field]);
+
+    if (missing.length > 0) {
+      throw createAppError(
+        `Missing required fields: ${missing.join(", ")}`,
+        400,
+        "MISSING_REQUIRED_FIELDS"
+      );
+    }
+
+    if (
+      !["purchase", "sale", "purchaseReturn", "saleReturn"].includes(
+        transactionData.transactionType
+      )
+    ) {
+      throw createAppError(
+        "Transaction type must be 'purchase', 'sale', 'purchaseReturn', or 'saleReturn'",
+        400,
+        "INVALID_TRANSACTION_TYPE"
+      );
+    }
+
+    if (
+      !Array.isArray(transactionData.stockItems) ||
+      transactionData.stockItems.length === 0
+    ) {
+      throw createAppError(
+        "Stock items must be a non-empty array",
+        400,
+        "INVALID_STOCK_ITEMS"
+      );
+    }
+
+    // Validate ObjectIds
+    const objectIdFields = [
+      { field: "partyCode", value: transactionData.partyCode },
+      { field: "partyCurrency", value: transactionData.partyCurrency },
+      { field: "itemCurrency", value: transactionData.itemCurrency },
+      { field: "baseCurrency", value: transactionData.baseCurrency },
+      { field: "adminId", value: adminId },
+    ];
+
+    objectIdFields.forEach(({ field, value }) => {
+      if (value && !mongoose.isValidObjectId(value)) {
+        throw createAppError(
+          `Invalid ${field} format`,
+          400,
+          `INVALID_${field.toUpperCase()}`
+        );
+      }
+    });
+
+    // Validate stockItems
+    transactionData.stockItems.forEach((item, index) => {
+      if (!item.stockCode || !mongoose.isValidObjectId(item.stockCode)) {
+        throw createAppError(
+          `Invalid stockCode for stock item at index ${index}`,
+          400,
+          "INVALID_STOCK_CODE"
+        );
+      }
+      if (item.metalRate && !mongoose.isValidObjectId(item.metalRate)) {
+        throw createAppError(
+          `Invalid metalRate for stock item at index ${index}`,
+          400,
+          "INVALID_METAL_RATE"
+        );
+      }
+      // Validate numeric fields
+      if (typeof item.pureWeight !== "number" || item.pureWeight < 0) {
+        throw createAppError(
+          `Invalid pureWeight for stock item at index ${index}`,
+          400,
+          "INVALID_PURE_WEIGHT"
+        );
+      }
+      if (typeof item.grossWeight !== "number" || item.grossWeight < 0) {
+        throw createAppError(
+          `Invalid grossWeight for stock item at index ${index}`,
+          400,
+          "INVALID_GROSS_WEIGHT"
+        );
+      }
+      if (typeof item.purity !== "number" || item.purity <= 0 || item.purity > 1) {
+        throw createAppError(
+          `Invalid purity for stock item at index ${index}`,
+          400,
+          "INVALID_PURITY"
+        );
+      }
+    });
+
+    return true;
+  }
+
+  static async createBulkMetalTransactions(transactionsData, adminId) {
+    const results = [];
+    const errors = [];
+
+    for (let i = 0; i < transactionsData.length; i++) {
+      try {
+        const result = await this.createMetalTransaction(
+          transactionsData[i],
+          adminId
+        );
+        results.push({ index: i, success: true, data: result });
+      } catch (error) {
+        errors.push({ index: i, success: false, error: error.message });
+      }
+    }
+
+    return { results, errors, totalProcessed: transactionsData.length };
+  }
+
+  static getPremiumDiscountBreakdown(stockItems) {
+    return stockItems.reduce(
+      (acc, item) => {
+        const premiumDiscountAmount =
+          item.itemTotal?.premiumTotal || item.premium?.amount || 0;
+
+        if (premiumDiscountAmount > 0) {
+          acc.totalPremium += premiumDiscountAmount;
+          acc.premiumItems.push({
+            stockCode: item.stockCode,
+            amount: premiumDiscountAmount,
+            type: "premium",
+          });
+        } else if (premiumDiscountAmount < 0) {
+          const discountAmount = Math.abs(premiumDiscountAmount);
+          acc.totalDiscount += discountAmount;
+          acc.discountItems.push({
+            stockCode: item.stockCode,
+            amount: discountAmount,
+            type: "discount",
+          });
+        }
+
+        return acc;
+      },
+      {
+        totalPremium: 0,
+        totalDiscount: 0,
+        premiumItems: [],
+        discountItems: [],
+      }
+    );
+  }
+
+  static validatePremiumDiscount(stockItems) {
+    const invalidItems = [];
+
+    stockItems.forEach((item, index) => {
+      const premiumDiscountAmount =
+        item.itemTotal?.premiumTotal || item.premium?.amount;
+
+      if (premiumDiscountAmount !== undefined && isNaN(premiumDiscountAmount)) {
+        invalidItems.push({
+          index,
+          stockCode: item.stockCode,
+          error: "Premium/Discount must be a valid number",
+        });
+      }
+    });
+
+    if (invalidItems.length > 0) {
+      throw createAppError(
+        `Invalid premium/discount values found: ${invalidItems
+          .map(
+            (item) =>
+              `Item ${item.index + 1} (${item.stockCode}): ${item.error}`
+          )
+          .join(", ")}`,
+        400,
+        "INVALID_PREMIUM_DISCOUNT"
+      );
+    }
+
+    return true;
+  }
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // Get all metal transactions with pagination and filters
+  static async getAllMetalTransactions(page = 1, limit = 50, filters = {}) {
+    const skip = (page - 1) * limit;
+    const query = { isActive: true };
+
+    if (filters.transactionType)
+      query.transactionType = filters.transactionType;
+    if (filters.partyCode) query.partyCode = filters.partyCode;
+    if (filters.status) query.status = filters.status;
+    if (filters.stockCode) query["stockItems.stockCode"] = filters.stockCode;
+    if (filters.startDate && filters.endDate) {
+      query.voucherDate = {
+        $gte: new Date(filters.startDate),
+        $lte: new Date(filters.endDate),
+      };
+    }
+
+    const transactions = await MetalTransaction.find(query)
+      .populate("partyCode", "accountCode customerName ")
+      .populate("partyCurrency", "code symbol")
+      .populate("itemCurrency", "code symbol")
+      .populate("baseCurrency", "code symbol")
+      .populate("stockItems.stockCode", "code description specifications")
+      .populate("stockItems.metalRate", "metalType rate effectiveDate")
+      .populate("createdBy", "name email")
+      .populate("updatedBy", "name email")
+      .sort({ voucherDate: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await MetalTransaction.countDocuments(query);
+
+    return {
+      transactions,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  // Get metal transaction by ID
+  static async getMetalTransactionById(transactionId) {
+    const transaction = await MetalTransaction.findById(transactionId)
+      .populate("partyCode", "accountCode customerName addresses")
+      .populate("partyCurrency", "code symbol")
+      .populate("itemCurrency", "code symbol")
+      .populate("baseCurrency", "code symbol")
+      .populate("stockItems.stockCode", "code description specifications")
+      .populate("stockItems.metalRate", "metalType rate effectiveDate")
+      .populate("createdBy", "name email")
+      .populate("updatedBy", "name email");
+
+    if (!transaction || !transaction.isActive) {
+      throw createAppError(
+        "Metal transaction not found",
+        404,
+        "TRANSACTION_NOT_FOUND"
+      );
+    }
+
+    return transaction;
+  }
+
+  // Get transactions by party
+  static async getTransactionsByParty(
+    partyId,
+    limit = 50,
+    transactionType = null
+  ) {
+    const query = { partyCode: partyId, isActive: true };
+    if (transactionType) query.transactionType = transactionType;
+
+    return MetalTransaction.find(query)
+      .populate("partyCode", "name code")
+      .populate("partyCurrency", "code symbol")
+      .populate("itemCurrency", "code symbol")
+      .populate("stockItems.stockCode", "code description")
+      .populate("stockItems.metalRate", "metalType rate")
+      .populate("createdBy", "name email")
+      .sort({ voucherDate: -1, createdAt: -1 })
+      .limit(limit);
+  }
+  static async getUnfixedTransactions(page = 1, limit = 50, filters = {}) {
+    const skip = (page - 1) * limit;
+    const query = {
+      isActive: true,
+      unfix: true, // Show only transactions where unfix is true
+    };
+
+    // Apply filters
+    if (filters.transactionType) {
+      query.transactionType = filters.transactionType;
+    }
+    if (filters.partyCode) {
+      query.partyCode = filters.partyCode;
+    }
+    if (filters.status) {
+      query.status = filters.status;
+    }
+    if (filters.startDate && filters.endDate) {
+      query.voucherDate = {
+        $gte: new Date(filters.startDate),
+        $lte: new Date(filters.endDate),
+      };
+    }
+
+    // Find transactions but only populate specific party fields
+    const transactions = await MetalTransaction.find(query)
+      .populate({
+        path: "partyCode",
+        select:
+          "accountCode customerName addresses balances.goldBalance.totalGrams balances.cashBalance.amount limitsMargins.shortMargin",
+      })
+      .sort({ voucherDate: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await MetalTransaction.countDocuments(query);
+
+    // Extract unique party data with only required fields
+    const partyDataMap = new Map();
+    transactions.forEach((transaction) => {
+      if (transaction.partyCode && transaction.partyCode._id) {
+        const partyId = transaction.partyCode._id.toString();
+        if (!partyDataMap.has(partyId)) {
+          const party = transaction.partyCode;
+
+          // Find primary address or fallback to first address
+          const primaryAddress =
+            party.addresses?.find((addr) => addr.isPrimary === true) ||
+            party.addresses?.[0];
+
+          // Transform party data to include only required fields
+          const transformedParty = {
+            _id: party._id,
+            accountCode: party.accountCode,
+            customerName: party.customerName,
+            email: primaryAddress?.email || null,
+            phone: primaryAddress?.phoneNumber1 || null,
+            goldBalance: {
+              totalGrams: party.balances?.goldBalance?.totalGrams || 0,
+            },
+            cashBalance: party.balances?.cashBalance?.amount || 0,
+            shortMargin: party.limitsMargins?.[0]?.shortMargin || 0,
+          };
+
+          partyDataMap.set(partyId, transformedParty);
+        }
+      }
+    });
+
+    const uniquePartyData = Array.from(partyDataMap.values());
+
+    return {
+      parties: uniquePartyData,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1,
+      },
+      summary: {
+        totalUnfixedTransactions: total,
+        totalPurchases: transactions.filter(
+          (t) => t.transactionType === "purchase"
+        ).length,
+        totalSales: transactions.filter((t) => t.transactionType === "sale")
+          .length,
+        totalParties: uniquePartyData.length,
+      },
+    };
+  }
+
+  // Get unfixed transactions with detailed account information
+  static async getUnfixedTransactionsWithAccounts(
+    page = 1,
+    limit = 50,
+    filters = {}
+  ) {
+    const skip = (page - 1) * limit;
+    const matchStage = {
+      isActive: true,
+      isFixed: false, // Assuming you have an isFixed field
+    };
+
+    // Apply filters to match stage
+    if (filters.transactionType) {
+      matchStage.transactionType = filters.transactionType;
+    }
+    if (filters.partyCode) {
+      matchStage.partyCode = new mongoose.Types.ObjectId(filters.partyCode);
+    }
+    if (filters.status) {
+      matchStage.status = filters.status;
+    }
+    if (filters.startDate && filters.endDate) {
+      matchStage.voucherDate = {
+        $gte: new Date(filters.startDate),
+        $lte: new Date(filters.endDate),
+      };
+    }
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $lookup: {
+          from: "accounts", // Your account collection name
+          localField: "partyCode",
+          foreignField: "_id",
+          as: "accountDetails",
+        },
+      },
+      {
+        $unwind: "$accountDetails",
+      },
+      {
+        $lookup: {
+          from: "currencymasters",
+          localField: "partyCurrency",
+          foreignField: "_id",
+          as: "partyCurrencyDetails",
+        },
+      },
+      {
+        $lookup: {
+          from: "currencymasters",
+          localField: "itemCurrency",
+          foreignField: "_id",
+          as: "itemCurrencyDetails",
+        },
+      },
+      {
+        $lookup: {
+          from: "currencymasters",
+          localField: "baseCurrency",
+          foreignField: "_id",
+          as: "baseCurrencyDetails",
+        },
+      },
+      {
+        $lookup: {
+          from: "currencymasters",
+          localField: "accountDetails.balances.goldBalance.currency",
+          foreignField: "_id",
+          as: "goldCurrencyDetails",
+        },
+      },
+      {
+        $lookup: {
+          from: "currencymasters",
+          localField: "accountDetails.balances.cashBalance.currency",
+          foreignField: "_id",
+          as: "cashCurrencyDetails",
+        },
+      },
+      {
+        $project: {
+          // Transaction fields
+          _id: 1,
+          transactionType: 1,
+          voucherDate: 1,
+          voucherNumber: 1,
+          status: 1,
+          isFixed: 1,
+          stockItems: 1,
+          totalAmountSession: 1,
+          createdAt: 1,
+          updatedAt: 1,
+
+          // Account information
+          accountInfo: {
+            id: "$accountDetails._id",
+            accountCode: "$accountDetails.accountCode",
+            customerName: "$accountDetails.customerName",
+            email: "$accountDetails.email",
+            phone: "$accountDetails.phone",
+            isActive: "$accountDetails.isActive",
+          },
+
+          // Gold Balance
+          goldBalance: {
+            totalGrams: "$accountDetails.balances.goldBalance.totalGrams",
+            totalValue: "$accountDetails.balances.goldBalance.totalValue",
+            currency: {
+              $arrayElemAt: [
+                {
+                  $map: {
+                    input: "$goldCurrencyDetails",
+                    as: "curr",
+                    in: {
+                      code: "$$curr.code",
+                      symbol: "$$curr.symbol",
+                    },
+                  },
+                },
+                0,
+              ],
+            },
+            lastUpdated: "$accountDetails.balances.goldBalance.lastUpdated",
+          },
+
+          // Cash Balance (array)
+          cashBalance: {
+            $map: {
+              input: "$accountDetails.balances.cashBalance",
+              as: "cash",
+              in: {
+                amount: "$$cash.amount",
+                currency: {
+                  $let: {
+                    vars: {
+                      currencyMatch: {
+                        $arrayElemAt: [
+                          {
+                            $filter: {
+                              input: "$cashCurrencyDetails",
+                              cond: { $eq: ["$$this._id", "$$cash.currency"] },
+                            },
+                          },
+                          0,
+                        ],
+                      },
+                    },
+                    in: {
+                      code: "$$currencyMatch.code",
+                      symbol: "$$currencyMatch.symbol",
+                    },
+                  },
+                },
+                lastUpdated: "$$cash.lastUpdated",
+              },
+            },
+          },
+
+          // Limits and Margins
+          limitsMargins: {
+            $map: {
+              input: "$accountDetails.limitsMargins",
+              as: "limit",
+              in: {
+                creditDaysAmt: "$$limit.creditDaysAmt",
+                creditDaysMtl: "$$limit.creditDaysMtl",
+                shortMargin: "$$limit.shortMargin",
+                longMargin: "$$limit.longMargin",
+              },
+            },
+          },
+
+          // Currency details
+          currencies: {
+            party: { $arrayElemAt: ["$partyCurrencyDetails", 0] },
+            item: { $arrayElemAt: ["$itemCurrencyDetails", 0] },
+            base: { $arrayElemAt: ["$baseCurrencyDetails", 0] },
+          },
+        },
+      },
+      {
+        $sort: { voucherDate: -1, createdAt: -1 },
+      },
+      {
+        $facet: {
+          data: [{ $skip: skip }, { $limit: limit }],
+          totalCount: [{ $count: "count" }],
+        },
+      },
+    ];
+
+    const result = await MetalTransaction.aggregate(pipeline);
+    const transactions = result[0].data || [];
+    const totalCount = result[0].totalCount[0]?.count || 0;
+
+    return {
+      transactions,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalCount / limit),
+        totalItems: totalCount,
+        hasNext: page < Math.ceil(totalCount / limit),
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  // Update metal transaction
+  static async updateMetalTransaction(transactionId, updateData, adminId) {
+    const session = await mongoose.startSession();
+    let transaction;
+
+    try {
+      // Start transaction
+      await session.startTransaction();
+      console.log(`[UPDATE_TRANSACTION] Starting update for transaction ${transactionId}`);
+
+      // Validate inputs
+      this.validateUpdateInputs(transactionId, updateData, adminId);
+
+      // Fetch the existing transaction
+      transaction = await MetalTransaction.findById(transactionId).session(session);
+      if (!transaction || !transaction.isActive) {
+        throw createAppError(
+          "Metal transaction not found or inactive",
+          404,
+          "TRANSACTION_NOT_FOUND"
+        );
+      }
+
+      // Store original transaction data for reversal
+      const originalData = {
+        ...transaction.toObject(),
+        partyCode: transaction.partyCode.toString(),
+      };
+
+      // Check if party is changing
+      const isPartyChanged =
+        updateData?.partyCode &&
+        transaction.partyCode.toString() !== updateData.partyCode.toString();
+
+      // Fetch parties
+      const [oldParty, newParty] = await this.fetchParties(
+        originalData.partyCode,
+        updateData?.partyCode,
+        isPartyChanged,
+        session
+      );
+
+      // Apply updates to transaction
+      this.applyTransactionUpdates(transaction, updateData);
+
+      // Recalculate session totals if necessary
+      if (updateData?.stockItems || updateData?.totalAmountSession) {
+        console.log(`[UPDATE_TRANSACTION] Recalculating session totals for transaction ${transactionId}`);
+        transaction.calculateSessionTotals();
+      }
+
+      // Save updated transaction
+      transaction.updatedBy = adminId;
+      await transaction.save({ session });
+      console.log(`[UPDATE_TRANSACTION] Transaction ${transactionId} updated`);
+
+      // Handle registry and balance updates
+      await this.handleRegistryAndBalances(
+        transaction,
+        originalData,
+        oldParty,
+        newParty,
+        adminId,
+        session,
+        isPartyChanged,
+        updateData
+      );
+      // Commit transaction
+      console.log(`[UPDATE_TRANSACTION] Committing transaction for ${transactionId}`);
+      await session.commitTransaction();
+
+      // Fetch and return final transaction
+      const finalTransaction = await this.getMetalTransactionById(transactionId);
+      console.log(`[UPDATE_TRANSACTION] Update completed successfully for transaction ${transactionId}`);
+      return finalTransaction;
+    } catch (error) {
+      console.error(`[UPDATE_TRANSACTION_ERROR] Error updating transaction ${transactionId}:`, {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+        transactionId,
+        adminId,
+        updateData: updateData ? JSON.stringify(updateData, null, 2) : 'undefined',
+      });
+
+      await session.abortTransaction();
+      throw this.handleError(
+        createAppError(
+          error.message || "Failed to update metal transaction",
+          error.statusCode || 500,
+          error.code || "UPDATE_TRANSACTION_FAILED",
+          {
+            transactionId,
+            adminId,
+            updateData: updateData || null, // Safely handle undefined updateData
+          }
+        )
+      );
+    } finally {
+      console.log(`[UPDATE_TRANSACTION] Ending session for transaction ${transactionId}`);
+      await session.endSession();
+    }
+  }
+  // Helper methods for updateMetalTransaction
+  static validateUpdateInputs(transactionId, updateData, adminId) {
+    console.log(`[VALIDATE_INPUTS] Validating inputs for transaction ${transactionId}`, {
+      transactionId,
+      adminId,
+      updateData: updateData ? JSON.stringify(updateData, null, 2) : 'undefined',
+    });
+
+    if (!mongoose.isValidObjectId(transactionId)) {
+      throw createAppError("Invalid transaction ID", 400, "INVALID_TRANSACTION_ID");
+    }
+    if (!mongoose.isValidObjectId(adminId)) {
+      throw createAppError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
+    }
+    if (!updateData || typeof updateData !== 'object') {
+      throw createAppError("Update data must be a valid object", 400, "INVALID_UPDATE_DATA");
+    }
+    if (Object.keys(updateData).length === 0) {
+      throw createAppError("No update data provided", 400, "NO_UPDATE_DATA");
+    }
+    if (updateData.partyCode && !mongoose.isValidObjectId(updateData.partyCode)) {
+      throw createAppError("Invalid party code", 400, "INVALID_PARTY_CODE");
+    }
+    if (updateData.stockItems && (!Array.isArray(updateData.stockItems) || updateData.stockItems.length === 0)) {
+      throw createAppError("Stock items must be a non-empty array", 400, "INVALID_STOCK_ITEMS");
+    }
+  }
+
+  static async fetchParties(oldPartyId, newPartyId, isPartyChanged, session) {
+    const oldParty = await Account.findById(oldPartyId).session(session);
+    if (!oldParty || !oldParty.isActive) {
+      throw createAppError(
+        `Party ${oldPartyId} not found or inactive`,
+        404,
+        "PARTY_NOT_FOUND"
+      );
+    }
+
+    let newParty = oldParty;
+    if (isPartyChanged) {
+      newParty = await Account.findById(newPartyId).session(session);
+      if (!newParty || !newParty.isActive) {
+        throw createAppError(
+          `New party ${newPartyId} not found or inactive`,
+          400,
+          "NEW_PARTY_NOT_FOUND"
+        );
+      }
+      console.log(
+        `[UPDATE_TRANSACTION] Party changed from ${oldParty.customerName} (${oldParty.accountCode}) ` +
+        `to ${newParty.customerName} (${newParty.accountCode})`
+      );
+    }
+
+    return [oldParty, newParty];
+  }
+
+  static applyTransactionUpdates(transaction, updateData) {
+    // Update only allowed fields
+    const allowedFields = [
+      'partyCode',
+      'stockItems',
+      'totalAmountSession',
+      'voucherDate',
+      'voucherNumber',
+      'transactionType',
+      'fixed',
+      'unfix'
+    ];
+
+    for (const [key, value] of Object.entries(updateData)) {
+      if (allowedFields.includes(key)) {
+        transaction[key] = value;
+      }
+    }
+  }
+
+  static async handleRegistryAndBalances(
+    transaction,
+    originalData,
+    oldParty,
+    newParty,
+    adminId,
+    session,
+    isPartyChanged,
+    updateData
+  ) {
+    if (transaction.stockItems.length === 0) {
+      throw createAppError(
+        "Transaction must have at least one stock item",
+        400,
+        "MINIMUM_STOCK_ITEMS_REQUIRED"
+      );
+    }
+
+    // Delete old registry entries and stocks
+    console.log(`[UPDATE_TRANSACTION] Deleting old registry entries and stocks for transaction ${transaction._id}`);
+    await Promise.all([
+      this.deleteRegistryEntry(transaction, session),
+      this.deleteStocks(transaction.voucherNumber, session),
+    ]);
+
+
+    // minus the old blancees fist , take it from the metaltransaction itself
+   this.updateTradeDebtorsBalances(oldParty._id, originalData, session, false, true);
+
+    // Create new registry entries
+    console.log(`[UPDATE_TRANSACTION] Creating new registry entries for transaction ${transaction._id}`);
+    const newRegistryEntries = this.buildRegistryEntries(transaction, newParty, adminId);
+    let party = newParty;
+    if (isPartyChanged) {
+      party = newParty;
+    } else {
+      party = oldParty;
+    }
+
+    // minus the old balances
+    this.updateAccountBalances(party, transaction, session);
+    if (newRegistryEntries.length > 0) {
+      await Registry.insertMany(newRegistryEntries, { session, ordered: false });
+      console.log(`[UPDATE_TRANSACTION] Inserted ${newRegistryEntries.length} new registry entries`);
+    }
+
+    // Update inventory based on transaction type
+    switch (transaction.transactionType) {
+      case "purchase":
+      case "saleReturn":
+        await InventoryService.updateInventory(transaction, false, adminId, session);
+        break;
+      case "sale":
+      case "purchaseReturn":
+        await InventoryService.updateInventory(transaction, true, adminId, session);
+        break;
+      default:
+        throw createAppError("Invalid transaction type", 400, "INVALID_TRANSACTION_TYPE");
+    }
+
+    // Reverse old party balances if necessary
+    if (isPartyChanged || updateData.stockItems || updateData.totalAmountSession) {
+      console.log(`[UPDATE_TRANSACTION] Reversing balances for old party ${oldParty._id}`);
+      // await this.validatePartyBalances(oldParty, {
+      //   ...transaction.toObject(),
+      //   ...originalData,
+      // }, true);
+      // await this.updateTradeDebtorsBalances(
+      //   oldParty._id,
+      //   { ...transaction.toObject(), ...originalData },
+      //   session,
+      //   false,
+      //   true
+      // );
+
+      // Apply new party balances
+      console.log(`[UPDATE_TRANSACTION] Applying balances for new party ${newParty._id}`);
+      // await this.updateTradeDebtorsBalances(newParty._id, transaction, session, true);
+    } else {
+      console.log(`[UPDATE_TRANSACTION] No balance-affecting fields updated for transaction ${transaction._id}`);
+    }
+  }
+  static async updateReverseAccountBalances(party, originalData, session) {
+    try {
+      // MINUS THE OLD BALANCES
+      const { transactionType, fixed, unfix, stockItems, totalAmountSession } = originalData;
+      const totals = this.calculateTotals(stockItems, totalAmountSession);
+      const mode = this.getTransactionMode(fixed, unfix);
+      const balanceChanges = this.calculateBalanceChanges(
+        transactionType,
+        mode,
+        totals
+      );
+      console.log(`[BALANCE_UPDATE] Reversing balances for party: ${party._id}`, { balanceChanges });
+
+      party.balances.goldBalance.totalGrams -= balanceChanges.goldBalance;
+      party.balances.goldBalance.totalValue -= balanceChanges.goldValue;
+      party.balances.cashBalance.amount -=
+        balanceChanges.cashBalance +
+        balanceChanges.premiumBalance +
+        balanceChanges.discountBalance;
+      party.balances.cashBalance.lastUpdated = new Date();
+
+      await party.save({ session });
+
+    } catch (error) {
+      console.error(`[BALANCE_UPDATE_ERROR] Failed to reverse balances for party: ${party._id}`, error);
+      throw createAppError(
+        `Failed to reverse balances: ${error.message}`,
+        500,
+        "REVERSE_BALANCES_FAILED"
+      );
+    }
+  }
+
+  static async deleteStocks(voucherCode, session = null) {
+    try {
+      console.log(`[CLEANUP] Deleting inventory logs for voucher: ${voucherCode}`);
+      const query = InventoryLog.deleteMany({ voucherCode });
+
+      // Apply session if provided
+      if (session) {
+        query.session(session);
+      }
+
+      const result = await query;
+      console.log(`[CLEANUP] Deleted ${result.deletedCount} inventory logs for voucher: ${voucherCode}`);
+      return result;
+    } catch (error) {
+      console.error(`[CLEANUP_ERROR] Failed to delete inventory logs for voucher: ${voucherCode}`, error);
+      throw createAppError(
+        `Failed to delete inventory logs: ${error.message}`,
+        500,
+        "DELETE_STOCKS_FAILED"
+      );
+    }
+  }
+
+  // [NEW] Validate party balances before reversal
+  static async validatePartyBalances(party, transaction, isReversal = false) {
+    const { transactionType, stockItems, totalAmountSession } = transaction;
+    const totals = this.calculateTotals(stockItems, totalAmountSession);
+    const mode = this.getTransactionMode(transaction.fixed, transaction.unfix);
+
+    const balanceChanges = this.calculateBalanceChanges(
+      transactionType,
+      mode,
+      totals
+    );
+
+    if (isReversal) {
+      // Check if party has sufficient balances to reverse the transaction
+      const goldBalance = party.balances.goldBalance.totalGrams || 0;
+      const cashBalance = party.balances.cashBalance.amount || 0;
+
+      // For reversal, negate the balance changes
+      const requiredGoldBalance = -balanceChanges.goldBalance;
+      const requiredCashBalance = -(
+        balanceChanges.cashBalance +
+        balanceChanges.premiumBalance +
+        balanceChanges.discountBalance
+      );
+
+      // if (requiredGoldBalance > goldBalance) {
+      //   throw createAppError(
+      //     `Insufficient gold balance for reversal: ${goldBalance}g available, ${requiredGoldBalance}g required`,
+      //     400,
+      //     "INSUFFICIENT_GOLD_BALANCE"
+      //   );
+      // }
+
+      // if (requiredCashBalance > cashBalance) {
+      //   throw createAppError(
+      //     `Insufficient cash balance for reversal: ${cashBalance} AED available, ${requiredCashBalance} AED required`,
+      //     400,
+      //     "INSUFFICIENT_CASH_BALANCE"
+      //   );
+      // }
+    }
+  }
+
+  // Delete metal transaction (soft delete)
+  static async deleteMetalTransaction(transactionId, adminId) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+
+      const transaction = await MetalTransaction.findById(
+        transactionId
+      ).session(session);
+      if (!transaction || !transaction.isActive) {
+        throw createAppError(
+          "Metal transaction not found",
+          404,
+          "TRANSACTION_NOT_FOUND"
+        );
+      }
+      await this.deleteRegistryEntry(transaction);
+
+      // update the stocks
+
+      const party = await Account.findById(transaction.partyCode).session(
+        session
+      );
+
+      await this.updateTradeDebtorsBalances(
+        party._id,
+        transaction,
+        session,
+        false,
+        true
+      );
+
+      // hard delete metalTransaction
+      await MetalTransaction.deleteOne({ _id: transactionId }).session(session);
+
+      await session.commitTransaction();
+      return { message: "Metal transaction deleted successfully" };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Add stock item
+  static async addStockItem(transactionId, stockItemData, adminId) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+
+      const transaction = await MetalTransaction.findById(
+        transactionId
+      ).session(session);
+      if (!transaction || !transaction.isActive) {
+        throw createAppError(
+          "Metal transaction not found",
+          404,
+          "TRANSACTION_NOT_FOUND"
+        );
+      }
+
+      transaction.addStockItem(stockItemData);
+      transaction.calculateSessionTotals();
+      transaction.updatedBy = adminId;
+      await transaction.save({ session });
+
+      const party = await Account.findById(transaction.partyCode).session(
+        session
+      );
+      const tempTransaction = {
+        ...transaction.toObject(),
+        stockItems: [stockItemData],
+      };
+      await this.createCompleteRegistryEntries(
+        tempTransaction,
+        party,
+        adminId,
+        session
+      );
+      await this.updateTradeDebtorsBalances(
+        party._id,
+        tempTransaction,
+        session
+      );
+
+      await session.commitTransaction();
+      return await this.getMetalTransactionById(transactionId);
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Update stock item
+  static async updateStockItem(
+    transactionId,
+    stockItemId,
+    updateData,
+    adminId
+  ) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+
+      const transaction = await MetalTransaction.findById(
+        transactionId
+      ).session(session);
+      if (!transaction || !transaction.isActive) {
+        throw createAppError(
+          "Metal transaction not found",
+          404,
+          "TRANSACTION_NOT_FOUND"
+        );
+      }
+
+      const stockItem = transaction.getStockItem(stockItemId);
+      if (!stockItem) {
+        throw createAppError(
+          "Stock item not found",
+          404,
+          "STOCK_ITEM_NOT_FOUND"
+        );
+      }
+
+      Object.assign(stockItem, updateData);
+      transaction.calculateSessionTotals();
+      transaction.updatedBy = adminId;
+      await transaction.save({ session });
+
+      const party = await Account.findById(transaction.partyCode).session(
+        session
+      );
+      await this.createCompleteRegistryEntries(
+        transaction,
+        party,
+        adminId,
+        session
+      );
+
+      await session.commitTransaction();
+      return await this.getMetalTransactionById(transactionId);
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Remove stock item
+  static async removeStockItem(transactionId, stockItemId, adminId) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+
+      const transaction = await MetalTransaction.findById(
+        transactionId
+      ).session(session);
+      if (!transaction || !transaction.isActive) {
+        throw createAppError(
+          "Metal transaction not found",
+          404,
+          "TRANSACTION_NOT_FOUND"
+        );
+      }
+
+      transaction.removeStockItem(stockItemId);
+      if (transaction.stockItems.length === 0) {
+        throw createAppError(
+          "Transaction must have at least one stock item",
+          400,
+          "MINIMUM_STOCK_ITEMS_REQUIRED"
+        );
+      }
+
+      transaction.calculateSessionTotals();
+      transaction.updatedBy = adminId;
+      await transaction.save({ session });
+
+      await session.commitTransaction();
+      return await this.getMetalTransactionById(transactionId);
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Update session totals
+  static async updateSessionTotals(
+    transactionId,
+    totalAmountSession,
+    vatPercentage = 0,
+    adminId
+  ) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+
+      const transaction = await MetalTransaction.findById(
+        transactionId
+      ).session(session);
+      if (!transaction || !transaction.isActive) {
+        throw createAppError(
+          "Metal transaction not found",
+          404,
+          "TRANSACTION_NOT_FOUND"
+        );
+      }
+
+      if (totalAmountSession) {
+        transaction.totalAmountSession = {
+          ...transaction.totalAmountSession,
+          ...totalAmountSession,
+        };
+      }
+
+      if (vatPercentage > 0) {
+        const netAmount = transaction.totalAmountSession.netAmountAED || 0;
+        const vatAmount = (netAmount * vatPercentage) / 100;
+        transaction.totalAmountSession.vatAmount = vatAmount;
+        transaction.totalAmountSession.vatPercentage = vatPercentage;
+        transaction.totalAmountSession.totalAmountAED = netAmount + vatAmount;
+      }
+
+      transaction.updatedBy = adminId;
+      await transaction.save({ session });
+
+      await session.commitTransaction();
+      return await this.getMetalTransactionById(transactionId);
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Calculate and update session totals
+  static async calculateAndUpdateSessionTotals(
+    transactionId,
+    vatPercentage = 0,
+    adminId
+  ) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+
+      const transaction = await MetalTransaction.findById(
+        transactionId
+      ).session(session);
+      if (!transaction || !transaction.isActive) {
+        throw createAppError(
+          "Metal transaction not found",
+          404,
+          "TRANSACTION_NOT_FOUND"
+        );
+      }
+
+      transaction.calculateSessionTotals();
+      if (vatPercentage > 0) {
+        const netAmount = transaction.totalAmountSession.netAmountAED || 0;
+        const vatAmount = (netAmount * vatPercentage) / 100;
+        transaction.totalAmountSession.vatAmount = vatAmount;
+        transaction.totalAmountSession.vatPercentage = vatPercentage;
+        transaction.totalAmountSession.totalAmountAED = netAmount + vatAmount;
+      }
+
+      transaction.updatedBy = adminId;
+      await transaction.save({ session });
+
+      await session.commitTransaction();
+      return await this.getMetalTransactionById(transactionId);
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  // Get transaction statistics
+  static async getTransactionStatistics(filters = {}) {
+    const matchStage = { isActive: true };
+    if (filters.transactionType)
+      matchStage.transactionType = filters.transactionType;
+    if (filters.partyCode)
+      matchStage.partyCode = new mongoose.Types.ObjectId(filters.partyCode);
+    if (filters.startDate && filters.endDate) {
+      matchStage.voucherDate = {
+        $gte: new Date(filters.startDate),
+        $lte: new Date(filters.endDate),
+      };
+    }
+
+    const stats = await MetalTransaction.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: null,
+          totalTransactions: { $sum: 1 },
+          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
+          totalNetAmount: { $sum: "$totalAmountSession.netAmountAED" },
+          totalVatAmount: { $sum: "$totalAmountSession.vatAmount" },
+          averageTransactionAmount: {
+            $avg: "$totalAmountSession.totalAmountAED",
+          },
+          purchaseCount: {
+            $sum: { $cond: [{ $eq: ["$transactionType", "purchase"] }, 1, 0] },
+          },
+          saleCount: {
+            $sum: { $cond: [{ $eq: ["$transactionType", "sale"] }, 1, 0] },
+          },
+          purchaseAmount: {
+            $sum: {
+              $cond: [
+                { $eq: ["$transactionType", "purchase"] },
+                "$totalAmountSession.totalAmountAED",
+                0,
+              ],
+            },
+          },
+          saleAmount: {
+            $sum: {
+              $cond: [
+                { $eq: ["$transactionType", "sale"] },
+                "$totalAmountSession.totalAmountAED",
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const statusBreakdown = await MetalTransaction.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
+        },
+      },
+    ]);
+
+    return {
+      overview: stats[0] || {
+        totalTransactions: 0,
+        totalAmount: 0,
+        totalNetAmount: 0,
+        totalVatAmount: 0,
+        averageTransactionAmount: 0,
+        purchaseCount: 0,
+        saleCount: 0,
+        purchaseAmount: 0,
+        saleAmount: 0,
+      },
+      statusBreakdown: statusBreakdown.reduce((acc, item) => {
+        acc[item._id] = { count: item.count, totalAmount: item.totalAmount };
+        return acc;
+      }, {}),
+    };
+  }
+
+  // Get profit/loss analysis
+  static async getProfitLossAnalysis(filters = {}) {
+    const matchStage = { isActive: true };
+    if (filters.partyCode)
+      matchStage.partyCode = new mongoose.Types.ObjectId(filters.partyCode);
+    if (filters.stockCode)
+      matchStage["stockItems.stockCode"] = new mongoose.Types.ObjectId(
+        filters.stockCode
+      );
+    if (filters.startDate && filters.endDate) {
+      matchStage.voucherDate = {
+        $gte: new Date(filters.startDate),
+        $lte: new Date(filters.endDate),
+      };
+    }
+
+    const analysis = await MetalTransaction.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: "$transactionType",
+          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
+          totalNetAmount: { $sum: "$totalAmountSession.netAmountAED" },
+          transactionCount: { $sum: 1 },
+          totalWeight: { $sum: { $sum: "$stockItems.weightInOz" } },
+          averageRate: {
+            $avg: { $avg: "$stockItems.metalRateRequirements.rate" },
+          },
+        },
+      },
+    ]);
+
+    const purchases = analysis.find((item) => item._id === "purchase") || {
+      totalAmount: 0,
+      totalNetAmount: 0,
+      transactionCount: 0,
+      totalWeight: 0,
+      averageRate: 0,
+    };
+
+    const sales = analysis.find((item) => item._id === "sale") || {
+      totalAmount: 0,
+      totalNetAmount: 0,
+      transactionCount: 0,
+      totalWeight: 0,
+      averageRate: 0,
+    };
+
+    const grossProfit = sales.totalNetAmount - purchases.totalNetAmount;
+    const profitMargin =
+      sales.totalNetAmount > 0 ? (grossProfit / sales.totalNetAmount) * 100 : 0;
+
+    return {
+      purchases: { ...purchases, _id: undefined },
+      sales: { ...sales, _id: undefined },
+      profitLoss: {
+        grossProfit,
+        profitMargin,
+        totalRevenue: sales.totalAmount,
+        totalCost: purchases.totalAmount,
+        netProfit: sales.totalAmount - purchases.totalAmount,
+      },
+    };
+  }
+
+  // Updated Registry helper methods with enhanced logic
+  static async createCompleteRegistryEntries(
+    transaction,
+    party,
+    adminId,
+    session
+  ) {
+    const registryEntries = [];
+    const transactionId = `TXN-${new Date().getFullYear()}-${Math.floor(Math.random() * 900) + 100
+      }`;
+
+    // Calculate totals for charges
+    let totalMakingCharges = 0;
+    let totalPremiumAmount = 0;
+    let totalPureWeight = 0;
+    let totalStockValue = 0;
+
+    // Process each stock item
+    for (const stockItem of transaction.stockItems) {
+      const pureWeight = stockItem.pureWeight || 0;
+      const itemValue = stockItem.itemTotal?.itemTotalAmount || 0;
+      const makingCharges = stockItem.makingCharges?.amount || 0;
+      const premiumAmount = stockItem.premium?.amount || 0;
+
+      totalPureWeight += pureWeight;
+      totalStockValue += itemValue;
+      totalMakingCharges += makingCharges;
+      totalPremiumAmount += premiumAmount;
+
+      const isPurchase = transaction.transactionType === "purchase";
+      const isSale = transaction.transactionType === "sale";
+      const isPurchaseReturn = transaction.transactionType === "purchaseReturn";
+      const isSaleReturn = transaction.transactionType === "saleReturn";
+
+      // Gold Entry
+      registryEntries.push(
+        new Registry({
+          transactionId: transactionId,
+          type: "gold",
+          description: `${isPurchaseReturn
+            ? "Purchase Return"
+            : isSaleReturn
+              ? "Sale Return"
+              : transaction.transactionType
+            } - ${stockItem.description || "Metal Item"}`,
+          paryty: transaction.partyCode,
+          value: pureWeight,
+          debit: isSale || isPurchaseReturn ? pureWeight : 0,
+          credit: isPurchase || isSaleReturn ? pureWeight : 0,
+          transactionDate: new Date(),
+          reference: `Stock-${stockItem._id}`,
+          createdBy: adminId,
+        })
+      );
+
+      // Stock Balance Entry
+      registryEntries.push(
+        new Registry({
+          transactionId: transactionId,
+          type: "stock_balance",
+          description: `${isPurchaseReturn
+            ? "Purchase Return"
+            : isSaleReturn
+              ? "Sale Return"
+              : transaction.transactionType
+            } Stock Balance - ${stockItem.description || "Metal Item"}`,
+          paryty: transaction.partyCode,
+          value: pureWeight,
+          debit: isSale || isPurchaseReturn ? pureWeight : 0,
+          credit: isPurchase || isSaleReturn ? pureWeight : 0,
+          transactionDate: new Date(),
+          reference: `Stock-${stockItem._id}`,
+          createdBy: adminId,
+        })
+      );
+    }
+
+    // Making Charges Entry
+    if (totalMakingCharges > 0) {
+
+      registryEntries.push(
+        new Registry({
+          transactionId: transactionId,
+          type: "MAKING_CHARGES",
+          description: `${transaction.transactionType === "purchaseReturn"
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
+            } - Making Charges`,
+          paryty: transaction.partyCode,
+          value: totalMakingCharges,
+          debit:
+            transaction.transactionType === "sale" ||
+              transaction.transactionType === "purchaseReturn"
+              ? totalMakingCharges
+              : 0,
+          credit:
+            transaction.transactionType === "purchase" ||
+              transaction.transactionType === "saleReturn"
+              ? totalMakingCharges
+              : 0,
+          transactionDate: new Date(),
+          reference: `MakingCharges-${transaction._id}`,
+          createdBy: adminId,
+        })
+      );
+    }
+
+    if (totalOtherCharges > 0) {
+      registryEntries.push(
+        new Registry({
+          transactionId: transactionId,
+          type: "OTHER_CHARGES",
+          description: `${transaction.transactionType === "purchaseReturn"
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
+            } - Other Charges`,
+          paryty: transaction.partyCode,
+          value: totalOtherCharges,
+          debit:
+            transaction.transactionType === "sale" ||
+              transaction.transactionType === "purchaseReturn"
+              ? totalOtherCharges
+              : 0,
+          credit:
+            transaction.transactionType === "purchase" ||
+              transaction.transactionType === "saleReturn"
+              ? totalOtherCharges
+              : 0,
+          transactionDate: new Date(),
+          reference: `OtherCharges-${transaction._id}`,
+          createdBy: adminId,
+        })
+      );
+    }
+
+    if (totalVatAmount > 0) {
+      registryEntries.push(
+        new Registry({
+          transactionId: transactionId,
+          type: "VAT_AMOUNT",
+          description: `${transaction.transactionType === "purchaseReturn"
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
+            } - VAT Amount`,
+          paryty: transaction.partyCode,
+          value: totalVatAmount,
+          debit:
+            transaction.transactionType === "sale" ||
+              transaction.transactionType === "purchaseReturn"
+              ? totalVatAmount
+              : 0,
+          credit:
+            transaction.transactionType === "purchase" ||
+              transaction.transactionType === "saleReturn"
+              ? totalVatAmount
+              : 0,
+          transactionDate: new Date(),
+          reference: `VatAmount-${transaction._id}`,
+          createdBy: adminId,
+        })
+      );
+    }
+
+
+    // Premium Entry
+    if (totalPremiumAmount > 0) {
+      registryEntries.push(
+        new Registry({
+          transactionId: transactionId,
+          type: "premium",
+          description: `${transaction.transactionType === "purchaseReturn"
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
+            } - Premium Amount`,
+          paryty: transaction.partyCode,
+          value: totalPremiumAmount,
+          debit:
+            transaction.transactionType === "sale" ||
+              transaction.transactionType === "purchaseReturn"
+              ? totalPremiumAmount
+              : 0,
+          credit:
+            transaction.transactionType === "purchase" ||
+              transaction.transactionType === "saleReturn"
+              ? totalPremiumAmount
+              : 0,
+          transactionDate: new Date(),
+          reference: `Premium-${transaction._id}`,
+          createdBy: adminId,
+        })
+      );
+    }
+
+    // Party Gold Balance Entry
+    registryEntries.push(
+      new Registry({
+        transactionId: transactionId,
+        type: "party_gold_balance",
+        description: `${transaction.transactionType === "purchaseReturn"
+          ? "Purchase Return"
+          : transaction.transactionType === "saleReturn"
+            ? "Sale Return"
+            : transaction.transactionType
+          } - Party Gold Balance`,
+        paryty: transaction.partyCode,
+        value: totalPureWeight,
+        debit:
+          transaction.transactionType === "purchase" ||
+            transaction.transactionType === "saleReturn"
+            ? totalPureWeight
+            : 0,
+        credit:
+          transaction.transactionType === "sale" ||
+            transaction.transactionType === "purchaseReturn"
+            ? totalPureWeight
+            : 0,
+        transactionDate: new Date(),
+        reference: `PartyGold-${transaction._id}`,
+        createdBy: adminId,
+      })
+    );
+
+    // Party Cash Balance Entry
+    const totalAmountAED = transaction.totalAmountSession?.totalAmountAED || 0;
+    if (totalAmountAED > 0) {
+      registryEntries.push(
+        new Registry({
+          transactionId: transactionId,
+          type: "party_cash_balance",
+          description: `${transaction.transactionType === "purchaseReturn"
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
+            } - Party Cash Balance`,
+          paryty: transaction.partyCode,
+          value: totalAmountAED,
+          debit:
+            transaction.transactionType === "sale" ||
+              transaction.transactionType === "purchaseReturn"
+              ? totalAmountAED
+              : 0,
+          credit:
+            transaction.transactionType === "purchase" ||
+              transaction.transactionType === "saleReturn"
+              ? totalAmountAED
+              : 0,
+          transactionDate: new Date(),
+          reference: `PartyCash-${transaction._id}`,
+          createdBy: adminId,
+        })
+      );
+    }
+
+    // Insert all registry entries
+    if (registryEntries.length > 0) {
+      await Registry.insertMany(registryEntries, { session });
+    }
+  }
+  static async createReversalRegistryEntries(
+    transaction,
+    party,
+    adminId,
+    session
+  ) {
+    // Use buildRegistryEntries to get the original entries
+    const originalEntries = this.buildRegistryEntries(
+      transaction,
+      party,
+      adminId
+    );
+
+    // Reverse the entries by swapping debit and credit
+    const reversalEntries = originalEntries.map((entry) => ({
+      ...entry,
+      transactionId: `${entry.transactionId}-REV`,
+      description: `REVERSAL - ${entry.description}`,
+      debit: entry.credit, // Swap debit and credit
+      credit: entry.debit,
+      transactionDate: new Date(), // Use current date for reversal
+      reference: `REV-${entry.reference}`,
+      createdAt: new Date(),
+    }));
+
+    // Insert reversal entries
+    if (reversalEntries.length > 0) {
+      await Registry.insertMany(reversalEntries, { session, ordered: false });
+    }
+  }
+
+  static async updateTradeDebtorsBalances(
+    partyId,
+    transaction,
+    session,
+    isUpdate = false,
+    isReversal = false
+  ) {
+    const party = await Account.findById(partyId).session(session);
+    if (!party) {
+      throw createAppError("Party not found", 404, "PARTY_NOT_FOUND");
+    }
+
+    // Calculate balance changes using the provided transaction
+    const { transactionType, stockItems, totalAmountSession, fixed, unfix } =
+      transaction;
+    const totals = this.calculateTotals(stockItems, totalAmountSession);
+    const mode = this.getTransactionMode(fixed, unfix);
+    const balanceChanges = this.calculateBalanceChanges(
+      transactionType,
+      mode,
+      totals
+    );
+
+    // Log balance update details
+    console.log(
+      `Updating balances for party ${party.customerName} (${party.accountCode})`,
+      {
+        transactionType,
+        isReversal,
+        isUpdate,
+        transactionId: transaction._id,
+        balanceChanges,
+      }
+    );
+
+    // Initialize update operations
+    const updateOps = { $set: {}, $inc: {} };
+
+    // Handle Gold Balance Updates
+    if (balanceChanges.goldBalance !== 0 || balanceChanges.goldValue !== 0) {
+      if (isReversal) {
+        // Reverse gold balance changes
+        updateOps.$inc["balances.goldBalance.totalGrams"] =
+          -balanceChanges.goldBalance;
+        updateOps.$inc["balances.goldBalance.totalValue"] =
+          -balanceChanges.goldValue;
+      } else {
+        // Apply gold balance changes
+        updateOps.$inc["balances.goldBalance.totalGrams"] =
+          balanceChanges.goldBalance;
+        updateOps.$inc["balances.goldBalance.totalValue"] =
+          balanceChanges.goldValue;
+      }
+      updateOps.$set["balances.goldBalance.lastUpdated"] = new Date();
+    }
+
+    // Handle Cash Balance Updates (including making charges, premium, and discount)
+    const netCashChange =
+      balanceChanges.cashBalance +
+      balanceChanges.premiumBalance +
+      balanceChanges.discountBalance;
+    if (netCashChange !== 0) {
+      if (isReversal) {
+        // Reverse cash balance changes
+        updateOps.$inc["balances.cashBalance.amount"] = -netCashChange;
+      } else {
+        // Apply cash balance changes
+        updateOps.$inc["balances.cashBalance.amount"] = netCashChange;
+      }
+      updateOps.$set["balances.cashBalance.lastUpdated"] = new Date();
+    }
+
+    // Update last transaction date and balance summary
+    updateOps.$set["balances.lastTransactionDate"] = new Date();
+    updateOps.$set["balances.summary"] = {
+      totalOutstanding:
+        (party.balances.cashBalance.amount || 0) +
+        (updateOps.$inc["balances.cashBalance.amount"] || 0),
+      goldHoldings:
+        (party.balances.goldBalance.totalGrams || 0) +
+        (updateOps.$inc["balances.goldBalance.totalGrams"] || 0),
+      lastUpdated: new Date(),
+    };
+
+    // Log balance before and after
+    console.log(`Before balance update:`, {
+      goldBalance: party.balances.goldBalance,
+      cashBalance: party.balances.cashBalance,
+    });
+
+    // Apply updates
+    if (
+      Object.keys(updateOps.$inc).length > 0 ||
+      Object.keys(updateOps.$set).length > 0
+    ) {
+      await Account.findByIdAndUpdate(partyId, updateOps, {
+        session,
+        new: true,
+      });
+    }
+
+    console.log(`After balance update:`, {
+      goldBalance: {
+        totalGrams:
+          (party.balances.goldBalance.totalGrams || 0) +
+          (updateOps.$inc["balances.goldBalance.totalGrams"] || 0),
+        totalValue:
+          (party.balances.goldBalance.totalValue || 0) +
+          (updateOps.$inc["balances.goldBalance.totalValue"] || 0),
+      },
+      cashBalance: {
+        amount:
+          (party.balances.cashBalance.amount || 0) +
+          (updateOps.$inc["balances.cashBalance.amount"] || 0),
+      },
+      summary: updateOps.$set["balances.summary"],
+    });
+
+    await party.save({ session });
+  }
+
+  // Get party balance summary
+  static async getPartyBalanceSummary(partyId) {
+    const party = await Account.findById(partyId)
+      .populate("balances.goldBalance.currency", "code symbol")
+      .populate("balances.cashBalance.currency", "code symbol");
+
+    if (!party || !party.isActive) {
+      throw createAppError(
+        "Party not found or inactive",
+        404,
+        "PARTY_NOT_FOUND"
+      );
+    }
+
+    return {
+      partyInfo: {
+        id: party._id,
+        name: party.name,
+        code: party.code,
+        email: party.email,
+        phone: party.phone,
+      },
+      goldBalance: party.balances.goldBalance,
+      cashBalance: party.balances.cashBalance,
+      summary: party.balances.summary,
+      lastTransactionDate: party.balances.lastTransactionDate,
+    };
+  }
+
+  // Get transaction summary by date range
+  static async getTransactionSummaryByDateRange(
+    startDate,
+    endDate,
+    transactionType = null
+  ) {
+    const matchStage = {
+      isActive: true,
+      voucherDate: {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
+      },
+    };
+
+    if (transactionType) {
+      matchStage.transactionType = transactionType;
+    }
+
+    const summary = await MetalTransaction.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: {
+            date: {
+              $dateToString: { format: "%Y-%m-%d", date: "$voucherDate" },
+            },
+            transactionType: "$transactionType",
+          },
+          transactionCount: { $sum: 1 },
+          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
+          totalNetAmount: { $sum: "$totalAmountSession.netAmountAED" },
+          totalVatAmount: { $sum: "$totalAmountSession.vatAmount" },
+          totalWeight: { $sum: { $sum: "$stockItems.weightInOz" } },
+          totalPureWeight: { $sum: { $sum: "$stockItems.pureWeight" } },
+        },
+      },
+      {
+        $sort: { "_id.date": 1, "_id.transactionType": 1 },
+      },
+    ]);
+
+    return summary;
+  }
+
+  // Get top parties by transaction volume
+  static async getTopPartiesByVolume(
+    limit = 10,
+    transactionType = null,
+    startDate = null,
+    endDate = null
+  ) {
+    const matchStage = { isActive: true };
+
+    if (transactionType) {
+      matchStage.transactionType = transactionType;
+    }
+
+    if (startDate && endDate) {
+      matchStage.voucherDate = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
+      };
+    }
+
+    const topParties = await MetalTransaction.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: "$partyCode",
+          transactionCount: { $sum: 1 },
+          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
+          totalWeight: { $sum: { $sum: "$stockItems.weightInOz" } },
+          totalPureWeight: { $sum: { $sum: "$stockItems.pureWeight" } },
+          averageTransactionAmount: {
+            $avg: "$totalAmountSession.totalAmountAED",
+          },
+          lastTransactionDate: { $max: "$voucherDate" },
+        },
+      },
+      {
+        $lookup: {
+          from: "tradedebtors",
+          localField: "_id",
+          foreignField: "_id",
+          as: "partyInfo",
+        },
+      },
+      {
+        $unwind: "$partyInfo",
+      },
+      {
+        $project: {
+          partyId: "$_id",
+          partyName: "$partyInfo.name",
+          partyCode: "$partyInfo.code",
+          transactionCount: 1,
+          totalAmount: 1,
+          totalWeight: 1,
+          totalPureWeight: 1,
+          averageTransactionAmount: 1,
+          lastTransactionDate: 1,
+        },
+      },
+      {
+        $sort: { totalAmount: -1 },
+      },
+      {
+        $limit: limit,
+      },
+    ]);
+
+    return topParties;
+  }
+
+  // Validate transaction before processing
+  static async validateTransaction(transactionData) {
+    const errors = [];
+
+    // Basic validations
+    if (!transactionData.partyCode) {
+      errors.push("Party code is required");
+    }
+
+    if (
+      !transactionData.transactionType ||
+      !["purchase", "sale"].includes(transactionData.transactionType)
+    ) {
+      errors.push("Valid transaction type (purchase/sale) is required");
+    }
+
+    if (!transactionData.voucherDate) {
+      errors.push("Voucher date is required");
+    }
+
+    if (
+      !transactionData.stockItems ||
+      !Array.isArray(transactionData.stockItems) ||
+      transactionData.stockItems.length === 0
+    ) {
+      errors.push("At least one stock item is required");
+    }
+
+    // Validate stock items
+    if (transactionData.stockItems) {
+      transactionData.stockItems.forEach((item, index) => {
+        if (!item.stockCode) {
+          errors.push(`Stock code is required for item ${index + 1}`);
+        }
+        if (!item.weightInOz || item.weightInOz <= 0) {
+          errors.push(`Valid weight is required for item ${index + 1}`);
+        }
+        if (!item.purity || item.purity <= 0 || item.purity > 100) {
+          errors.push(`Valid purity (0-100) is required for item ${index + 1}`);
+        }
+      });
+    }
+
+    // Check if party exists and is active
+    if (transactionData.partyCode) {
+      const party = await Account.findById(transactionData.partyCode);
+      if (!party || !party.isActive) {
+        errors.push("Party not found or inactive");
+      }
+    }
+
+    if (errors.length > 0) {
+      throw createAppError(
+        `Validation failed: ${errors.join(", ")}`,
+        400,
+        "VALIDATION_ERROR"
+      );
+    }
+
+    return true;
+  }
+
+  // Bulk operations
+  static async bulkCreateTransactions(transactionsData, adminId) {
+    const results = [];
+    const errors = [];
+
+    for (let i = 0; i < transactionsData.length; i++) {
+      try {
+        await this.validateTransaction(transactionsData[i]);
+        const transaction = await this.createMetalTransaction(
+          transactionsData[i],
+          adminId
+        );
+        results.push({ index: i, success: true, transaction });
+      } catch (error) {
+        errors.push({ index: i, success: false, error: error.message });
+      }
+    }
+
+    return {
+      successful: results,
+      failed: errors,
+      summary: {
+        total: transactionsData.length,
+        successful: results.length,
+        failed: errors.length,
+      },
+    };
+  }
+}
+
+export default MetalTransactionService;
