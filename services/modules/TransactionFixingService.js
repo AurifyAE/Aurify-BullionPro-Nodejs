@@ -100,7 +100,7 @@ export const TransactionFixingService = {
 
       for (const [index, order] of transactionData.orders.entries()) {
         const registryTransactionId = await Registry.generateTransactionId();
-        const totalValue = order.price * order.quantityGm;
+        const totalValue = order.price 
 
         if (transactionData.type.toUpperCase() === "PURCHASE") {
           // PARTY_GOLD_BALANCE - Debit (party gives gold to us)
