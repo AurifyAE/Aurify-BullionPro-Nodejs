@@ -403,3 +403,59 @@ export const metalFixing = async (req, res) => {
     });
   }
 };
+
+
+export const getDashboard = async (req, res, next) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      transactionType: req.query.transactionType,
+      status: req.query.status,
+    };
+    const { success, data } = await dashboardService.getDashboardData(filters);
+
+    if (!success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch dashboard data',
+      });
+    }
+    // console.log(data,'data to dashboard.....')
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error('Dashboard controller error:', error);
+
+    next(error); 
+  }
+};
+export const getDashboardReport = async (req, res, next) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      transactionType: req.query.transactionType,
+      status: req.query.status,
+    };
+    const { success, data } = await dashboardReportService.getDashboardReport(filters);
+
+    if (!success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch dashboard data',
+      });
+    }
+    // console.log(data,'data to dashboard.....')
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error('Dashboard controller error:', error);
+
+    next(error); 
+  }
+};

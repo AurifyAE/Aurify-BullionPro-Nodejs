@@ -1,5 +1,5 @@
 import express from "express";
-import { getReports, getStockBalance, getSalesAnalysis, getStockMovement, getStockAnalysis, getOwnStock, getTransactionSummary, metalFixing, accountStatements } from "../../controllers/modules/reportsController.js";
+import { getReports, getStockBalance, getSalesAnalysis, getStockMovement, getStockAnalysis, getOwnStock, getTransactionSummary, metalFixing, accountStatements, getDashboard, getDashboardReport } from "../../controllers/modules/reportsController.js";
 
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 
@@ -16,4 +16,6 @@ router.post("/own-stock", getOwnStock);
 router.post("/metal-fixing", metalFixing);
 router.post("/account-statements", accountStatements);
 
+router.get("/dashboard", getDashboard);
+router.get("/dashboard-report", getDashboardReport);
 export default router;
