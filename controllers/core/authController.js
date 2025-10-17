@@ -13,7 +13,7 @@ export const login = async (req, res, next) => {
     const { email, password } = req.body;
     const ipAddress = req.ip || req.connection.remoteAddress;
     const result = await loginAdmin(email, password, ipAddress);
-
+    console.log(result,'-------')
     // for login
       // const isValid = await verifyPassword(password, account.passwordHash);
 
@@ -89,5 +89,26 @@ export const viewPassword = async (req, res) => {
     res.status(200).json({ password: plainPassword });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+
+export const verifyToken = async (req, res, next) => {
+  try {
+    const adminId = req.admin?.id;
+    if(!req.admin){
+      throw createAppError("Not an admin user", 403, "FORBIDDEN");
+    }
+
+    
+
+    res.status(200).json({
+      success: true,
+      message: "Token verified successfully",
+      data: req.admin,
+    });
+  } catch (error) {
+    console.log(error)
+    next(error);
   }
 };

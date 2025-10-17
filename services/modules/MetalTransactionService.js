@@ -2367,7 +2367,7 @@ class MetalTransactionService {
     const netCashChange =
       balanceChanges.cashBalance +
       balanceChanges.premiumBalance +
-      // balanceChanges.otherCharges +
+      balanceChanges.otherCharges +
       balanceChanges.discountBalance;
 
     if (netCashChange !== 0) {
