@@ -105,10 +105,10 @@ export const TransactionFixingService = {
         if (transactionData.type.toUpperCase() === "PURCHASE") {
           // PARTY_GOLD_BALANCE - Debit (party gives gold to us)
           const partyGoldBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}-PARTY-GOLD-${index + 1}`,
+            transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "PARTY_GOLD_BALANCE",
-            description: `Party gold balance - Purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
+            description: `Purchase order ${index + 1} from ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
             party: transactionData.partyId,
             isBullion: false,
             goldBidValue: order.goldBidValue,
@@ -122,13 +122,13 @@ export const TransactionFixingService = {
             reference: transaction.voucherNumber,
             createdBy: adminId,
           });
-
+        
           // PURCHASE-FIXING
           const partyGoldBalanceEntryFIX = new Registry({
-            transactionId: `${registryTransactionId}-PARTY-GOLD-FIX-${index + 1}`,
+            transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "purchase-fixing",
-            description: `Party gold balance - Purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
+            description: `Purchase order ${index + 1} from ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
             party: transactionData.partyId,
             isBullion: false,
             goldBidValue: order.goldBidValue,
@@ -142,13 +142,13 @@ export const TransactionFixingService = {
             reference: transaction.voucherNumber,
             createdBy: adminId,
           });
-
+        
           // PARTY_CASH_BALANCE - Credit (we pay cash to party)
           const partyCashBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}-PARTY-CASH-${index + 1}`,
+            transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "PARTY_CASH_BALANCE",
-            description: `Party cash balance - Payment for gold purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
+            description: `Payment for purchase order ${index + 1} from ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
             party: transactionData.partyId,
             isBullion: false,
             goldBidValue: order.goldBidValue,
@@ -162,24 +162,24 @@ export const TransactionFixingService = {
             reference: transaction.voucherNumber,
             createdBy: adminId,
           });
-
+        
           registryEntries.push(
             partyGoldBalanceEntry,
             partyGoldBalanceEntryFIX,
             partyCashBalanceEntry
           );
-
+        
           // Update running totals for account balances
           totalGoldGramsChange -= order.quantityGm;
           totalCashBalanceChange += totalValue;
-
+        
         } else if (transactionData.type.toUpperCase() === "SELL") {
           // PARTY_GOLD_BALANCE - Credit (party receives gold from us)
           const partyGoldBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}-PARTY-GOLD-${index + 1}`,
+            transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "PARTY_GOLD_BALANCE",
-            description: `Party gold balance - Sale order ${index + 1} to ${account.customerName || account.accountCode}`,
+            description: `Sale order ${index + 1} to ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
             party: transactionData.partyId,
             isBullion: false,
             goldBidValue: order.goldBidValue,
@@ -193,13 +193,13 @@ export const TransactionFixingService = {
             reference: transaction.voucherNumber,
             createdBy: adminId,
           });
-
+        
           // SALES-FIXING
           const partyGoldBalanceEntryFIX = new Registry({
-            transactionId: `${registryTransactionId}-PARTY-GOLD-FIX-${index + 1}`,
+            transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "sales-fixing",
-            description: `Party gold balance - Sale order ${index + 1} to ${account.customerName || account.accountCode}`,
+            description: `Sale order ${index + 1} to ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
             party: transactionData.partyId,
             isBullion: false,
             value: 0,
@@ -213,13 +213,13 @@ export const TransactionFixingService = {
             reference: transaction.voucherNumber,
             createdBy: adminId,
           });
-
+        
           // PARTY_CASH_BALANCE - Debit (party pays cash to us)
           const partyCashBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}-PARTY-CASH-${index + 1}`,
+            transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "PARTY_CASH_BALANCE",
-            description: `Party cash balance - Payment for gold sale order ${index + 1} to ${account.customerName || account.accountCode}`,
+            description: `Payment for sale order ${index + 1} to ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
             party: transactionData.partyId,
             value: totalValue,
             goldBidValue: order.goldBidValue,
@@ -232,13 +232,13 @@ export const TransactionFixingService = {
             reference: transaction.voucherNumber,
             createdBy: adminId,
           });
-
+        
           registryEntries.push(
             partyGoldBalanceEntry,
             partyGoldBalanceEntryFIX,
             partyCashBalanceEntry
           );
-
+        
           // Update running totals for account balances
           totalGoldGramsChange += order.quantityGm;
           totalCashBalanceChange -= totalValue;
@@ -388,7 +388,7 @@ export const TransactionFixingService = {
           if (newType.toUpperCase() === "PURCHASE") {
             // PARTY_GOLD_BALANCE - Debit (party gives gold to us)
             const partyGoldBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}-PARTY-GOLD-${index + 1}`,
+              transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "PARTY_GOLD_BALANCE",
               description: `Party gold balance - Purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
@@ -408,7 +408,7 @@ export const TransactionFixingService = {
 
             // PURCHASE-FIXING
             const partyGoldBalanceEntryFIX = new Registry({
-              transactionId: `${registryTransactionId}-PARTY-GOLD-FIX-${index + 1}`,
+              transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "purchase-fixing",
               description: `Party gold balance - Purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
@@ -428,7 +428,7 @@ export const TransactionFixingService = {
 
             // PARTY_CASH_BALANCE - Credit (we pay cash to party)
             const partyCashBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}-PARTY-CASH-${index + 1}`,
+              transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "PARTY_CASH_BALANCE",
               description: `Party cash balance - Payment for gold purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
@@ -458,7 +458,7 @@ export const TransactionFixingService = {
           } else if (newType.toUpperCase() === "SELL") {
             // PARTY_GOLD_BALANCE - Credit (party receives gold from us)
             const partyGoldBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}-PARTY-GOLD-${index + 1}`,
+              transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "PARTY_GOLD_BALANCE",
               description: `Party gold balance - Sale order ${index + 1} to ${account.customerName || account.accountCode}`,
@@ -478,7 +478,7 @@ export const TransactionFixingService = {
 
             // SALES-FIXING
             const partyGoldBalanceEntryFIX = new Registry({
-              transactionId: `${registryTransactionId}-PARTY-GOLD-FIX-${index + 1}`,
+              transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "sales-fixing",
               description: `Party gold balance - Sale order ${index + 1} to ${account.customerName || account.accountCode}`,
@@ -498,7 +498,7 @@ export const TransactionFixingService = {
 
             // PARTY_CASH_BALANCE - Debit (party pays cash to us)
             const partyCashBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}-PARTY-CASH-${index + 1}`,
+              transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "PARTY_CASH_BALANCE",
               description: `Party cash balance - Payment for gold sale order ${index + 1} to ${account.customerName || account.accountCode}`,

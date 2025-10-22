@@ -700,10 +700,11 @@ class RegistryService {
         .sort({ transactionDate: -1 })
         .skip(skip)
         .limit(limit)
+        console.log(registries,'registries,,,,,,,,,,,,,,,,,,,')
 
 
       const totalPages = Math.ceil(totalItems / limit);
-
+      console.log(registries,'registries by party id');
       return { data: registries, totalItems, totalPages, currentPage: page };
     } catch (error) {
       throw new Error(`Failed to fetch registries: ${error.message}`);

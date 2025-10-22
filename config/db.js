@@ -11,6 +11,7 @@ const mongodb = async () => {
   }
 
   try {
+    console.log("🔗 Connecting to MongoDB...",MONGO_URI);
     await mongoose.connect(MONGO_URI);
     console.log("✅ MongoDB connection successful!");
   } catch (error) {

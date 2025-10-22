@@ -13,7 +13,6 @@ export const login = async (req, res, next) => {
     const { email, password } = req.body;
     const ipAddress = req.ip || req.connection.remoteAddress;
     const result = await loginAdmin(email, password, ipAddress);
-    console.log(result,'-------')
     // for login
       // const isValid = await verifyPassword(password, account.passwordHash);
 

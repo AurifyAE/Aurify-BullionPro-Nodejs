@@ -1,6 +1,10 @@
 import { ReportService } from "../../services/modules/reportService.js";
+import { DashboardService } from "../../services/modules/dashboardService.js";
+import { DashboardReportService } from "../../services/modules/DashboardReportService.js";
 
 const reportService = new ReportService();
+const dashboardService = new DashboardService();
+const dashboardReportService = new DashboardReportService();
 
 
 export const getReports = async (req, res) => {

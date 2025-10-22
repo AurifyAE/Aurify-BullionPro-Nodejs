@@ -462,7 +462,7 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "PARTY_CASH_BALANCE",
-          `Party cash balance - Purchase from ${partyName}`,
+          `Party cash balance -  Gold purchase from ${partyName} at a bid value of ${totals.goldBidValue}`,
           party._id,
           false,
           totals.goldValue,
@@ -1378,7 +1378,7 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "PARTY_CASH_BALANCE",
-          `Party cash balance - Sale to ${partyName}`,
+          `Party cash balance - Sale to ${partyName} at a bid value of ${totals.goldBidValue}`,
           party._id,
           false,
           totals.totalAmount,
@@ -2310,7 +2310,7 @@ class MetalTransactionService {
       return null;
 
     return {
-      transactionId: `${baseId}-${suffix}`,
+      transactionId: `${baseId}`,
       metalTransactionId,
       type,
       description,
@@ -2478,7 +2478,7 @@ class MetalTransactionService {
     const timestamp = Date.now();
     const currentYear = new Date().getFullYear();
     const randomNum = Math.floor(Math.random() * 900) + 100;
-    return `TXN-${currentYear}-${randomNum}`;
+    return `TXN${currentYear}${randomNum}`;
   }
 
   static handleError(error) {

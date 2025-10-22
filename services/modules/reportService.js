@@ -950,13 +950,13 @@ export class ReportService {
 
 
     // Step 2: Add date filters (optional startDate and endDate)
-    if (filters.startDate || filters.endDate) {
+    if (filters.fromDate || filters.toDate) {
       matchConditions.transactionDate = {};
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = new Date(filters.startDate);
+      if (filters.fromDate) {
+        matchConditions.transactionDate.$gte = new Date(filters.fromDate);
       }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = new Date(filters.endDate);
+      if (filters.toDate) {
+        matchConditions.transactionDate.$lte = new Date(filters.toDate);
       }
     }
 

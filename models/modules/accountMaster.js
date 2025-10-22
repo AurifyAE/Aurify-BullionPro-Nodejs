@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 function generateUniqId() {
   const randomNum = Math.floor(1000 + Math.random() * 9000);
-  return `TWSL${randomNum}`;
+  return `AUR${randomNum}`;
 }
 
 const accountMasterSchema = new mongoose.Schema({

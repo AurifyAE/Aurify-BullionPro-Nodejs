@@ -445,6 +445,23 @@ const handleMetalReceipt = async (entry) => {
       pureWeight: stockItem.purityWeight,
     });
 
+    await Registry.create({
+      transactionId,
+      EntryTransactionId: entry._id,
+      type: "PARTY_GOLD_BALANCE",
+      description,
+      value: stockItem.purityWeight,
+      credit: stockItem.purityWeight,
+      reference: entry.voucherCode || "",
+      createdBy: entry.enteredBy,
+      party: entry.party.toString(),
+      isBullion: true,
+      purity: stockItem.purity,
+      grossWeight: stockItem.grossWeight,
+      pureWeight: stockItem.purityWeight,
+    });
+
+
     // Update inventory
     await InventoryService.updateInventory(
       {
@@ -558,7 +575,7 @@ const handleCashReceipt = async (entry) => {
         debit: cashItem.vatAmount,
         reference: entry.voucherCode || "",
         createdBy: entry.enteredBy,
-        party: null,
+        party: entry.party?.toString(),
         isBullion: false,
       });
     }
@@ -793,6 +810,22 @@ const handleMetalPayment = async (entry) => {
       createdBy: entry.enteredBy,
       party: null,
       isBullion: true,
+    });
+
+    await Registry.create({
+      transactionId,
+      EntryTransactionId: entry._id,
+      type: "PARTY_GOLD_BALANCE",
+      description,
+      value: stockItem.purityWeight,
+      debit: stockItem.purityWeight,
+      reference: entry.voucherCode || "",
+      createdBy: entry.enteredBy,
+      party: entry.party.toString(),
+      isBullion: true,
+      purity: stockItem.purity,
+      grossWeight: stockItem.grossWeight,
+      pureWeight: stockItem.purityWeight,
     });
 
     // Update inventory

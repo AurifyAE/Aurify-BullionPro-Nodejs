@@ -188,7 +188,7 @@ RegistrySchema.pre("save", async function (next) {
       // Keep generating until we get a unique transaction ID
       while (!isUnique) {
         const randomNumber = Math.floor(Math.random() * 900) + 100; // Generates 3-digit random number (100-999)
-        transactionId = `TXN-${year}-${randomNumber}`;
+        transactionId = `TXN${year}${randomNumber}`;
 
         // Check if this transaction ID already exists
         const existing = await this.constructor.findOne({ transactionId });
@@ -243,7 +243,7 @@ RegistrySchema.statics.generateTransactionId = async function (year = null) {
   // Keep generating until we get a unique transaction ID
   while (!isUnique) {
     const randomNumber = Math.floor(Math.random() * 900) + 100; // Generates 3-digit random number (100-999)
-    transactionId = `TXN-${currentYear}-${randomNumber}`;
+    transactionId = `TXN${currentYear}${randomNumber}`;
 
     // Check if this transaction ID already exists
     const existing = await this.findOne({ transactionId });
