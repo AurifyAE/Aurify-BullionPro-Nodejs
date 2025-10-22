@@ -214,76 +214,85 @@ class AccountTypeService {
     }
   }
 
-  // Get all trade debtors with pagination and filters
-  static async getAllTradeDebtors(options = {}) {
-    try {
-      const {
-        page = 1,
-        limit = 100,
-        search = "",
-        status = "",
-        classification = "",
-        sortBy = "createdAt",
-        sortOrder = "desc",
-      } = options;
+ // Get all trade debtors with pagination and filters
+static async getAllTradeDebtors(options = {}) {
+  try {
+    const {
+      page = 1,
+      limit = 100,
+      search = "",
+      status = "",
+      classification = "",
+      sortBy = "createdAt",
+      sortOrder = "desc",
+    } = options;
 
-      const skip = (page - 1) * limit;
-      const query = {};
+    const skip = (page - 1) * limit;
+    const query = {};
 
-      // Search functionality
-      if (search) {
-        query.$or = [
-          { accountType: { $regex: search, $options: "i" } },
-          { customerName: { $regex: search, $options: "i" } },
-          { accountCode: { $regex: search, $options: "i" } },
-          { shortName: { $regex: search, $options: "i" } },
-        ];
-      }
-
-      // Status filter
-      if (status) {
-        query.status = status;
-      }
-
-      // Classification filter
-      if (classification) {
-        query.classification = classification;
-      }
-
-      // Sort options
-      const sort = {};
-      sort[sortBy] = sortOrder === "desc" ? -1 : 1;
-
-      const [tradeDebtors, total] = await Promise.all([
-        AccountType.find(query)
-          .populate([
-            {
-              path: "acDefinition.currencies.currency",
-              select: "currencyCode description",
-            },
-            { path: "acDefinition.branches.branch", select: "code name" },
-            { path: "createdBy", select: "name email" },
-            { path: "updatedBy", select: "name email" },
-          ])
-          .sort(sort)
-          .skip(skip)
-          .limit(parseInt(limit)),
-        AccountType.countDocuments(query),
-      ]);
-
-      return {
-        tradeDebtors,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(total / limit),
-          totalItems: total,
-          itemsPerPage: parseInt(limit),
-        },
-      };
-    } catch (error) {
-      throw createAppError("Error fetching trade debtors", 500, "FETCH_ERROR");
+    // Search functionality
+    if (search) {
+      query.$or = [
+        { accountType: { $regex: search, $options: "i" } },
+        { customerName: { $regex: search, $options: "i" } },
+        { accountCode: { $regex: search, $options: "i" } },
+        { shortName: { $regex: search, $options: "i" } },
+      ];
     }
+
+    // Status filter
+    if (status) {
+      query.status = status;
+    }
+
+    // Classification filter
+    if (classification) {
+      query.classification = classification;
+    }
+
+    // Sort options - Always prioritize favorites first
+    const sort = {};
+    
+    // If sorting by favorite specifically
+    if (sortBy === "favorite") {
+      sort.favorite = sortOrder === "desc" ? -1 : 1;
+      sort.createdAt = -1; // Secondary sort by creation date
+    } else {
+      // For any other sort field, favorites always come first
+      sort.favorite = -1; // Favorites first (true before false)
+      sort[sortBy] = sortOrder === "desc" ? -1 : 1; // Then by requested field
+    }
+
+    const [tradeDebtors, total] = await Promise.all([
+      AccountType.find(query)
+        .populate([
+          {
+            path: "acDefinition.currencies.currency",
+            select: "currencyCode description",
+          },
+          { path: "acDefinition.branches.branch", select: "code name" },
+          { path: "createdBy", select: "name email" },
+          { path: "updatedBy", select: "name email" },
+        ])
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit)),
+      AccountType.countDocuments(query),
+    ]);
+
+    return {
+      tradeDebtors,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: parseInt(limit),
+      },
+    };
+  } catch (error) {
+    throw createAppError("Error fetching trade debtors", 500, "FETCH_ERROR");
   }
+}
 
   // Get trade debtor by ID
   static async getTradeDebtorById(id) {

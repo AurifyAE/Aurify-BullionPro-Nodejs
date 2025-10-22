@@ -345,18 +345,29 @@ export const getAllTradeDebtors = async (req, res, next) => {
       search = "",
       status = "",
       classification = "",
-      sortBy = "createdAt",
+      sortBy = "createdAt", // Assuming this is the date field; if it's 'createdBy' (user ID), change to that
       sortOrder = "desc",
     } = req.query;
 
+    const trimmedSortBy = sortBy.trim();
+    const direction = sortOrder.trim() === "asc" ? 1 : -1;
+
+    let sortArray = [];
+    
+    if (trimmedSortBy === "favorite") {
+      sortArray.push(["favorite", direction]);
+    } else {
+      sortArray.push(["favorite", -1]);
+      sortArray.push([trimmedSortBy, direction]);
+    }
+
     const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page: parseInt(page, 10),
+      limit: parseInt(limit, 10),
       search: search.trim(),
       status: status.trim(),
       classification: classification.trim(),
-      sortBy: sortBy.trim(),
-      sortOrder: sortOrder.trim(),
+      sort: sortArray, // Send sort as array for explicit order
     };
 
     const result = await AccountTypeService.getAllTradeDebtors(options);
