@@ -877,9 +877,7 @@ class MetalTransactionService {
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
-    console.log('====================================');
-    console.log(totals);
-    console.log('====================================');
+
     // Purchase-return-fixing entry
     if (totals.pureWeight > 0) {
       entries.push(

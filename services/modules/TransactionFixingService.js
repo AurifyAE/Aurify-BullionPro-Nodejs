@@ -78,9 +78,7 @@ export const TransactionFixingService = {
       if (!account) {
         throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
       }
-      console.log('====================================');
-      console.log(transactionData);
-      console.log('====================================');
+ 
 
       // ====== CREATE TRANSACTION DOCUMENT ======
       const transaction = new TransactionFixing({
@@ -148,7 +146,7 @@ export const TransactionFixingService = {
             transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "PARTY_CASH_BALANCE",
-            description: `Payment for purchase order ${index + 1} from ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
+            description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Purchase from ${account.customerName || account.accountCode}`,
             party: transactionData.partyId,
             isBullion: false,
             goldBidValue: order.goldBidValue,
@@ -219,7 +217,7 @@ export const TransactionFixingService = {
             transactionId: `${registryTransactionId}`,
             fixingTransactionId: transaction._id,
             type: "PARTY_CASH_BALANCE",
-            description: `Payment for sale order ${index + 1} to ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
+            description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Sale to ${account.customerName || account.accountCode}`,
             party: transactionData.partyId,
             value: totalValue,
             goldBidValue: order.goldBidValue,
@@ -431,7 +429,7 @@ export const TransactionFixingService = {
               transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "PARTY_CASH_BALANCE",
-              description: `Party cash balance - Payment for gold purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
+              description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Purchase from ${account.customerName || account.accountCode}`,
               party: updateData.partyId || transaction.partyId,
               isBullion: false,
               goldBidValue: order.goldBidValue,
@@ -501,7 +499,7 @@ export const TransactionFixingService = {
               transactionId: `${registryTransactionId}`,
               fixingTransactionId: transaction._id,
               type: "PARTY_CASH_BALANCE",
-              description: `Party cash balance - Payment for gold sale order ${index + 1} to ${account.customerName || account.accountCode}`,
+              description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Sale to ${account.customerName || account.accountCode}`,
               party: updateData.partyId || transaction.partyId,
               value: totalValue,
               goldBidValue: order.goldBidValue,

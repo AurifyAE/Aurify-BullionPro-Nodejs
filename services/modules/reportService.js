@@ -771,9 +771,7 @@ export class ReportService {
   }
 
   buildAccountStatementPipeline(filters) {
-    console.log('====================================');
-    console.log(filters);
-    console.log('====================================');
+  
 
     const goldTypes = ["PARTY_GOLD_BALANCE"];
     const cashTypes = ["PARTY_CASH_BALANCE", "MAKING_CHARGES", "PREMIUM", "DISCOUNT"];

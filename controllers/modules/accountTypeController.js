@@ -406,10 +406,7 @@ export const getTradeDebtorById = async (req, res, next) => {
 
 // Update trade debtor
 export const updateTradeDebtor = async (req, res, next) => {
-  console.log('====================================');
-  console.log(req.body);
-  console.log('====================================');
-  console.log("Update request received for trade debtor");
+
   let uploadedFiles = [];
 
   try {

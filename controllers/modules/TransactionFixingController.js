@@ -205,9 +205,7 @@ export const getTransactionById = async (req, res, next) => {
  */
 export const updateTransaction = async (req, res, next) => {
   try {
-    console.log('====================================');
-    console.log("On hereeeeee", req.body);
-    console.log('====================================');
+   
     const { id } = req.params;
     const {
       partyId,
