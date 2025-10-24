@@ -231,7 +231,7 @@ export class DashboardService {
       { $sort: { type: 1 } },
     ];
 
-    console.log('Summary Pipeline:', JSON.stringify(summaryPipeline, null, 2));
+    // console.log('Summary Pipeline:', JSON.stringify(summaryPipeline, null, 2));
 
     // Debug: Check data existence
     const totalDocs = await Registry.countDocuments({ isActive: true, type: { $in: typeFilter } });
@@ -242,20 +242,20 @@ export class DashboardService {
     })
       .limit(5)
       .lean();
-    console.log('Total documents (isActive: true, type in list):', totalDocs);
-    console.log(
-      'Sample matched documents:',
-      matchedDocs.map(d => ({
-        _id: d._id,
-        type: d.type,
-        transactionDate: d.transactionDate,
-        debit: d.debit,
-        credit: d.credit,
-      }))
-    );
+    // console.log('Total documents (isActive: true, type in list):', totalDocs);
+    // console.log(
+    //   'Sample matched documents:',
+    //   matchedDocs.map(d => ({
+    //     _id: d._id,
+    //     type: d.type,
+    //     transactionDate: d.transactionDate,
+    //     debit: d.debit,
+    //     credit: d.credit,
+    //   }))
+    // );
 
     const summaryData = await Registry.aggregate(summaryPipeline).exec();
-    console.log('Summary Data:', summaryData);
+    // console.log('Summary Data:', summaryData);
 
     const summary = summaryData.reduce(
       (acc, item) => ({
@@ -283,10 +283,10 @@ export class DashboardService {
   async getFixedUnfixedByTransactionType(filters = {}) {
     const { startDate, endDate } = normalizeDateRange(filters.startDate, filters.endDate, 12);
 
-    console.log('Filters in getFixedUnfixedByTransactionType:', {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-    });
+    // console.log('Filters in getFixedUnfixedByTransactionType:', {
+    //   startDate: startDate.toISOString(),
+    //   endDate: endDate.toISOString(),
+    // });
 
     const pipeline = [
       {
@@ -321,7 +321,7 @@ export class DashboardService {
       { $sort: { transactionType: 1 } },
     ];
 
-    console.log('Fixed/Unfixed Pipeline:', JSON.stringify(pipeline, null, 2));
+    // console.log('Fixed/Unfixed Pipeline:', JSON.stringify(pipeline, null, 2));
 
     const matchedDocs = await MetalTransaction.find({
       isActive: true,
@@ -329,17 +329,17 @@ export class DashboardService {
     })
       .limit(5)
       .lean();
-    console.log(
-      'Sample matched documents:',
-      matchedDocs.map(d => ({
-        _id: d._id,
-        transactionType: d.transactionType,
-        voucherDate: d.voucherDate,
-        fixed: d.fixed,
-        unfix: d.unfix,
-        totalAmountAED: d.totalAmountSession?.totalAmountAED,
-      }))
-    );
+    // console.log(
+    //   'Sample matched documents:',
+    //   matchedDocs.map(d => ({
+    //     _id: d._id,
+    //     transactionType: d.transactionType,
+    //     voucherDate: d.voucherDate,
+    //     fixed: d.fixed,
+    //     unfix: d.unfix,
+    //     totalAmountAED: d.totalAmountSession?.totalAmountAED,
+    //   }))
+    // );
 
     return await MetalTransaction.aggregate(pipeline).exec();
   }
@@ -378,20 +378,20 @@ export class DashboardService {
       },
     ];
 
-    console.log('Recent Activity Filters:', {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-    });
+    // console.log('Recent Activity Filters:', {
+    //   startDate: startDate.toISOString(),
+    //   endDate: endDate.toISOString(),
+    // });
 
     const matchedDocs = await Registry.find(match).limit(5).lean();
-    console.log(
-      'Sample recent activity documents:',
-      matchedDocs.map(d => ({
-        _id: d._id,
-        type: d.type,
-        transactionDate: d.transactionDate,
-      }))
-    );
+    // console.log(
+    //   'Sample recent activity documents:',
+    //   matchedDocs.map(d => ({
+    //     _id: d._id,
+    //     type: d.type,
+    //     transactionDate: d.transactionDate,
+    //   }))
+    // );
 
     return await Registry.aggregate(pipeline).exec();
   }
@@ -586,21 +586,21 @@ export class DashboardService {
       query.voucherDate = { $gte: startDate, $lte: endDate };
     }
 
-    console.log('Unfixed Transactions Filters:', {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-      query,
-    });
+    // console.log('Unfixed Transactions Filters:', {
+    //   startDate: startDate.toISOString(),
+    //   endDate: endDate.toISOString(),
+    //   query,
+    // });
 
     const matchedDocs = await MetalTransaction.find(query).limit(5).lean();
-    console.log(
-      'Sample unfixed documents:',
-      matchedDocs.map(d => ({
-        _id: d._id,
-        transactionType: d.transactionType,
-        voucherDate: d.voucherDate,
-      }))
-    );
+    // console.log(
+    //   'Sample unfixed documents:',
+    //   matchedDocs.map(d => ({
+    //     _id: d._id,
+    //     transactionType: d.transactionType,
+    //     voucherDate: d.voucherDate,
+    //   }))
+    // );
 
     const transactions = await MetalTransaction.find(query)
       .populate({
@@ -671,11 +671,11 @@ export class DashboardService {
         transactionDate: { $gte: startDate, $lte: endDate },
       };
 
-      console.log('Party Breakdown Filters:', {
-        partyId,
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-      });
+      // console.log('Party Breakdown Filters:', {
+      //   partyId,
+      //   startDate: startDate.toISOString(),
+      //   endDate: endDate.toISOString(),
+      // });
 
       const registryTransactions = await Registry.find(matchConditions)
         .sort({ transactionDate: -1 })
@@ -697,16 +697,16 @@ export class DashboardService {
         .populate('stockItems.stockCode', 'code description')
         .lean();
 
-      console.log('Sample registry transactions:', registryTransactions.slice(0, 5).map(t => ({
-        _id: t._id,
-        transactionDate: t.transactionDate,
-        type: t.type,
-      })));
-      console.log('Sample metal transactions:', metalTransactions.slice(0, 5).map(t => ({
-        _id: t._id,
-        voucherDate: t.voucherDate,
-        transactionType: t.transactionType,
-      })));
+      // console.log('Sample registry transactions:', registryTransactions.slice(0, 5).map(t => ({
+      //   _id: t._id,
+      //   transactionDate: t.transactionDate,
+      //   type: t.type,
+      // })));
+      // console.log('Sample metal transactions:', metalTransactions.slice(0, 5).map(t => ({
+      //   _id: t._id,
+      //   voucherDate: t.voucherDate,
+      //   transactionType: t.transactionType,
+      // })));
 
       const party = await Account.findById(partyId).lean();
 
@@ -759,12 +759,12 @@ export class DashboardService {
         matchConditions.transactionType = { $in: ['purchase', 'sale', 'purchase_return', 'sale_return'] };
       }
 
-      console.log('Top Parties Filters:', {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        transactionType: matchConditions.transactionType,
-        status: filters.status,
-      });
+      // console.log('Top Parties Filters:', {
+      //   startDate: startDate.toISOString(),
+      //   endDate: endDate.toISOString(),
+      //   transactionType: matchConditions.transactionType,
+      //   status: filters.status,
+      // });
 
       const totalTransactions = await MetalTransaction.countDocuments();
 
@@ -929,15 +929,15 @@ export class DashboardService {
       pipeline.push({ $limit: limit });
 
       const matchedDocs = await MetalTransaction.find(matchConditions).limit(5).lean();
-      console.log(
-        'Sample top parties documents:',
-        matchedDocs.map(d => ({
-          _id: d._id,
-          partyCode: d.partyCode,
-          voucherDate: d.voucherDate,
-          transactionType: d.transactionType,
-        }))
-      );
+      // console.log(
+      //   'Sample top parties documents:',
+      //   matchedDocs.map(d => ({
+      //     _id: d._id,
+      //     partyCode: d.partyCode,
+      //     voucherDate: d.voucherDate,
+      //     transactionType: d.transactionType,
+      //   }))
+      // );
 
       const topParties = await MetalTransaction.aggregate(pipeline).exec();
 
@@ -1066,10 +1066,10 @@ export class DashboardService {
     try {
       const { startDate, endDate } = normalizeDateRange(filters.startDate, filters.endDate, 12);
 
-      console.log('Balance Trend Filters:', {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-      });
+      // console.log('Balance Trend Filters:', {
+      //   startDate: startDate.toISOString(),
+      //   endDate: endDate.toISOString(),
+      // });
 
       const cashDeltasPipeline = [
         {
@@ -1107,8 +1107,6 @@ export class DashboardService {
         Registry.aggregate(goldDeltasPipeline).exec(),
       ]);
 
-      console.log('Cash Deltas:', cashDeltas.slice(0, 5));
-      console.log('Gold Deltas:', goldDeltas.slice(0, 5));
 
       const { cashBalance: currentCash, goldBalance: currentGold } = await this.calculateBalances();
       const totalCashDelta = cashDeltas.reduce((sum, d) => sum + d.delta, 0);
@@ -1145,11 +1143,6 @@ export class DashboardService {
    */
   async getFixingTransactions(filters = {}) {
     const { startDate, endDate } = normalizeDateRange(filters.startDate, filters.endDate, 12);
-
-    console.log('Fixing Transactions Filters:', {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-    });
 
     const pipeline = [
       {
@@ -1206,7 +1199,6 @@ export class DashboardService {
       },
     ];
 
-    console.log('Fixing Pipeline:', JSON.stringify(pipeline, null, 2));
 
     const matchedDocs = await TransactionFixing.find({
       isActive: true,
@@ -1216,18 +1208,9 @@ export class DashboardService {
     })
       .limit(5)
       .lean();
-    console.log(
-      'Sample fixing documents:',
-      matchedDocs.map(d => ({
-        _id: d._id,
-        type: d.type,
-        transactionDate: d.transactionDate,
-        orders: d.orders ? d.orders.map(o => ({ price: o.price, quantityGm: o.quantityGm })) : [],
-      }))
-    );
+  
 
     const [summaryData] = await TransactionFixing.aggregate(pipeline).exec();
-    console.log('Fixing Summary Data:', summaryData);
 
     return {
       summary: summaryData || {
