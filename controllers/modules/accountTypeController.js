@@ -14,6 +14,11 @@ export const createTradeDebtor = async (req, res, next) => {
       customerName,
       remarks,
       classification,
+      mode,
+      shortName,
+      parentGroup,
+      isSupplier,
+      favorite,
       acDefinition,
       limitsMargins,
       addresses,
@@ -22,8 +27,8 @@ export const createTradeDebtor = async (req, res, next) => {
       bankDetails,
       kycDetails,
     } = req.body;
-    let accountType = "DEBTOR"
-
+    
+    let accountType = "DEBTOR";
 
     // Basic validation - only required fields
     if (!accountCode || !customerName || !title || !accountType) {
@@ -31,15 +36,6 @@ export const createTradeDebtor = async (req, res, next) => {
         "Required fields missing: accountType, title, accountCode, customerName",
         400,
         "REQUIRED_FIELDS_MISSING"
-      );
-    }
-
-    // check the password and confirm password match
-    if (req.body.password !== req.body.confirmPassword) {
-      throw createAppError(
-        "Password and Confirm Password do not match",
-        400,
-        "PASSWORD_MISMATCH"
       );
     }
 
@@ -71,7 +67,24 @@ export const createTradeDebtor = async (req, res, next) => {
       );
     }
 
-    // Validate shortMargin if limitsMargins provided
+    // Validate USD and AED are included (frontend requirement)
+    const currencyCodes = parsedAcDefinition.currencies.map(
+      (c) => c.currency?.currencyCode || c.currencyCode
+    );
+    const requiredCurrencies = ["USD", "AED"];
+    const missingCurrencies = requiredCurrencies.filter(
+      (code) => !currencyCodes.includes(code)
+    );
+
+    if (missingCurrencies.length > 0) {
+      throw createAppError(
+        `Required currencies missing: ${missingCurrencies.join(", ")}. USD and AED must be included.`,
+        400,
+        "MISSING_REQUIRED_CURRENCIES"
+      );
+    }
+
+    // Validate Margin if limitsMargins provided
     let parsedLimitsMargins;
     try {
       parsedLimitsMargins =
@@ -92,11 +105,11 @@ export const createTradeDebtor = async (req, res, next) => {
       parsedLimitsMargins.length > 0
     ) {
       for (const limit of parsedLimitsMargins) {
-        if (limit.shortMargin === undefined || limit.shortMargin === null) {
+        if (limit.Margin === undefined || limit.Margin === null) {
           throw createAppError(
-            "shortMargin is required in limitsMargins",
+            "Margin is required in limitsMargins",
             400,
-            "MISSING_SHORT_MARGIN"
+            "MISSING_MARGIN"
           );
         }
       }
@@ -115,11 +128,43 @@ export const createTradeDebtor = async (req, res, next) => {
           ? JSON.parse(addresses)
           : addresses
         : [];
-      parsedEmployees = employees
-        ? typeof employees === "string"
-          ? JSON.parse(employees)
-          : employees
-        : [];
+      
+      // Parse employees - can come as JSON string or as individual form fields
+      if (employees) {
+        if (typeof employees === "string") {
+          parsedEmployees = JSON.parse(employees);
+        } else if (Array.isArray(employees)) {
+          parsedEmployees = employees;
+        } else {
+          parsedEmployees = [];
+        }
+      } else {
+        // Parse from individual form fields (employees[0][name], employees[0][email], etc.)
+        parsedEmployees = [];
+        const employeeFieldPattern = /^employees\[(\d+)\]\[(\w+)\]$/;
+        const employeeMap = {};
+        
+        // Collect all employee fields from req.body
+        Object.keys(req.body).forEach(key => {
+          const match = key.match(employeeFieldPattern);
+          if (match) {
+            const index = parseInt(match[1]);
+            const field = match[2];
+            
+            if (!employeeMap[index]) {
+              employeeMap[index] = {};
+            }
+            
+            employeeMap[index][field] = req.body[key];
+          }
+        });
+        
+        // Convert map to array
+        Object.keys(employeeMap).forEach(index => {
+          parsedEmployees.push(employeeMap[index]);
+        });
+      }
+      
       parsedVatGstDetails = vatGstDetails
         ? typeof vatGstDetails === "string"
           ? JSON.parse(vatGstDetails)
@@ -143,19 +188,19 @@ export const createTradeDebtor = async (req, res, next) => {
       );
     }
 
-    // FIXED: Normalize VAT status to match schema enum values
+    // Normalize VAT status to match schema enum values
     if (parsedVatGstDetails && parsedVatGstDetails.vatStatus) {
       const vatStatusMap = {
-        'registered': 'REGISTERED',
-        'unregistered': 'UNREGISTERED',
-        'exempted': 'EXEMPTED'
+        registered: "REGISTERED",
+        unregistered: "UNREGISTERED",
+        exempted: "EXEMPTED",
       };
 
-      const normalizedStatus = vatStatusMap[parsedVatGstDetails.vatStatus.toLowerCase()];
+      const normalizedStatus =
+        vatStatusMap[parsedVatGstDetails.vatStatus.toLowerCase()];
       if (normalizedStatus) {
         parsedVatGstDetails.vatStatus = normalizedStatus;
       } else {
-        // If invalid status provided, set to null to use schema default
         parsedVatGstDetails.vatStatus = null;
       }
     }
@@ -167,7 +212,6 @@ export const createTradeDebtor = async (req, res, next) => {
       parsedAddresses.length > 0
     ) {
       for (const address of parsedAddresses) {
-        // Only validate if specific fields are provided (since they're optional in schema)
         if (
           address.email &&
           !/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(address.email)
@@ -181,13 +225,16 @@ export const createTradeDebtor = async (req, res, next) => {
       }
     }
 
-    // Optional validation for employees (if provided)
+    // Handle employee documents from multipart form data
     if (
       parsedEmployees &&
       Array.isArray(parsedEmployees) &&
       parsedEmployees.length > 0
     ) {
-      for (const employee of parsedEmployees) {
+      for (let i = 0; i < parsedEmployees.length; i++) {
+        const employee = parsedEmployees[i];
+        
+        // Validate email if provided
         if (
           employee.email &&
           !/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(employee.email)
@@ -198,10 +245,33 @@ export const createTradeDebtor = async (req, res, next) => {
             "INVALID_EMAIL_FORMAT"
           );
         }
+
+        // Handle employee document upload
+        const employeeDocField = `employees[${i}][document]`;
+        if (req.filesByField && req.filesByField[employeeDocField]) {
+          const docFile = req.filesByField[employeeDocField][0];
+          
+          // Determine file type based on mimetype
+          let fileType = null;
+          if (docFile.mimetype.startsWith('image/')) {
+            fileType = 'image';
+          } else if (docFile.mimetype === 'application/pdf') {
+            fileType = 'pdf';
+          }
+
+          // Structure according to schema
+          employee.document = {
+            fileName: docFile.originalname,
+            filePath: docFile.location || docFile.path,
+            fileType: fileType, // 'image' or 'pdf' as per schema enum
+            s3Key: docFile.key || null,
+            uploadedAt: new Date(),
+          };
+        }
       }
     }
 
-    // Handle file uploads
+    // Handle file uploads for VAT/GST and KYC
     let processedVatGstDetails = parsedVatGstDetails;
     let processedKycDetails = parsedKycDetails || [];
 
@@ -246,7 +316,7 @@ export const createTradeDebtor = async (req, res, next) => {
       }
     }
 
-    // Build the trade debtor data - only include provided fields
+    // Build the trade debtor data
     const tradeDebtorData = {
       accountType: accountType.trim(),
       title: title.trim(),
@@ -258,6 +328,9 @@ export const createTradeDebtor = async (req, res, next) => {
     // Add optional fields only if provided and not empty
     if (classification) tradeDebtorData.classification = classification.trim();
     if (remarks) tradeDebtorData.remarks = remarks.trim();
+    if (isSupplier !== undefined) tradeDebtorData.isSupplier = isSupplier === 'true' || isSupplier === true;
+    if (favorite !== undefined) tradeDebtorData.favorite = favorite === 'true' || favorite === true;
+    
     if (parsedLimitsMargins && parsedLimitsMargins.length > 0)
       tradeDebtorData.limitsMargins = parsedLimitsMargins;
     if (parsedAddresses && parsedAddresses.length > 0)
@@ -265,7 +338,26 @@ export const createTradeDebtor = async (req, res, next) => {
     if (parsedEmployees && parsedEmployees.length > 0)
       tradeDebtorData.employees = parsedEmployees;
 
-    // FIXED: Only add vatGstDetails if it has meaningful data
+    // Initialize cash balances for all currencies
+    if (parsedAcDefinition.currencies && parsedAcDefinition.currencies.length > 0) {
+      tradeDebtorData.balances = {
+        goldBalance: {
+          totalGrams: 0,
+          totalValue: 0,
+          lastUpdated: new Date(),
+        },
+        cashBalance: parsedAcDefinition.currencies.map((curr) => ({
+          currency: curr.currency?._id || curr.currency,
+          amount: 0,
+          isDefault: curr.isDefault || false,
+          lastUpdated: new Date(),
+        })),
+        totalOutstanding: 0,
+        lastBalanceUpdate: new Date(),
+      };
+    }
+
+    // Only add vatGstDetails if it has meaningful data
     if (
       processedVatGstDetails &&
       (processedVatGstDetails.vatStatus ||
@@ -279,9 +371,8 @@ export const createTradeDebtor = async (req, res, next) => {
     if (parsedBankDetails && parsedBankDetails.length > 0)
       tradeDebtorData.bankDetails = parsedBankDetails;
 
-    // FIXED: Only add kycDetails if array has meaningful data
+    // Only add kycDetails if array has meaningful data
     if (processedKycDetails && processedKycDetails.length > 0) {
-      // Filter out empty KYC records
       const validKycDetails = processedKycDetails.filter(
         (kyc) =>
           kyc.documentType ||
@@ -296,12 +387,6 @@ export const createTradeDebtor = async (req, res, next) => {
       }
     }
 
-    if( req.body.password && req.body.password.trim() !== "" ) {
-      tradeDebtorData.password = req.body.password.trim();
-    }
-    
-
-
     const tradeDebtor = await AccountTypeService.createTradeDebtor(
       tradeDebtorData,
       req.admin.id
@@ -315,6 +400,7 @@ export const createTradeDebtor = async (req, res, next) => {
         total: req.filesInfo?.length || 0,
         vatGstDocuments: processedVatGstDetails?.documents?.length || 0,
         kycDocuments: req.filesByField?.["kycDetails.documents"]?.length || 0,
+        employeeDocuments: parsedEmployees?.filter(emp => emp.document).length || 0,
       },
     });
   } catch (error) {
@@ -335,6 +421,7 @@ export const createTradeDebtor = async (req, res, next) => {
     next(error);
   }
 };
+
 
 // Get all trade debtors
 export const getAllTradeDebtors = async (req, res, next) => {

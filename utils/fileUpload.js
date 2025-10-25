@@ -159,50 +159,67 @@ export const tradeDebtorUploadHandler = (options = {}) => {
   const uploadInstance = useLocalStorage 
     ? multer({
         storage: createLocalStorage(),
-        limits: { fileSize: maxFileSize },
+        limits: { 
+          fileSize: maxFileSize,
+          files: 100 // Allow up to 100 files total
+        },
         fileFilter: fileFilter
       })
     : multer({
         storage: s3Storage,
-        limits: { fileSize: maxFileSize },
+        limits: { 
+          fileSize: maxFileSize,
+          files: 100 // Allow up to 100 files total
+        },
         fileFilter: fileFilter
       });
 
-  // Define all possible field configurations
-  const fieldsConfig = [
-    { name: 'vatGstDetails.documents', maxCount: 10 },
-    { name: 'kycDetails.documents', maxCount: 10 },
-    { name: 'documents', maxCount: 20 },
-    { name: 'files', maxCount: 20 },
-    { name: 'file', maxCount: 20 }
-  ];
-
-  // Return middleware function
+  // Return middleware function using .any() to accept all file fields
   return (req, res, next) => {
-    const uploadMiddleware = uploadInstance.fields(fieldsConfig);
+    const uploadMiddleware = uploadInstance.any();
 
     uploadMiddleware(req, res, async (err) => {
       if (err) {
         console.error('Upload error:', err);
+        
+        // Handle specific multer errors
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return next(createAppError(
+            `File size exceeds limit of ${maxFileSize / (1024 * 1024)}MB`,
+            400,
+            'FILE_TOO_LARGE'
+          ));
+        }
+        
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return next(createAppError(
+            'Too many files uploaded',
+            400,
+            'TOO_MANY_FILES'
+          ));
+        }
+        
         return next(err);
       }
 
-      // Flatten all files into a single array for easier processing
-      const allFiles = [];
+      // Organize files by field name
       const filesByField = {};
+      const allFiles = [];
 
-      if (req.files) {
-        Object.keys(req.files).forEach(fieldName => {
-          const files = req.files[fieldName];
-          filesByField[fieldName] = files;
+      if (req.files && Array.isArray(req.files)) {
+        req.files.forEach(file => {
+          const fieldName = file.fieldname;
           
-          files.forEach(file => {
-            allFiles.push({
-              ...file,
-              fieldName, // Add field name for identification
-              category: getFileCategoryFromFieldName(fieldName)
-            });
-          });
+          // Initialize array if doesn't exist
+          if (!filesByField[fieldName]) {
+            filesByField[fieldName] = [];
+          }
+          
+          // Add category for easier identification
+          file.category = getFileCategoryFromFieldName(fieldName);
+          
+          filesByField[fieldName].push(file);
+          allFiles.push(file);
         });
       }
 
@@ -219,7 +236,7 @@ export const tradeDebtorUploadHandler = (options = {}) => {
       }
 
       // Add processed file info to request
-      req.files = allFiles; // Flattened array
+      req.files = allFiles; // All files as flat array
       req.filesByField = filesByField; // Organized by field name
       req.filesInfo = allFiles.map(file => ({
         type: getFileTypeAndExt(file).mimeType,
@@ -227,14 +244,17 @@ export const tradeDebtorUploadHandler = (options = {}) => {
         filename: useLocalStorage ? file.filename : file.key,
         path: useLocalStorage ? file.path : file.location,
         size: file.size,
-        fieldName: file.fieldName,
+        fieldName: file.fieldname, // Note: multer uses 'fieldname' not 'fieldName'
         category: file.category
       }));
 
       console.log('Files processed:', {
         totalFiles: allFiles.length,
         fieldNames: Object.keys(filesByField),
-        categories: [...new Set(allFiles.map(f => f.category))]
+        categories: [...new Set(allFiles.map(f => f.category))],
+        employeeDocuments: Object.keys(filesByField).filter(f => f.includes('employees')).length,
+        vatGstDocuments: Object.keys(filesByField).filter(f => f.includes('vatGst')).length,
+        kycDocuments: Object.keys(filesByField).filter(f => f.includes('kyc')).length
       });
 
       next();
@@ -243,11 +263,12 @@ export const tradeDebtorUploadHandler = (options = {}) => {
 };
 
 // Helper function to categorize files based on field name
-const getFileCategoryFromFieldName = (fieldName) => {
-  if (fieldName.includes('vat') || fieldName.includes('Vat')) return 'vat';
-  if (fieldName.includes('kyc') || fieldName.includes('Kyc')) return 'kyc';
-  return 'general';
-};
+function getFileCategoryFromFieldName(fieldName) {
+  if (fieldName.includes('vatGst')) return 'VAT/GST';
+  if (fieldName.includes('kyc')) return 'KYC';
+  if (fieldName.includes('employees')) return 'Employee';
+  return 'General';
+}
 
 // Universal upload handler - handles any file type dynamically (keeping for backward compatibility)
 export const uploadHandler = (options = {}) => {

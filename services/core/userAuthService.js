@@ -11,7 +11,7 @@ import MetalTransaction from "../../models/modules/MetalTransaction.js";
 
 // JWT Configuration
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-const JWT_EXPIRES_IN = "7d"; // Access token expiry
+const JWT_EXPIRES_IN = "60s"; // Access token expiry
 const JWT_REFRESH_EXPIRES_IN = "30d"; // Refresh token expiry
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCK_TIME = 30 * 60 * 1000; // 30 minutes
