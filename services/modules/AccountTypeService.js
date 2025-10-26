@@ -20,7 +20,7 @@ class AccountTypeService {
           "DUPLICATE_ACCOUNT_CODE"
         );
       }
-
+  
       // Hash the password if provided
       if (debtorData.password) {
         const passwordHash = await hashPassword(debtorData.password);
@@ -33,10 +33,10 @@ class AccountTypeService {
         debtorData.passwordEncrypted = null;
         debtorData.passwordIV = null;
       }
-
+  
       // Set created by
       debtorData.createdBy = adminId;
-
+  
       // Clean up empty objects to prevent validation errors
       if (
         debtorData.vatGstDetails &&
@@ -44,32 +44,38 @@ class AccountTypeService {
       ) {
         delete debtorData.vatGstDetails;
       }
-
-      if (
-        debtorData.kycDetails &&
-        Array.isArray(debtorData.kycDetails) &&
-        debtorData.kycDetails.length === 0
-      ) {
-        delete debtorData.kycDetails;
-      }
-
-      // Clean up kycDetails array
+  
+      // Process kycDetails
       if (debtorData.kycDetails && Array.isArray(debtorData.kycDetails)) {
         debtorData.kycDetails = debtorData.kycDetails.filter((kyc) => {
           return (
-            (kyc.documents && kyc.documents.length > 0) ||
-            kyc.documentType ||
-            kyc.documentNumber ||
-            kyc.issueDate ||
-            kyc.expiryDate
+            kyc.documentType &&
+            kyc.documentNumber &&
+            (kyc.documents?.length > 0 || kyc.issueDate || kyc.expiryDate)
           );
         });
-
+  
+        for (const kyc of debtorData.kycDetails) {
+          if (!kyc.documents) {
+            kyc.documents = [];
+          }
+          if (kyc.isVerified === undefined) {
+            kyc.isVerified = false;
+          }
+          // Ensure dates are properly formatted
+          if (kyc.issueDate) {
+            kyc.issueDate = new Date(kyc.issueDate);
+          }
+          if (kyc.expiryDate) {
+            kyc.expiryDate = new Date(kyc.expiryDate);
+          }
+        }
+  
         if (debtorData.kycDetails.length === 0) {
           delete debtorData.kycDetails;
         }
       }
-
+  
       // Ensure only one primary address
       if (debtorData.addresses && debtorData.addresses.length > 0) {
         let primaryFound = false;
@@ -84,7 +90,7 @@ class AccountTypeService {
           }
         });
       }
-
+  
       // Ensure only one primary employee
       if (debtorData.employees && debtorData.employees.length > 0) {
         let primaryFound = false;
@@ -99,7 +105,7 @@ class AccountTypeService {
           }
         });
       }
-
+  
       // Ensure only one primary bank
       if (debtorData.bankDetails && debtorData.bankDetails.length > 0) {
         let primaryFound = false;
@@ -114,7 +120,7 @@ class AccountTypeService {
           }
         });
       }
-
+  
       // Initialize cash balances for all currencies in acDefinition
       if (
         debtorData.acDefinition &&
@@ -126,7 +132,7 @@ class AccountTypeService {
           debtorData.acDefinition.currencies.map((curr) => ({
             currency: curr.currency?._id || curr.currency,
             amount: 0,
-            isDefault: curr.isDefault || false, // Respect multiple defaults
+            isDefault: curr.isDefault || false,
             lastUpdated: new Date(),
           }));
         debtorData.balances.goldBalance = {
@@ -137,23 +143,11 @@ class AccountTypeService {
         debtorData.balances.totalOutstanding = 0;
         debtorData.balances.lastBalanceUpdate = new Date();
       }
-
-      // Handle KYC details
-      if (debtorData.kycDetails && Array.isArray(debtorData.kycDetails)) {
-        debtorData.kycDetails.forEach((kyc) => {
-          if (!kyc.documents) {
-            kyc.documents = [];
-          }
-          if (kyc.isVerified === undefined) {
-            kyc.isVerified = false;
-          }
-        });
-      }
-
+  
       // Create trade debtor
       const tradeDebtor = new AccountType(debtorData);
       await tradeDebtor.save();
-
+  
       // Populate references for response
       await tradeDebtor.populate([
         {
@@ -173,7 +167,7 @@ class AccountTypeService {
           select: "name email role",
         },
       ]);
-
+  
       return tradeDebtor;
     } catch (error) {
       if (error.name === "ValidationError") {
@@ -184,7 +178,7 @@ class AccountTypeService {
           "VALIDATION_ERROR"
         );
       }
-
+  
       if (error.code === 11000) {
         const field = Object.keys(error.keyPattern)[0];
         throw createAppError(
@@ -193,7 +187,7 @@ class AccountTypeService {
           "DUPLICATE_FIELD_VALUE"
         );
       }
-
+  
       if (error.name === "CastError") {
         throw createAppError(
           `Invalid value for field: ${error.path}`,
@@ -201,7 +195,7 @@ class AccountTypeService {
           "INVALID_FIELD_VALUE"
         );
       }
-
+  
       throw error;
     }
   }
