@@ -22,6 +22,9 @@ export const createMetalTransaction = async (req, res, next) => {
       notes,
       voucher
     } = req.body;
+
+    console.log(req.body);
+    
     
     if (
       !transactionType ||
@@ -68,6 +71,8 @@ export const createMetalTransaction = async (req, res, next) => {
         pieces: Number(item.pieces || 0),
         grossWeight: Number(item.grossWeight || 0),
         purity: Number(item.purity),
+        standerdPurity: Number(item.standerdPurity),
+        purityDiff: Number(item.purityDiff || 0),
         pureWeight: Number(item.pureWeight || 0),
         purityWeight: Number(item.purityWeight),
         weightInOz: Number(item.weightInOz),
