@@ -1,19 +1,39 @@
-import mongoose from "mongoose";
+// models/Account.js
+import mongoose from 'mongoose';
+
+const documentSchema = new mongoose.Schema({
+  fileName: { type: String, default: null },
+  filePath: { type: String, default: null },
+  fileType: { type: String, enum: ['image', 'pdf'], default: null },
+  s3Key: { type: String, default: null },
+  uploadedAt: { type: Date, default: Date.now },
+});
+
+const vatGstDetailsSchema = new mongoose.Schema({
+  vatStatus: {
+    type: String,
+    enum: ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'],
+    default: 'UNREGISTERED',
+    required: [true, 'VAT status is required'],
+  },
+  vatNumber: { type: String, trim: true, maxlength: 50, default: null },
+  documents: [documentSchema],
+});
 
 const AccountSchema = new mongoose.Schema(
   {
     // Basic Account Information
     accountType: {
       type: String,
-      default: "DEBTOR",
-      required: [true, "Account type is required"],
+      default: 'DEBTOR',
+      required: [true, 'Account type is required'],
       trim: true,
     },
     title: {
       type: String,
-      required: [true, "Title is required"],
+      required: [true, 'Title is required'],
       trim: true,
-      maxlength: [10, "Title cannot exceed 10 characters"],
+      maxlength: [10, 'Title cannot exceed 10 characters'],
     },
     favorite: {
       type: Boolean,
@@ -21,17 +41,17 @@ const AccountSchema = new mongoose.Schema(
     },
     accountCode: {
       type: String,
-      required: [true, "Account code is required"],
+      required: [true, 'Account code is required'],
       trim: true,
       uppercase: true,
-      maxlength: [20, "Account code cannot exceed 20 characters"],
-      match: [/^[A-Z0-9]+$/, "Account code should contain only uppercase letters and numbers"],
+      maxlength: [20, 'Account code cannot exceed 20 characters'],
+      match: [/^[A-Z0-9]+$/, 'Account code should contain only uppercase letters and numbers'],
     },
     customerName: {
       type: String,
-      required: [true, "Customer name is required"],
+      required: [true, 'Customer name is required'],
       trim: true,
-      maxlength: [100, "Customer name cannot exceed 100 characters"],
+      maxlength: [100, 'Customer name cannot exceed 100 characters'],
     },
     classification: {
       type: String,
@@ -41,7 +61,7 @@ const AccountSchema = new mongoose.Schema(
     remarks: {
       type: String,
       trim: true,
-      maxlength: [500, "Remarks cannot exceed 500 characters"],
+      maxlength: [500, 'Remarks cannot exceed 500 characters'],
       default: null,
     },
 
@@ -57,11 +77,11 @@ const AccountSchema = new mongoose.Schema(
           {
             currency: {
               type: mongoose.Schema.Types.ObjectId,
-              ref: "CurrencyMaster",
+              ref: 'CurrencyMaster',
               required: true,
             },
             amount: { type: Number, default: 0 },
-            isDefault: { type: Boolean, default: false }, // Removed single default validation
+            isDefault: { type: Boolean, default: false },
             lastUpdated: { type: Date, default: Date.now },
           },
         ],
@@ -76,18 +96,18 @@ const AccountSchema = new mongoose.Schema(
       currencies: {
         type: [
           {
-            currency: { type: mongoose.Schema.Types.ObjectId, ref: "CurrencyMaster" },
-            isDefault: { type: Boolean, default: false }, // Allow multiple defaults
+            currency: { type: mongoose.Schema.Types.ObjectId, ref: 'CurrencyMaster' },
+            isDefault: { type: Boolean, default: false },
             minRate: { type: Number, default: 1.0 },
             maxRate: { type: Number, default: 1.0 },
           },
         ],
-        required: [true, "At least one currency is required"],
+        required: [true, 'At least one currency is required'],
         validate: {
           validator: function (currencies) {
             return currencies && currencies.length > 0;
           },
-          message: "At least one currency must be specified",
+          message: 'At least one currency must be specified',
         },
       },
       branches: {
@@ -111,7 +131,7 @@ const AccountSchema = new mongoose.Schema(
             type: Number,
             min: 0,
             max: 100,
-            required: [true, "Margin is required"],
+            required: [true, 'Margin is required'],
           },
         },
       ],
@@ -133,7 +153,7 @@ const AccountSchema = new mongoose.Schema(
             type: String,
             trim: true,
             lowercase: true,
-            match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, "Please enter a valid email"],
+            match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email'],
             default: null,
           },
           telephone: { type: String, trim: true, match: /^[0-9]{10,15}$/, default: null },
@@ -154,14 +174,14 @@ const AccountSchema = new mongoose.Schema(
             type: String,
             trim: true,
             lowercase: true,
-            match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, "Please enter a valid email"],
+            match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email'],
             required: true,
           },
           mobile: { type: String, trim: true, match: /^[0-9]{10,15}$/, default: null },
           document: {
             fileName: { type: String, default: null },
             filePath: { type: String, default: null },
-            fileType: { type: String, enum: ["image", "pdf"], default: null },
+            fileType: { type: String, enum: ['image', 'pdf'], default: null },
             s3Key: { type: String, default: null },
             uploadedAt: { type: Date, default: Date.now },
           },
@@ -172,29 +192,7 @@ const AccountSchema = new mongoose.Schema(
     },
 
     // VAT/GST Details
-    vatGstDetails: {
-      type: {
-        vatStatus: {
-          type: String,
-          enum: ["REGISTERED", "UNREGISTERED", "EXEMPTED"],
-          default: null,
-        },
-        vatNumber: { type: String, trim: true, maxlength: 50, default: null },
-        documents: {
-          type: [
-            {
-              fileName: { type: String, default: null },
-              filePath: { type: String, default: null },
-              fileType: { type: String, default: null },
-              s3Key: { type: String, default: null },
-              uploadedAt: { type: Date, default: Date.now },
-            },
-          ],
-          default: [],
-        },
-      },
-      default: null,
-    },
+    vatGstDetails: [vatGstDetailsSchema], // Changed to array of embedded documents
 
     // Bank Details
     bankDetails: {
@@ -232,20 +230,12 @@ const AccountSchema = new mongoose.Schema(
               validator: function (value) {
                 return !value || !this.issueDate || value > this.issueDate;
               },
-              message: "Expiry date must be after issue date",
+              message: 'Expiry date must be after issue date',
             },
             default: null,
           },
           documents: {
-            type: [
-              {
-                fileName: { type: String, default: null },
-                filePath: { type: String, default: null },
-                fileType: { type: String, default: null },
-                s3Key: { type: String, default: null },
-                uploadedAt: { type: Date, default: Date.now },
-              },
-            ],
+            type: [documentSchema],
             default: [],
           },
           isVerified: { type: Boolean, default: false },
@@ -258,9 +248,9 @@ const AccountSchema = new mongoose.Schema(
 
     // Status and Activity
     isActive: { type: Boolean, default: true },
-    status: { type: String, enum: ["active", "inactive", "suspended"], default: "active" },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", required: true },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", default: null },
+    status: { type: String, enum: ['active', 'inactive', 'suspended'], default: 'active' },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', required: true },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
   },
   {
     timestamps: true,
@@ -275,15 +265,15 @@ AccountSchema.index({ customerName: 1 });
 AccountSchema.index({ status: 1 });
 AccountSchema.index({ isActive: 1 });
 AccountSchema.index({ createdAt: -1 });
-AccountSchema.index({ "employees.email": 1 });
-AccountSchema.index({ "vatGstDetails.vatNumber": 1 });
-AccountSchema.index({ "balances.totalOutstanding": 1 });
-AccountSchema.index({ "balances.goldBalance.totalGrams": 1 });
-AccountSchema.index({ "balances.cashBalance.currency": 1 });
-AccountSchema.index({ "balances.cashBalance.amount": 1 });
+AccountSchema.index({ 'employees.email': 1 });
+AccountSchema.index({ 'vatGstDetails.vatNumber': 1 });
+AccountSchema.index({ 'balances.totalOutstanding': 1 });
+AccountSchema.index({ 'balances.goldBalance.totalGrams': 1 });
+AccountSchema.index({ 'balances.cashBalance.currency': 1 });
+AccountSchema.index({ 'balances.cashBalance.amount': 1 });
 
 // Pre-save middleware
-AccountSchema.pre("save", function (next) {
+AccountSchema.pre('save', function (next) {
   // Uppercase account code
   if (this.accountCode) {
     this.accountCode = this.accountCode.toUpperCase();
@@ -301,7 +291,7 @@ AccountSchema.pre("save", function (next) {
         this.balances.cashBalance.push({
           currency: currencyDef.currency,
           amount: 0,
-          isDefault: currencyDef.isDefault || false, // Respect multiple defaults
+          isDefault: currencyDef.isDefault || false,
           lastUpdated: new Date(),
         });
       }
@@ -320,10 +310,10 @@ AccountSchema.pre("save", function (next) {
   };
 
   // Ensure single primary/default for non-currency fields
-  if (this.addresses) ensureSingle(this.addresses, "isPrimary");
-  if (this.employees) ensureSingle(this.employees, "isPrimary");
-  if (this.bankDetails) ensureSingle(this.bankDetails, "isPrimary");
-  if (this.acDefinition?.branches) ensureSingle(this.acDefinition.branches, "isDefault");
+  if (this.addresses) ensureSingle(this.addresses, 'isPrimary');
+  if (this.employees) ensureSingle(this.employees, 'isPrimary');
+  if (this.bankDetails) ensureSingle(this.bankDetails, 'isPrimary');
+  if (this.acDefinition?.branches) ensureSingle(this.acDefinition.branches, 'isDefault');
 
   next();
 });
@@ -336,10 +326,10 @@ AccountSchema.statics.isAccountCodeExists = async function (accountCode, exclude
 };
 
 AccountSchema.statics.getActiveAccounts = function () {
-  return this.find({ isActive: true, status: "active" });
+  return this.find({ isActive: true, status: 'active' });
 };
 
-// Instance Methods
+// Instance Methods (unchanged, included for completeness)
 AccountSchema.methods.getPrimaryContact = function () {
   return this.employees?.find((emp) => emp.isPrimary) || this.employees?.[0];
 };
@@ -372,7 +362,7 @@ AccountSchema.methods.updateGoldBalance = function (grams, value) {
 
 AccountSchema.methods.updateCashBalance = function (amount, currencyId) {
   if (!currencyId) {
-    throw new Error("Currency ID is required to update cash balance");
+    throw new Error('Currency ID is required to update cash balance');
   }
 
   const currencyIdStr = currencyId.toString();
@@ -387,7 +377,7 @@ AccountSchema.methods.updateCashBalance = function (amount, currencyId) {
     this.balances.cashBalance.push({
       currency: currencyId,
       amount: amount,
-      isDefault: false, // New balances are not default by default
+      isDefault: false,
       lastUpdated: new Date(),
     });
   }
@@ -404,7 +394,6 @@ AccountSchema.methods.getCashBalance = function (currencyId = null) {
     return balance?.amount || 0;
   }
 
-  // Return total amount of default currencies
   const defaultBalances = this.getDefaultCashBalances();
   return defaultBalances.reduce((sum, cb) => sum + (cb.amount || 0), 0);
 };
@@ -433,13 +422,11 @@ AccountSchema.methods.calculateTotalOutstanding = function () {
 AccountSchema.methods.setDefaultCurrencies = function (currencyIds) {
   const currencyIdStrs = currencyIds.map((id) => id.toString());
 
-  // Update acDefinition.currencies
   if (this.acDefinition?.currencies) {
     this.acDefinition.currencies.forEach((curr) => {
       curr.isDefault = currencyIdStrs.includes(curr.currency?.toString());
     });
 
-    // Add missing currencies
     currencyIdStrs.forEach((currencyId) => {
       if (
         !this.acDefinition.currencies.some(
@@ -456,12 +443,10 @@ AccountSchema.methods.setDefaultCurrencies = function (currencyIds) {
     });
   }
 
-  // Update balances.cashBalance
   this.balances.cashBalance.forEach((cb) => {
     cb.isDefault = currencyIdStrs.includes(cb.currency?.toString());
   });
 
-  // Add missing cash balances
   currencyIdStrs.forEach((currencyId) => {
     if (
       !this.balances.cashBalance.some(
@@ -522,5 +507,5 @@ AccountSchema.methods.removeCurrencyBalance = function (currencyId) {
   return this.save();
 };
 
-const Account = mongoose.model("Account", AccountSchema);
+const Account = mongoose.model('Account', AccountSchema);
 export default Account;
