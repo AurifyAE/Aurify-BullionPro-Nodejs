@@ -283,7 +283,7 @@ export const getTransactionSummary = async (req, res) => {
     const filters = req.body;
     // Call service to get report data
     const reportData = await reportService.getTransactionSummary(filters);
- 
+
     // Return success response (even if no data found)
     res.status(200).json({
       success: true,
@@ -433,7 +433,7 @@ export const getDashboard = async (req, res, next) => {
   } catch (error) {
     console.error('Dashboard controller error:', error);
 
-    next(error); 
+    next(error);
   }
 };
 export const getDashboardReport = async (req, res, next) => {
@@ -460,6 +460,6 @@ export const getDashboardReport = async (req, res, next) => {
   } catch (error) {
     console.error('Dashboard controller error:', error);
 
-    next(error); 
+    next(error);
   }
 };
