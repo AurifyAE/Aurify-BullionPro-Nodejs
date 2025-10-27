@@ -258,12 +258,18 @@ export class ReportService {
 
   async getOwnStockReport(filters) {
     try {
+      console.log(filters);
+
       // 1. Validate and normalize filters
       const validatedFilters = this.validateFilters(filters);
 
       // 2. Construct aggregation pipelines
       const stockPipeline = this.OwnStockPipeLine(validatedFilters);
-      const receivablesPayablesPipeline = this.getReceivablesAndPayables();
+      let openingDate
+      if (filters.excludeOpening) {
+        openingDate = filters.fromDate;
+      }
+      const receivablesPayablesPipeline = this.getReceivablesAndPayables(openingDate);
 
 
       // 3. Run both aggregations in parallel
@@ -271,7 +277,7 @@ export class ReportService {
         Registry.aggregate(stockPipeline),
         Account.aggregate(receivablesPayablesPipeline),
       ]);
-      
+
 
       // 4. Format the output
       const formatted = this.formatedOwnStock(reportData, receivablesAndPayables);
