@@ -19,10 +19,8 @@ export const authenticateToken = async (req, res, next) => {
         error: "MISSING_TOKEN"
       });
     }
-
     // Verify token
     const decoded = verifyToken(token);
-    
     // Optional: Verify admin still exists and is active
     const admin = await Admin.findById(decoded.id);
     if (!admin || !admin.isActive || admin.status !== "active") {
