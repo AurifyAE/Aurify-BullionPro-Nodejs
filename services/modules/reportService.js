@@ -235,7 +235,7 @@ export class ReportService {
 
       // Construct MongoDB aggregation pipeline
       const pipeline = this.buildTransactionSummaryPipeline(validatedFilters);
-      
+
 
       // Execute aggregation query
       const reportData = await Registry.aggregate(pipeline);
@@ -265,24 +265,26 @@ export class ReportService {
       const stockPipeline = this.OwnStockPipeLine(validatedFilters);
       const receivablesPayablesPipeline = this.getReceivablesAndPayables();
 
+
       // 3. Run both aggregations in parallel
+      const [reportData, receivablesAndPayables] = await Promise.all([
+        Registry.aggregate(stockPipeline),
+        Account.aggregate(receivablesPayablesPipeline),
+      ]);
+      
 
-      const reportData = await Registry.aggregate(stockPipeline)
-      const receivablesAndPayables = await Account.aggregate(receivablesPayablesPipeline)
-
-      const finilized = this.formatedOwnStock(reportData, receivablesAndPayables)
+      // 4. Format the output
+      const formatted = this.formatedOwnStock(reportData, receivablesAndPayables);
 
       // 5. Return structured response
       return {
         success: true,
-        data: finilized,
+        data: formatted,
+        totalRecords: reportData.length,
       };
-
     } catch (error) {
-      console.error("Error generating stock report:", error);
-      throw new Error(
-        `Failed to generate metal stock ledger report: ${error.message}`
-      );
+      console.error("Error generating stock by stockCode report:", error);
+      throw new Error(`Failed to generate stock report: ${error.message}`);
     }
   }
 
@@ -771,7 +773,7 @@ export class ReportService {
   }
 
   buildAccountStatementPipeline(filters) {
-  
+
 
     const goldTypes = ["PARTY_GOLD_BALANCE"];
     const cashTypes = ["PARTY_CASH_BALANCE", "MAKING_CHARGES", "PREMIUM", "DISCOUNT"];
