@@ -84,7 +84,6 @@ const handleMetalReceipt = async (entry , reference) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created stock balance entry for stock: ${stock.stock}`);
 
     // Registry entry for "gold"
     await Registry.create({
@@ -100,7 +99,6 @@ const handleMetalReceipt = async (entry , reference) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created gold entry for stock: ${reference}`);
   }
 };
 
@@ -108,7 +106,6 @@ const handleMetalReceipt = async (entry , reference) => {
 const handleCashReceipt = async (entry) => {
   // Find AccountType
   const accountType = await AccountType.findOne({ _id: entry.party });
-  console.log("Fetched accountType:", accountType);
   if (!accountType) {
     throw new Error("Account not found");
   }
@@ -119,13 +116,14 @@ const handleCashReceipt = async (entry) => {
 
     // Find and validate cash type account
     const cashType = await AccountMaster.findOne({ _id: cashItem.cashType });
-    console.log("Fetched cashType:", cashType);
+    if (!cashType) {
+      throw new Error(`Cash type account not found for ID: ${cashItem.cashType}`);
+    }
     if (!cashType) {
       // throw new Error(`Cash type account not found for ID: ${cashItem.cashType}`);
     }
 
     // Check if balances field exists
-    console.log("accountType.balances:", accountType.balances);
     if (!accountType.balances || !accountType.balances.cashBalance) {
       throw new Error("Cash balance not found for this account");
     }
@@ -134,7 +132,6 @@ const handleCashReceipt = async (entry) => {
     const currencyBalance = accountType.balances.cashBalance.find(
       (balance) => balance.currency.toString() === cashItem.currency.toString()
     );
-    console.log("currencyBalance:", currencyBalance);
 
     if (!currencyBalance) {
       throw new Error(`User doesn't have the selected currency`);
@@ -174,7 +171,6 @@ const handleCashReceipt = async (entry) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created cash balance entry for cashType: ${cashType._id}`);
 
     // Registry entry for "cash"
     await Registry.create({
@@ -190,7 +186,6 @@ const handleCashReceipt = async (entry) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created cash entry for cashType: ${cashType._id}`);
   }
 
   // Save account after all updates
@@ -199,7 +194,6 @@ const handleCashReceipt = async (entry) => {
 
 // Helper function for cash payment
 const handleCashPayment = async (entry) => {
-  console.log("Processing cash payment:", entry);
 
   // Rename variable to avoid shadowing
   const accountType = await AccountType.findOne({ _id: entry.party });
@@ -207,14 +201,12 @@ const handleCashPayment = async (entry) => {
     throw new Error("Account not found");
   }
 
-  console.log(`AccountType found: ${accountType._id}`);
 
   // Process each cash item
   for (const cashItem of entry.cash) {
     const transactionId = await Registry.generateTransactionId();
 
     // Find and validate cash type account
-    console.log(cashItem.cashType, "this is cash type");
     const cashType = await AccountMaster.findOne({ _id: cashItem.cashType });
     if (!cashType) {
       throw new Error(
@@ -222,7 +214,6 @@ const handleCashPayment = async (entry) => {
       );
     }
 
-    console.log(`CashType found: ${cashType.name || cashType._id}`);
 
     const requestedAmount = cashItem.amount || 0;
 
@@ -272,7 +263,6 @@ const handleCashPayment = async (entry) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created cash balance entry for cashType: ${cashType._id}`);
 
     // Registry entry for "cash" (credit for payment)
     await Registry.create({
@@ -288,7 +278,6 @@ const handleCashPayment = async (entry) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created cash entry for cashType: ${cashType._id}`);
   }
 
   // Save account after all updates
@@ -314,7 +303,6 @@ const handleMetalPayment = async (entry) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created stock balance entry for stock: ${stock.stock}`);
 
     // Registry entry for "gold" (credit for payment)
     await Registry.create({
@@ -330,6 +318,5 @@ const handleMetalPayment = async (entry) => {
       createdBy: entry.enteredBy,
       party: entry.party ? entry.party.toString() : null,
     });
-    console.log(`Created gold entry for stock: ${stock.stock}`);
   }
 };
