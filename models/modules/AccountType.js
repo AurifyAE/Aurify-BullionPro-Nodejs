@@ -1,4 +1,3 @@
-// models/Account.js
 import mongoose from 'mongoose';
 
 const documentSchema = new mongoose.Schema({
@@ -16,8 +15,11 @@ const vatGstDetailsSchema = new mongoose.Schema({
     default: 'UNREGISTERED',
     required: [true, 'VAT status is required'],
   },
-  vatNumber: { type: String, trim: true, maxlength: 50, default: null },
-  documents: [documentSchema],
+  vatNumber: { type: String, trim: true, maxlength: 50, default: '' },
+  documents: {
+    type: [documentSchema],
+    default: [],
+  },
 });
 
 const AccountSchema = new mongoose.Schema(
@@ -192,7 +194,7 @@ const AccountSchema = new mongoose.Schema(
     },
 
     // VAT/GST Details
-    vatGstDetails: [vatGstDetailsSchema], // Changed to array of embedded documents
+    vatGstDetails: vatGstDetailsSchema, // Changed to single embedded document
 
     // Bank Details
     bankDetails: {
@@ -259,7 +261,7 @@ const AccountSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for performance
+// Indexes for performance (unchanged)
 AccountSchema.index({ accountCode: 1 });
 AccountSchema.index({ customerName: 1 });
 AccountSchema.index({ status: 1 });
@@ -272,14 +274,12 @@ AccountSchema.index({ 'balances.goldBalance.totalGrams': 1 });
 AccountSchema.index({ 'balances.cashBalance.currency': 1 });
 AccountSchema.index({ 'balances.cashBalance.amount': 1 });
 
-// Pre-save middleware
+// Pre-save middleware (unchanged)
 AccountSchema.pre('save', function (next) {
-  // Uppercase account code
   if (this.accountCode) {
     this.accountCode = this.accountCode.toUpperCase();
   }
 
-  // Initialize cash balances for all currencies in acDefinition
   if (this.acDefinition?.currencies?.length > 0 && this.isNew) {
     const existingCurrencies = this.balances.cashBalance.map(
       (cb) => cb.currency?.toString()
@@ -298,7 +298,6 @@ AccountSchema.pre('save', function (next) {
     });
   }
 
-  // Helper function to ensure single primary/default for other fields
   const ensureSingle = (items, field) => {
     if (!items?.length) return;
     const found = items.filter((item) => item[field]);
@@ -309,7 +308,6 @@ AccountSchema.pre('save', function (next) {
     }
   };
 
-  // Ensure single primary/default for non-currency fields
   if (this.addresses) ensureSingle(this.addresses, 'isPrimary');
   if (this.employees) ensureSingle(this.employees, 'isPrimary');
   if (this.bankDetails) ensureSingle(this.bankDetails, 'isPrimary');
@@ -318,7 +316,7 @@ AccountSchema.pre('save', function (next) {
   next();
 });
 
-// Static Methods
+// Static and Instance Methods (unchanged, included for completeness)
 AccountSchema.statics.isAccountCodeExists = async function (accountCode, excludeId = null) {
   const query = { accountCode: accountCode.toUpperCase() };
   if (excludeId) query._id = { $ne: excludeId };
@@ -329,7 +327,6 @@ AccountSchema.statics.getActiveAccounts = function () {
   return this.find({ isActive: true, status: 'active' });
 };
 
-// Instance Methods (unchanged, included for completeness)
 AccountSchema.methods.getPrimaryContact = function () {
   return this.employees?.find((emp) => emp.isPrimary) || this.employees?.[0];
 };

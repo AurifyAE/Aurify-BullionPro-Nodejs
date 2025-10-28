@@ -5,10 +5,6 @@ import { deleteMultipleS3Files } from "../../utils/s3Utils.js"; // Ensure this i
 // Create new trade debtor
 export const createTradeDebtor = async (req, res, next) => {
   try {
-    // console.log('Request body:', req.body);
-    // console.log('Files info:', req.filesInfo);
-    // console.log('Files by field:', req.filesByField);
-
     const {
       title,
       accountCode,
@@ -112,11 +108,11 @@ export const createTradeDebtor = async (req, res, next) => {
     // Parse optional fields
     let parsedAddresses = parseJsonField(addresses, 'addresses') || [];
     let parsedEmployees = [];
-    let parsedVatGstDetails = [];
+    let parsedVatGstDetails = {};
     let parsedBankDetails = parseJsonField(bankDetails, 'bankDetails') || [];
     let parsedKycDetails = [];
 
-    // Parse employees from individual fields or JSON
+    // Parse employees
     const employeeFieldPattern = /^employees\[(\d+)\]\[(\w+)\]$/;
     const employeeMap = {};
     if (employees && Array.isArray(employees)) {
@@ -142,64 +138,34 @@ export const createTradeDebtor = async (req, res, next) => {
       parsedEmployees = Object.values(employeeMap);
     }
 
-    // Parse vatGstDetails from individual fields or JSON
-    const vatFieldPattern = /^vatGstDetails\[(\d+)\]\[(\w+)\]$/;
-    const vatMap = {};
-    if (vatGstDetails && Array.isArray(vatGstDetails)) {
-      parsedVatGstDetails = vatGstDetails.map((vat, index) => {
-        const parsedVat = typeof vat === 'string'
-          ? parseJsonField(vat, `vatGstDetails[${index}]`)
-          : vat;
-        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
-        if (!parsedVat.vatStatus) {
-          throw createAppError(
-            `VAT status is required for vatGstDetails[${index}]`,
-            400,
-            'MISSING_VAT_STATUS'
-          );
-        }
-        const vatStatus = validStatuses.includes(parsedVat.vatStatus.toUpperCase())
-          ? parsedVat.vatStatus.toUpperCase()
-          : 'UNREGISTERED';
-        return {
-          vatStatus,
-          vatNumber: parsedVat.vatNumber || '',
-          documents: parsedVat.documents || [],
-        };
-      });
-    } else {
-      Object.keys(req.body).forEach((key) => {
-        const match = key.match(vatFieldPattern);
-        if (match) {
-          const index = parseInt(match[1]);
-          const field = match[2];
-          if (!vatMap[index]) {
-            vatMap[index] = {};
-          }
-          vatMap[index][field] = req.body[key];
-        }
-      });
-      parsedVatGstDetails = Object.values(vatMap).map((vat, index) => {
-        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
-        if (!vat.vatStatus) {
-          throw createAppError(
-            `VAT status is required for vatGstDetails[${index}]`,
-            400,
-            'MISSING_VAT_STATUS'
-          );
-        }
-        const vatStatus = validStatuses.includes(vat.vatStatus.toUpperCase())
-          ? vat.vatStatus.toUpperCase()
-          : 'UNREGISTERED';
-        return {
-          vatStatus,
-          vatNumber: vat.vatNumber || '',
-          documents: [],
-        };
-      });
+    // Parse single vatGstDetails
+    if (vatGstDetails) {
+      parsedVatGstDetails = typeof vatGstDetails === 'string'
+        ? parseJsonField(vatGstDetails, 'vatGstDetails')
+        : vatGstDetails;
+      const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
+      if (!parsedVatGstDetails.vatStatus) {
+        throw createAppError(
+          'VAT status is required for vatGstDetails',
+          400,
+          'MISSING_VAT_STATUS'
+        );
+      }
+      parsedVatGstDetails.vatStatus = validStatuses.includes(parsedVatGstDetails.vatStatus.toUpperCase())
+        ? parsedVatGstDetails.vatStatus.toUpperCase()
+        : 'UNREGISTERED';
+      if (parsedVatGstDetails.vatStatus === 'REGISTERED' && !parsedVatGstDetails.vatNumber) {
+        throw createAppError(
+          'VAT number is required for REGISTERED status',
+          400,
+          'MISSING_VAT_NUMBER'
+        );
+      }
+      parsedVatGstDetails.vatNumber = parsedVatGstDetails.vatNumber || '';
+      parsedVatGstDetails.documents = parsedVatGstDetails.documents || [];
     }
 
-    // Parse kycDetails from individual fields or JSON
+    // Parse kycDetails
     const kycFieldPattern = /^kycDetails\[(\d+)\]\[(\w+)\]$/;
     const kycMap = {};
     if (kycDetails && Array.isArray(kycDetails)) {
@@ -284,38 +250,32 @@ export const createTradeDebtor = async (req, res, next) => {
     }
 
     // Handle VAT/GST documents
-    if (req.filesByField && parsedVatGstDetails.length > 0) {
-      parsedVatGstDetails = parsedVatGstDetails.map((vat, index) => {
-        const vatDocField = `vatGstDetails[${index}][documents][0]`;
-        if (req.filesByField[vatDocField]) {
-          const vatDocuments = req.filesByField[vatDocField].map((file) => {
-            let fileType = null;
-            if (file.mimetype.startsWith('image/')) {
-              fileType = 'image';
-            } else if (file.mimetype === 'application/pdf') {
-              fileType = 'pdf';
-            } else {
-              throw createAppError(
-                `Invalid file type for VAT/GST document: ${file.mimetype}`,
-                400,
-                'INVALID_FILE_TYPE'
-              );
-            }
-            return {
-              fileName: file.originalname,
-              filePath: file.location || file.path,
-              fileType: fileType,
-              s3Key: file.key || null,
-              uploadedAt: new Date(),
-            };
-          });
+    if (req.filesByField && parsedVatGstDetails) {
+      const vatDocField = `vatGstDetails[documents][0]`;
+      if (req.filesByField[vatDocField]) {
+        const vatDocuments = req.filesByField[vatDocField].map((file) => {
+          let fileType = null;
+          if (file.mimetype.startsWith('image/')) {
+            fileType = 'image';
+          } else if (file.mimetype === 'application/pdf') {
+            fileType = 'pdf';
+          } else {
+            throw createAppError(
+              `Invalid file type for VAT/GST document: ${file.mimetype}`,
+              400,
+              'INVALID_FILE_TYPE'
+            );
+          }
           return {
-            ...vat,
-            documents: vatDocuments,
+            fileName: file.originalname,
+            filePath: file.location || file.path,
+            fileType: fileType,
+            s3Key: file.key || null,
+            uploadedAt: new Date(),
           };
-        }
-        return vat;
-      });
+        });
+        parsedVatGstDetails.documents = vatDocuments;
+      }
     }
 
     // Handle KYC documents
@@ -432,10 +392,7 @@ export const createTradeDebtor = async (req, res, next) => {
       data: tradeDebtor,
       uploadedFiles: {
         total: req.filesInfo?.length || 0,
-        vatGstDocuments: parsedVatGstDetails.reduce(
-          (sum, vat) => sum + (vat.documents?.length || 0),
-          0
-        ),
+        vatGstDocuments: parsedVatGstDetails.documents?.length || 0,
         kycDocuments: parsedKycDetails.reduce(
           (sum, kyc) => sum + (kyc.documents?.length || 0),
           0
@@ -449,10 +406,7 @@ export const createTradeDebtor = async (req, res, next) => {
       try {
         const s3Keys = req.files.map((file) => file.key).filter((key) => key);
         if (s3Keys.length > 0) {
-          const cleanupResult = await deleteMultipleS3Files(s3Keys);
-          // console.log(
-          //   `S3 Deletion Summary: ${cleanupResult.successful.length} successful, ${cleanupResult.failed.length} failed`
-          // );
+          await deleteMultipleS3Files(s3Keys);
         }
       } catch (cleanupError) {
         console.error('Error cleaning up files:', cleanupError);
@@ -461,14 +415,9 @@ export const createTradeDebtor = async (req, res, next) => {
     next(error);
   }
 };
-// controllers/modules/accountTypeController.js
+
 export const updateTradeDebtor = async (req, res, next) => {
   let uploadedFiles = [];
-  // console.log('Updating trade debtor...');
-  // console.log('Request body:', req.body);
-  // console.log('Files info:', req.filesInfo);
-  // console.log('Files by field:', req.filesByField);
-
   try {
     const { id } = req.params;
     const { updatetype } = req.query;
@@ -588,80 +537,42 @@ export const updateTradeDebtor = async (req, res, next) => {
       }
     });
 
-    // Parse vatGstDetails from individual fields or JSON
-    const vatFieldPattern = /^vatGstDetails\[(\d+)\]\[(\w+)\]$/;
-    const vatMap = {};
-    if (updateData.vatGstDetails && Array.isArray(updateData.vatGstDetails)) {
-      updateData.vatGstDetails = updateData.vatGstDetails.map((vat, index) => {
-        const parsedVat = typeof vat === 'string'
-          ? parseJsonField(vat, `vatGstDetails[${index}]`)
-          : vat['']
-          ? parseJsonField(vat[''], `vatGstDetails[${index}]`)
-          : vat;
-        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
-        if (!parsedVat.vatStatus) {
-          throw createAppError(
-            `VAT status is required for vatGstDetails[${index}]`,
-            400,
-            'MISSING_VAT_STATUS'
-          );
-        }
-        const vatStatus = validStatuses.includes(parsedVat.vatStatus.toUpperCase())
-          ? parsedVat.vatStatus.toUpperCase()
-          : 'UNREGISTERED';
-        return {
-          vatStatus,
-          vatNumber: parsedVat.vatNumber || '',
-          documents: parsedVat.documents || [],
-        };
-      });
-    } else {
-      Object.keys(req.body).forEach((key) => {
-        const match = key.match(vatFieldPattern);
-        if (match) {
-          const index = parseInt(match[1]);
-          const field = match[2];
-          if (!vatMap[index]) {
-            vatMap[index] = {};
-          }
-          vatMap[index][field] = req.body[key];
-        }
-      });
-      updateData.vatGstDetails = Object.values(vatMap).map((vat, index) => {
-        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
-        if (!vat.vatStatus) {
-          throw createAppError(
-            `VAT status is required for vatGstDetails[${index}]`,
-            400,
-            'MISSING_VAT_STATUS'
-          );
-        }
-        const vatStatus = validStatuses.includes(vat.vatStatus.toUpperCase())
-          ? vat.vatStatus.toUpperCase()
-          : 'UNREGISTERED';
-        return {
-          vatStatus,
-          vatNumber: vat.vatNumber || '',
-          documents: vat.documents || [],
-        };
-      });
+    // Parse single vatGstDetails
+    if (updateData.vatGstDetails) {
+      updateData.vatGstDetails = typeof updateData.vatGstDetails === 'string'
+        ? parseJsonField(updateData.vatGstDetails, 'vatGstDetails')
+        : updateData.vatGstDetails;
+      const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
+      if (!updateData.vatGstDetails.vatStatus) {
+        throw createAppError(
+          'VAT status is required for vatGstDetails',
+          400,
+          'MISSING_VAT_STATUS'
+        );
+      }
+      updateData.vatGstDetails.vatStatus = validStatuses.includes(updateData.vatGstDetails.vatStatus.toUpperCase())
+        ? updateData.vatGstDetails.vatStatus.toUpperCase()
+        : 'UNREGISTERED';
+      if (updateData.vatGstDetails.vatStatus === 'REGISTERED' && !updateData.vatGstDetails.vatNumber) {
+        throw createAppError(
+          'VAT number is required for REGISTERED status',
+          400,
+          'MISSING_VAT_NUMBER'
+        );
+      }
+      updateData.vatGstDetails.vatNumber = updateData.vatGstDetails.vatNumber || '';
+      updateData.vatGstDetails.documents = updateData.vatGstDetails.documents || [];
     }
 
     // Handle VAT/GST documents
     if (req.filesByField && updateData.vatGstDetails) {
-      updateData.vatGstDetails = updateData.vatGstDetails.map((vat, index) => {
-        const vatDocField = `vatGstDetails[${index}][documents][0]`;
-        if (req.filesByField[vatDocField]) {
-          const vatDocuments = processUploadedFiles(req.filesByField[vatDocField]);
-          const replaceVatDocs = vat._replaceDocuments === 'true' || vat._replaceDocuments === true;
-          return {
-            ...vat,
-            documents: replaceVatDocs ? vatDocuments : [...(vat.documents || []), ...vatDocuments],
-            _replaceDocuments: undefined,
-          };
-        }
-        return vat;
-      });
+      const vatDocField = `vatGstDetails[documents][0]`;
+      if (req.filesByField[vatDocField]) {
+        const vatDocuments = processUploadedFiles(req.filesByField[vatDocField]);
+        const replaceVatDocs = updateData.vatGstDetails._replaceDocuments === 'true' || updateData.vatGstDetails._replaceDocuments === true;
+        updateData.vatGstDetails.documents = replaceVatDocs ? vatDocuments : [...(updateData.vatGstDetails.documents || []), ...vatDocuments];
+        updateData.vatGstDetails._replaceDocuments = undefined;
+      }
     }
 
     // Handle KYC documents
@@ -801,7 +712,7 @@ export const updateTradeDebtor = async (req, res, next) => {
             }
             employee.document = {
               fileName: docFile.originalname,
-              filePath: docFile.location || file.path,
+              filePath: docFile.location || docFile.path,
               fileType: fileType,
               s3Key: docFile.key || null,
               uploadedAt: new Date(),
@@ -853,10 +764,7 @@ export const updateTradeDebtor = async (req, res, next) => {
 
     // Calculate uploaded files info
     const filesUploaded = {
-      vatDocuments: updateData.vatGstDetails?.reduce(
-        (sum, vat) => sum + (vat.documents?.length || 0),
-        0
-      ) || 0,
+      vatDocuments: updateData.vatGstDetails?.documents?.length || 0,
       kycDocuments: updateData.kycDetails?.reduce(
         (sum, kyc) => sum + (kyc.documents?.length || 0),
         0
@@ -884,12 +792,8 @@ export const updateTradeDebtor = async (req, res, next) => {
     console.error('Error updating trade debtor:', error);
 
     if (uploadedFiles.length > 0) {
-      // console.log(`Cleaning up ${uploadedFiles.length} uploaded files due to error`);
       try {
-        const cleanupResult = await deleteMultipleS3Files(uploadedFiles);
-        // console.log(
-        //   `S3 Deletion Summary: ${cleanupResult.successful.length} successful, ${cleanupResult.failed.length} failed`
-        // );
+        await deleteMultipleS3Files(uploadedFiles);
       } catch (cleanupError) {
         console.error('Error during file cleanup:', cleanupError);
       }
