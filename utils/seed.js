@@ -18,7 +18,7 @@ async function seedOpeningTransaction() {
         }
 
         const opening = new Registry({
-            type: "PURITY_DIFFERENCE",
+            type: "OPENING",
             transactionId: "TXN-OPEN-0001",          // required
             description: "Opening balance seed entry",
             isBullion: false,
@@ -30,7 +30,7 @@ async function seedOpeningTransaction() {
             goldBidValue: 0,
             debit: 0,
             credit: 0,
-            grossWeight: 1000,
+            grossWeight: 899,
             runningBalance: 0,
             previousBalance: 0,
             transactionDate: new Date(),

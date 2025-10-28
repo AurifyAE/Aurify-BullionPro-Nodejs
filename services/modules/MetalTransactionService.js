@@ -177,7 +177,8 @@ class MetalTransactionService {
   }
 
   static buildRegistryEntries(metalTransaction, party, adminId) {
-
+    console.log("teeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    
     const {
       transactionType,
       _id,
@@ -190,6 +191,8 @@ class MetalTransactionService {
       metalRateRequirements
     } = metalTransaction;
 
+    console.log(metalTransaction)
+
     const baseTransactionId = this.generateTransactionId();
     const mode = this.getTransactionMode(fixed, unfix);
 
@@ -199,7 +202,9 @@ class MetalTransactionService {
     for (let i = 0; i < stockItems.length; i++) {
       const item = stockItems[i];
       const totals = this.calculateTotals([item], totalAmountSession); // Pass only one item
-
+      console.log("Hyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy");
+      console.log(totals);
+      
       switch (transactionType) {
         case "purchase":
           entries.push(
@@ -426,7 +431,7 @@ class MetalTransactionService {
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
-
+    console.log(totals)
 
     // Purchase-fixing entry
     if (totals.pureWeight > 0) {
@@ -633,14 +638,16 @@ class MetalTransactionService {
         )
       );
     }
-    if (totals.purityDifference > 0) {
+    console.log(totals);
+    
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -862,14 +869,14 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.purityDifference > 0) {
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -962,14 +969,14 @@ class MetalTransactionService {
         )
       );
     }
-    if (totals.purityDifference > 0) {
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -1273,14 +1280,14 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.purityDifference > 0) {
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -1658,14 +1665,14 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.purityDifference > 0) {
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -1751,14 +1758,14 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.purityDifference > 0) {
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -1984,14 +1991,14 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.purityDifference > 0) {
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -2210,14 +2217,14 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.purityDifference > 0) {
+    if (totals.purityDiffWeight != 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
           null,
           true,
           totals.purityDiff,
@@ -2446,6 +2453,8 @@ class MetalTransactionService {
   }
 
   static calculateTotals(stockItems, totalAmountSession) {
+    console.log(stockItems);
+    
 
     const totals = stockItems.reduce(
       (acc, item) => {
@@ -2462,7 +2471,7 @@ class MetalTransactionService {
         const premium = premiumDiscountAmount > 0 ? premiumDiscountAmount : 0;
         const discount =
           premiumDiscountAmount < 0 ? Math.abs(premiumDiscountAmount) : 0;
-        const purityDifference = item.purityDifference || 0;
+        const purityDiffWeight = item.purityDiffWeight || 0;
 
         return {
           makingCharges: acc.makingCharges + makingChargesAmount,
@@ -2475,7 +2484,7 @@ class MetalTransactionService {
           pureWeight: acc.pureWeight + pureWeight,
           grossWeight: acc.grossWeight + grossWeight,
           purity: acc.purity + purity,
-          purityDifference: acc.purityDifference + purityDifference,
+          purityDiffWeight: acc.purityDiffWeight + purityDiffWeight,
           goldBidValue: acc.goldBidValue || item.metalRateRequirements?.rate || 0, // Take the first valid goldBidValue
         };
       },
@@ -2490,7 +2499,7 @@ class MetalTransactionService {
         vatAmount: 0,
         otherChargesAmount: 0,
         goldBidValue: 0,
-        purityDifference: 0
+        purityDiffWeight: 0
       }
     );
 
@@ -2699,7 +2708,7 @@ class MetalTransactionService {
     return `TXN${currentYear}${randomNum}`;
   }
 
-  static handleError(error) {
+  static handleError(error) {    
     if (error.name === "ValidationError") {
       const errors = Object.values(error.errors).map((err) => err.message);
       throw createAppError(

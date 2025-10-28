@@ -258,21 +258,20 @@ export class ReportService {
 
   async getOwnStockReport(filters) {
     try {
-
       // 1. Validate and normalize filters
       const validatedFilters = this.validateFilters(filters);
 
       // 2. Construct aggregation pipelines
       const stockPipeline = this.OwnStockPipeLine(validatedFilters);
-      let openingDate = null
+
+      let openingDate = null;
+      let getOpeningBalance = { opening: 0, purityDifference: 100, netPurchase: 0 };
       if (!filters.excludeOpening) {
         openingDate = filters.fromDate;
+        getOpeningBalance = await this.getOpeningBalance(openingDate); // Await the Promise
       }
-      const getOpeningBalance = this.getOpeningBalance(openingDate);
-      const receivablesPayablesPipeline = this.getReceivablesAndPayables(openingDate);
 
-
-
+      const receivablesPayablesPipeline = this.getReceivablesAndPayables();
 
       // 3. Run both aggregations in parallel
       const [reportData, receivablesAndPayables] = await Promise.all([
@@ -280,12 +279,13 @@ export class ReportService {
         Account.aggregate(receivablesPayablesPipeline),
       ]);
 
-      console.log(receivablesAndPayables)
+      console.log("-----receivablesAndPayables------");
+      console.log(reportData);
+      console.log(receivablesAndPayables);
       console.log(getOpeningBalance);
 
-
       // 4. Format the output
-      const formatted = this.formatedOwnStock(reportData, receivablesAndPayables);
+      const formatted = this.formatedOwnStock(reportData, receivablesAndPayables, getOpeningBalance);
 
       // 5. Return structured response
       return {
@@ -2833,6 +2833,7 @@ export class ReportService {
 
       const result = await Registry.aggregate(pipeline);
       const data = result[0] || { netPurchase: 0, purityDifference: 0 };
+      console.log(data.purityDifference);
 
       // Opening = 0 + net purchase + purity diff
       const opening = 0 + data.netPurchase + data.purityDifference;
@@ -2847,7 +2848,7 @@ export class ReportService {
 
 
 
-  getReceivablesAndPayables(openingDate) {
+  getReceivablesAndPayables() {
     const pipeline = [
       {
         $facet: {
@@ -2927,7 +2928,9 @@ export class ReportService {
 
     return pipeline;
   }
-  formatedOwnStock(reportData, receivablesAndPayables) {
+  formatedOwnStock(reportData, receivablesAndPayables, openingBalance) {
+    console.log();
+
     const summary = {
       totalGrossWeight: 0,
       netGrossWeight: 0,
@@ -2935,23 +2938,39 @@ export class ReportService {
       totalReceivableGrams: 0,
       totalPayableGrams: 0,
       avgGrossWeight: 0,
-      avgReceivableGrams: 0,
-      avgPayableGrams: 0,
-      avgBidValue: 0
+      avgBidValue: 0,
+      openingBalance: openingBalance?.opening || 0, // Use resolved opening balance
+      netPurchase: 0,
+      purityDifference: 0, // Use resolved or default
+      shortLongPosition: 0
     };
 
     // Extract receivable/payable safely
     if (receivablesAndPayables?.length) {
-      summary.totalReceivableGrams = receivablesAndPayables[0].totalReceivableGrams || 0;
-      summary.totalPayableGrams = receivablesAndPayables[0].totalPayableGrams || 0;
-      summary.avgReceivableGrams = receivablesAndPayables[0].avgReceivableGrams || 0;
-      summary.avgPayableGrams = receivablesAndPayables[0].avgPayableGrams || 0;
+      summary.totalReceivableGrams = Number(receivablesAndPayables[0].totalReceivableGrams?.toFixed(2)) || 0;
+      summary.totalPayableGrams = Number(receivablesAndPayables[0].totalPayableGrams?.toFixed(2)) || 0;
     }
 
-    const categories = reportData.map((item) => {
+    // Define purchase and sale categories
+    const purchaseCategories = ['PRM', 'PF', 'PR'];
+    const saleCategories = ['SAL', 'PR', 'SF'];
+
+    let totalPurchase = 0;
+    let totalSale = 0;
+    let purchasePurityDifference = 0;
+    let salePurityDifference = 0;
+
+    const categories = reportData?.length ? reportData.map((item) => {
       summary.totalGrossWeight += item.totalGrossWeight || 0;
-      summary.netGrossWeight += item.netGrossWeight || 0;
       summary.totalValue += item.totalValue || 0;
+
+      if (purchaseCategories.includes(item.category)) {
+        totalPurchase += item.totalGrossWeight || 0;
+        purchasePurityDifference += item.totalPurityDiff || 0;
+      } else if (saleCategories.includes(item.category)) {
+        totalSale += item.totalGrossWeight || 0;
+        salePurityDifference += item.totalPurityDiff || 0;
+      }
 
       return {
         category: item.category,
@@ -2963,9 +2982,24 @@ export class ReportService {
         avgBidValue: item.avgBidValue,
         netGrossWeight: item.netGrossWeight,
         latestTransactionDate: item.latestTransactionDate,
+        totalPurityDiff: item.totalPurityDiff
       };
-    });
+    }) : [];
 
+    // Calculate averages
+    const totalCategories = reportData?.length || 0;
+    summary.avgGrossWeight = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgGrossWeight || 0), 0) / totalCategories : 0;
+    summary.avgBidValue = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgBidValue || 0), 0) / totalCategories : 0;
+
+    // Calculate summary fields
+    summary.netPurchase = totalPurchase - totalSale;
+    summary.purityDifference = purchasePurityDifference + salePurityDifference;
+    summary.netGrossWeight = totalPurchase - totalSale;
+    summary.shortLongPosition = summary.openingBalance + summary.netPurchase + summary.purityDifference;
+
+    // log puriy difference
+    console.log("Purity Difference - Purchase:", purchasePurityDifference, "Sale:", salePurityDifference, "Total:", summary.purityDifference);
+  
     return {
       summary,
       categories
@@ -3077,27 +3111,17 @@ export class ReportService {
       $unwind: { path: "$metalstocks", preserveNullAndEmptyArrays: true },
     });
 
+    pipeline.push({
+      $unwind: {
+        path: "$metaltransactions.stockItems",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
 
     /* ------------------------------------------
        Step 7: Sort by transactionDate to ensure consistent $first selection
     ------------------------------------------ */
     pipeline.push({ $sort: { transactionDate: 1 } });
-
-    // pipeline.push({
-    //   $unwind: {
-    //     path: "$metaltransactions.stockItems",
-    //     preserveNullAndEmptyArrays: true
-    //   }
-    // });
-    // pipeline.push({
-    //   $unwind: {
-    //     path: "$transactionfixings.orders",
-    //     preserveNullAndEmptyArrays: true
-    //   }
-    // });
-
-    // return pipeline
-
 
     /* ------------------------------------------
        Step 8: First Group by full reference to take first value per unique voucher
@@ -3110,6 +3134,7 @@ export class ReportService {
         totalbidvalue: { $first: { $ifNull: ["$goldBidValue", 0] } },
         totalDebit: { $first: { $ifNull: ["$debit", 0] } },
         totalCredit: { $first: { $ifNull: ["$credit", 0] } },
+        totalPurityDiff: { $sum: { $ifNull: ["$metaltransactions.stockItems.purityDiffWeight", 0] } },
         latestTransactionDate: { $max: "$transactionDate" },
       },
     });
@@ -3147,6 +3172,7 @@ export class ReportService {
         totalbidvalue: { $sum: "$totalbidvalue" },
         totalDebit: { $sum: "$totalDebit" },
         totalCredit: { $sum: "$totalCredit" },
+        totalPurityDiff: { $sum: "$totalPurityDiff" }, // <-- added
         transactionCount: { $sum: 1 },
         latestTransactionDate: { $max: "$latestTransactionDate" },
       },
@@ -3189,6 +3215,8 @@ export class ReportService {
         },
         transactionCount: 1,
         latestTransactionDate: 1,
+        totalPurityDiff: 1, // <-- included in output
+
       },
     });
 
