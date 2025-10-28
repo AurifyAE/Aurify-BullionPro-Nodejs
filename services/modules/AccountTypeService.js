@@ -20,51 +20,63 @@ class AccountTypeService {
           "DUPLICATE_ACCOUNT_CODE"
         );
       }
-
-
-      // hash the password if provided
+  
+      // Hash the password if provided
       if (debtorData.password) {
-        // Hash for login
         const passwordHash = await hashPassword(debtorData.password);
-        // Encrypt for admin
         const { encrypted, iv } = encryptPassword(debtorData.password);
         debtorData.passwordHash = passwordHash;
         debtorData.passwordEncrypted = encrypted;
-        debtorData.passwordIV = iv
+        debtorData.passwordIV = iv;
+      } else {
+        debtorData.passwordHash = null;
+        debtorData.passwordEncrypted = null;
+        debtorData.passwordIV = null;
       }
-
-
-
+  
       // Set created by
       debtorData.createdBy = adminId;
-
-      // FIXED: Clean up empty objects to prevent validation errors
-      if (debtorData.vatGstDetails && Object.keys(debtorData.vatGstDetails).length === 0) {
-        delete debtorData.vatGstDetails; // Remove empty object
+  
+      // Clean up empty objects to prevent validation errors
+      if (
+        debtorData.vatGstDetails &&
+        Object.keys(debtorData.vatGstDetails).length === 0
+      ) {
+        delete debtorData.vatGstDetails;
       }
-
-      if (debtorData.kycDetails && Array.isArray(debtorData.kycDetails) && debtorData.kycDetails.length === 0) {
-        delete debtorData.kycDetails; // Remove empty array
-      }
-
-      // Clean up kycDetails array - remove items that have no meaningful data
+  
+      // Process kycDetails
       if (debtorData.kycDetails && Array.isArray(debtorData.kycDetails)) {
-        debtorData.kycDetails = debtorData.kycDetails.filter(kyc => {
-          // Keep KYC record if it has documents or any meaningful data
-          return (kyc.documents && kyc.documents.length > 0) ||
-            kyc.documentType ||
-            kyc.documentNumber ||
-            kyc.issueDate ||
-            kyc.expiryDate;
+        debtorData.kycDetails = debtorData.kycDetails.filter((kyc) => {
+          return (
+            kyc.documentType &&
+            kyc.documentNumber &&
+            (kyc.documents?.length > 0 || kyc.issueDate || kyc.expiryDate)
+          );
         });
-
-        // If no valid KYC records remain, remove the field entirely
+  
+        for (const kyc of debtorData.kycDetails) {
+          if (!kyc.documents) {
+            kyc.documents = [];
+          }
+          if (kyc.isVerified === undefined) {
+            kyc.isVerified = false;
+          }
+          // Ensure dates are properly formatted
+          if (kyc.issueDate) {
+            kyc.issueDate = new Date(kyc.issueDate);
+          }
+          if (kyc.expiryDate) {
+            kyc.expiryDate = new Date(kyc.expiryDate);
+          }
+        }
+  
         if (debtorData.kycDetails.length === 0) {
           delete debtorData.kycDetails;
         }
       }
-
-      // Ensure only one primary address (if addresses provided)
+  
+      // Ensure only one primary address
       if (debtorData.addresses && debtorData.addresses.length > 0) {
         let primaryFound = false;
         debtorData.addresses.forEach((address, index) => {
@@ -78,8 +90,8 @@ class AccountTypeService {
           }
         });
       }
-
-      // Ensure only one primary employee (if employees provided)
+  
+      // Ensure only one primary employee
       if (debtorData.employees && debtorData.employees.length > 0) {
         let primaryFound = false;
         debtorData.employees.forEach((employee, index) => {
@@ -93,8 +105,8 @@ class AccountTypeService {
           }
         });
       }
-
-      // Ensure only one primary bank (if bank details provided)
+  
+      // Ensure only one primary bank
       if (debtorData.bankDetails && debtorData.bankDetails.length > 0) {
         let primaryFound = false;
         debtorData.bankDetails.forEach((bank, index) => {
@@ -108,60 +120,34 @@ class AccountTypeService {
           }
         });
       }
-
-      // Ensure only one default currency in acDefinition (required field)
-      if (debtorData.acDefinition && debtorData.acDefinition.currencies && debtorData.acDefinition.currencies.length > 0) {
-        let defaultFound = false;
-        debtorData.acDefinition.currencies.forEach((currency, index) => {
-          if (currency.isDefault && !defaultFound) {
-            defaultFound = true;
-          } else if (currency.isDefault && defaultFound) {
-            currency.isDefault = false;
-          } else if (index === 0 && !defaultFound) {
-            currency.isDefault = true;
-            defaultFound = true;
-          }
-        });
+  
+      // Initialize cash balances for all currencies in acDefinition
+      if (
+        debtorData.acDefinition &&
+        debtorData.acDefinition.currencies &&
+        debtorData.acDefinition.currencies.length > 0
+      ) {
+        debtorData.balances = debtorData.balances || {};
+        debtorData.balances.cashBalance =
+          debtorData.acDefinition.currencies.map((curr) => ({
+            currency: curr.currency?._id || curr.currency,
+            amount: 0,
+            isDefault: curr.isDefault || false,
+            lastUpdated: new Date(),
+          }));
+        debtorData.balances.goldBalance = {
+          totalGrams: 0,
+          totalValue: 0,
+          lastUpdated: new Date(),
+        };
+        debtorData.balances.totalOutstanding = 0;
+        debtorData.balances.lastBalanceUpdate = new Date();
       }
-
-      // Ensure only one default branch (if branches provided)
-      if (debtorData.acDefinition && debtorData.acDefinition.branches && debtorData.acDefinition.branches.length > 0) {
-        let defaultFound = false;
-        debtorData.acDefinition.branches.forEach((branch, index) => {
-          if (branch.isDefault && !defaultFound) {
-            defaultFound = true;
-          } else if (branch.isDefault && defaultFound) {
-            branch.isDefault = false;
-          } else if (index === 0 && !defaultFound) {
-            branch.isDefault = true;
-            defaultFound = true;
-          }
-        });
-      }
-
-      // Handle remaining KYC details if they exist
-      if (debtorData.kycDetails && Array.isArray(debtorData.kycDetails)) {
-        debtorData.kycDetails.forEach(kyc => {
-          if (!kyc.documents) {
-            kyc.documents = [];
-          }
-          if (kyc.isVerified === undefined) {
-            kyc.isVerified = false;
-          }
-          // Don't set issueDate if it's not provided - let schema handle defaults
-        });
-      }
-
-      // handle the password field and add to debtorData
-      if (!debtorData.password) {
-        debtorData.password = null; // or set to a default hashed password if required
-      }
-
-
-      // Create trade debtor - schema will handle defaults
+  
+      // Create trade debtor
       const tradeDebtor = new AccountType(debtorData);
       await tradeDebtor.save();
-
+  
       // Populate references for response
       await tradeDebtor.populate([
         {
@@ -181,7 +167,7 @@ class AccountTypeService {
           select: "name email role",
         },
       ]);
-
+  
       return tradeDebtor;
     } catch (error) {
       if (error.name === "ValidationError") {
@@ -192,7 +178,7 @@ class AccountTypeService {
           "VALIDATION_ERROR"
         );
       }
-
+  
       if (error.code === 11000) {
         const field = Object.keys(error.keyPattern)[0];
         throw createAppError(
@@ -201,7 +187,7 @@ class AccountTypeService {
           "DUPLICATE_FIELD_VALUE"
         );
       }
-
+  
       if (error.name === "CastError") {
         throw createAppError(
           `Invalid value for field: ${error.path}`,
@@ -209,7 +195,7 @@ class AccountTypeService {
           "INVALID_FIELD_VALUE"
         );
       }
-
+  
       throw error;
     }
   }

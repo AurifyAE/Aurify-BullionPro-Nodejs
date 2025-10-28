@@ -235,7 +235,7 @@ export class ReportService {
 
       // Construct MongoDB aggregation pipeline
       const pipeline = this.buildTransactionSummaryPipeline(validatedFilters);
-      
+
 
       // Execute aggregation query
       const reportData = await Registry.aggregate(pipeline);
@@ -258,31 +258,44 @@ export class ReportService {
 
   async getOwnStockReport(filters) {
     try {
+
       // 1. Validate and normalize filters
       const validatedFilters = this.validateFilters(filters);
 
       // 2. Construct aggregation pipelines
       const stockPipeline = this.OwnStockPipeLine(validatedFilters);
-      const receivablesPayablesPipeline = this.getReceivablesAndPayables();
+      let openingDate = null
+      if (!filters.excludeOpening) {
+        openingDate = filters.fromDate;
+      }
+      const getOpeningBalance = this.getOpeningBalance(openingDate);
+      const receivablesPayablesPipeline = this.getReceivablesAndPayables(openingDate);
+
+
+
 
       // 3. Run both aggregations in parallel
+      const [reportData, receivablesAndPayables] = await Promise.all([
+        Registry.aggregate(stockPipeline),
+        Account.aggregate(receivablesPayablesPipeline),
+      ]);
 
-      const reportData = await Registry.aggregate(stockPipeline)
-      const receivablesAndPayables = await Account.aggregate(receivablesPayablesPipeline)
+      console.log(receivablesAndPayables)
+      console.log(getOpeningBalance);
 
-      const finilized = this.formatedOwnStock(reportData, receivablesAndPayables)
+
+      // 4. Format the output
+      const formatted = this.formatedOwnStock(reportData, receivablesAndPayables);
 
       // 5. Return structured response
       return {
         success: true,
-        data: finilized,
+        data: formatted,
+        totalRecords: reportData.length,
       };
-
     } catch (error) {
-      console.error("Error generating stock report:", error);
-      throw new Error(
-        `Failed to generate metal stock ledger report: ${error.message}`
-      );
+      console.error("Error generating stock by stockCode report:", error);
+      throw new Error(`Failed to generate stock report: ${error.message}`);
     }
   }
 
@@ -771,7 +784,7 @@ export class ReportService {
   }
 
   buildAccountStatementPipeline(filters) {
-  
+
 
     const goldTypes = ["PARTY_GOLD_BALANCE"];
     const cashTypes = ["PARTY_CASH_BALANCE", "MAKING_CHARGES", "PREMIUM", "DISCOUNT"];
@@ -2746,8 +2759,95 @@ export class ReportService {
     return pipeline;
   }
 
+  async getOpeningBalance(fromDate) {
+    try {
+      if (!fromDate)
+        throw new Error("From date is required to calculate opening balance");
 
-  getReceivablesAndPayables() {
+      const startDate = new Date(fromDate);
+      const year = startDate.getFullYear();
+      const financialStart = new Date(`${year}-01-01T00:00:00.000Z`);
+
+      const previousDay = new Date(startDate);
+      previousDay.setDate(previousDay.getDate() - 1);
+      previousDay.setHours(23, 59, 59, 999);
+
+      if (previousDay < financialStart) {
+        return { opening: 0 };
+      }
+
+      const pipeline = [
+        {
+          $match: {
+            isActive: true,
+            type: { $in: ["purchase-fixing", "sales-fixing", "PURITY_DIFFERENCE"] },
+            transactionDate: { $gte: financialStart, $lte: previousDay },
+          },
+        },
+        {
+          $project: {
+            type: 1,
+            grossWeight: { $ifNull: ["$grossWeight", 0] },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalPurchase: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$type", "purchase-fixing"] },
+                  "$grossWeight",
+                  0,
+                ],
+              },
+            },
+            totalSales: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$type", "sales-fixing"] },
+                  "$grossWeight",
+                  0,
+                ],
+              },
+            },
+            purityDifference: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$type", "PURITY_DIFFERENCE"] },
+                  "$grossWeight",
+                  0,
+                ],
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            netPurchase: { $subtract: ["$totalPurchase", "$totalSales"] },
+            purityDifference: 1,
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      const data = result[0] || { netPurchase: 0, purityDifference: 0 };
+
+      // Opening = 0 + net purchase + purity diff
+      const opening = 0 + data.netPurchase + data.purityDifference;
+
+      return { opening, ...data };
+
+    } catch (error) {
+      console.error("Error calculating opening balance:", error);
+      throw new Error(`Failed to calculate opening balance: ${error.message}`);
+    }
+  }
+
+
+
+  getReceivablesAndPayables(openingDate) {
     const pipeline = [
       {
         $facet: {
