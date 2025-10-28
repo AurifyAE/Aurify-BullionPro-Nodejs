@@ -1,12 +1,13 @@
 import AccountTypeService from "../../services/modules/AccountTypeService.js";
 import { createAppError } from "../../utils/errorHandler.js";
+import { deleteMultipleS3Files } from "../../utils/s3Utils.js"; // Ensure this import is added
 
 // Create new trade debtor
 export const createTradeDebtor = async (req, res, next) => {
   try {
-    console.log("Request body:", req.body);
-    console.log("Files info:", req.filesInfo);
-    console.log("Files by field:", req.filesByField);
+    // console.log('Request body:', req.body);
+    // console.log('Files info:', req.filesInfo);
+    // console.log('Files by field:', req.filesByField);
 
     const {
       title,
@@ -22,38 +23,43 @@ export const createTradeDebtor = async (req, res, next) => {
       acDefinition,
       limitsMargins,
       addresses,
-      employees,
-      vatGstDetails,
       bankDetails,
+      vatGstDetails,
+      employees,
       kycDetails,
     } = req.body;
 
-    let accountType = "DEBTOR";
+    let accountType = 'DEBTOR';
 
     // Basic validation - required fields
     if (!accountCode || !customerName || !title || !accountType) {
       throw createAppError(
-        "Required fields missing: accountType, title, accountCode, customerName",
+        'Required fields missing: accountType, title, accountCode, customerName',
         400,
-        "REQUIRED_FIELDS_MISSING"
+        'REQUIRED_FIELDS_MISSING'
       );
     }
+
+    // Parse JSON fields safely
+    const parseJsonField = (field, fieldName) => {
+      if (!field) return field;
+      if (typeof field === 'string') {
+        try {
+          return JSON.parse(field);
+        } catch (parseError) {
+          console.warn(`Failed to parse JSON field: ${fieldName}`, parseError);
+          throw createAppError(
+            `Invalid JSON format for ${fieldName}`,
+            400,
+            'INVALID_JSON_FORMAT'
+          );
+        }
+      }
+      return field;
+    };
 
     // Validate acDefinition.currencies (required)
-    let parsedAcDefinition;
-    try {
-      parsedAcDefinition =
-        typeof acDefinition === "string"
-          ? JSON.parse(acDefinition)
-          : acDefinition;
-    } catch (parseError) {
-      throw createAppError(
-        "Invalid JSON format for acDefinition",
-        400,
-        "INVALID_JSON_FORMAT"
-      );
-    }
-
+    let parsedAcDefinition = parseJsonField(acDefinition, 'acDefinition');
     if (
       !parsedAcDefinition ||
       !parsedAcDefinition.currencies ||
@@ -61,9 +67,9 @@ export const createTradeDebtor = async (req, res, next) => {
       parsedAcDefinition.currencies.length === 0
     ) {
       throw createAppError(
-        "At least one currency is required in acDefinition",
+        'At least one currency is required in acDefinition',
         400,
-        "MISSING_CURRENCY"
+        'MISSING_CURRENCY'
       );
     }
 
@@ -71,34 +77,22 @@ export const createTradeDebtor = async (req, res, next) => {
     const currencyCodes = parsedAcDefinition.currencies.map(
       (c) => c.currency?.currencyCode || c.currencyCode
     );
-    const requiredCurrencies = ["USD", "AED"];
+    const requiredCurrencies = ['USD', 'AED'];
     const missingCurrencies = requiredCurrencies.filter(
       (code) => !currencyCodes.includes(code)
     );
-
     if (missingCurrencies.length > 0) {
       throw createAppError(
-        `Required currencies missing: ${missingCurrencies.join(", ")}. USD and AED must be included.`,
+        `Required currencies missing: ${missingCurrencies.join(
+          ', '
+        )}. USD and AED must be included.`,
         400,
-        "MISSING_REQUIRED_CURRENCIES"
+        'MISSING_REQUIRED_CURRENCIES'
       );
     }
 
     // Validate Margin if limitsMargins provided
-    let parsedLimitsMargins;
-    try {
-      parsedLimitsMargins =
-        typeof limitsMargins === "string"
-          ? JSON.parse(limitsMargins)
-          : limitsMargins;
-    } catch (parseError) {
-      throw createAppError(
-        "Invalid JSON format for limitsMargins",
-        400,
-        "INVALID_JSON_FORMAT"
-      );
-    }
-
+    let parsedLimitsMargins = parseJsonField(limitsMargins, 'limitsMargins');
     if (
       parsedLimitsMargins &&
       Array.isArray(parsedLimitsMargins) &&
@@ -107,160 +101,177 @@ export const createTradeDebtor = async (req, res, next) => {
       for (const limit of parsedLimitsMargins) {
         if (limit.Margin === undefined || limit.Margin === null) {
           throw createAppError(
-            "Margin is required in limitsMargins",
+            'Margin is required in limitsMargins',
             400,
-            "MISSING_MARGIN"
+            'MISSING_MARGIN'
           );
         }
       }
     }
 
-    // Parse optional JSON strings
-    let parsedAddresses,
-      parsedEmployees,
-      parsedVatGstDetails,
-      parsedBankDetails,
-      parsedKycDetails;
+    // Parse optional fields
+    let parsedAddresses = parseJsonField(addresses, 'addresses') || [];
+    let parsedEmployees = [];
+    let parsedVatGstDetails = [];
+    let parsedBankDetails = parseJsonField(bankDetails, 'bankDetails') || [];
+    let parsedKycDetails = [];
 
-    try {
-      parsedAddresses = addresses
-        ? typeof addresses === "string"
-          ? JSON.parse(addresses)
-          : addresses
-        : [];
-
-      // Parse employees
-      if (employees) {
-        if (typeof employees === "string") {
-          parsedEmployees = JSON.parse(employees);
-        } else if (Array.isArray(employees)) {
-          parsedEmployees = employees;
-        } else {
-          parsedEmployees = [];
-        }
-      } else {
-        parsedEmployees = [];
-        const employeeFieldPattern = /^employees\[(\d+)\]\[(\w+)\]$/;
-        const employeeMap = {};
-
-        Object.keys(req.body).forEach((key) => {
-          const match = key.match(employeeFieldPattern);
-          if (match) {
-            const index = parseInt(match[1]);
-            const field = match[2];
-
-            if (!employeeMap[index]) {
-              employeeMap[index] = {};
-            }
-
-            employeeMap[index][field] = req.body[key];
-          }
-        });
-
-        Object.keys(employeeMap).forEach((index) => {
-          parsedEmployees.push(employeeMap[index]);
-        });
-      }
-
-      parsedVatGstDetails = vatGstDetails
-        ? typeof vatGstDetails === "string"
-          ? JSON.parse(vatGstDetails)
-          : vatGstDetails
-        : null;
-
-      parsedBankDetails = bankDetails
-        ? typeof bankDetails === "string"
-          ? JSON.parse(bankDetails)
-          : bankDetails
-        : [];
-
-      parsedKycDetails = kycDetails
-        ? typeof kycDetails === "string"
-          ? JSON.parse(kycDetails)
-          : kycDetails
-        : [];
-    } catch (parseError) {
-      throw createAppError(
-        "Invalid JSON format in optional data",
-        400,
-        "INVALID_JSON_FORMAT"
+    // Parse employees from individual fields or JSON
+    const employeeFieldPattern = /^employees\[(\d+)\]\[(\w+)\]$/;
+    const employeeMap = {};
+    if (employees && Array.isArray(employees)) {
+      parsedEmployees = employees.map((emp, index) =>
+        typeof emp === 'string'
+          ? parseJsonField(emp, `employees[${index}]`)
+          : emp
       );
+    } else if (employees && typeof employees === 'string') {
+      parsedEmployees = parseJsonField(employees, 'employees');
+    } else {
+      Object.keys(req.body).forEach((key) => {
+        const match = key.match(employeeFieldPattern);
+        if (match) {
+          const index = parseInt(match[1]);
+          const field = match[2];
+          if (!employeeMap[index]) {
+            employeeMap[index] = {};
+          }
+          employeeMap[index][field] = req.body[key];
+        }
+      });
+      parsedEmployees = Object.values(employeeMap);
     }
 
-    // Normalize VAT status
-    if (parsedVatGstDetails && parsedVatGstDetails.vatStatus) {
-      const vatStatusMap = {
-        registered: "REGISTERED",
-        unregistered: "UNREGISTERED",
-        exempted: "EXEMPTED",
-      };
+    // Parse vatGstDetails from individual fields or JSON
+    const vatFieldPattern = /^vatGstDetails\[(\d+)\]\[(\w+)\]$/;
+    const vatMap = {};
+    if (vatGstDetails && Array.isArray(vatGstDetails)) {
+      parsedVatGstDetails = vatGstDetails.map((vat, index) => {
+        const parsedVat = typeof vat === 'string'
+          ? parseJsonField(vat, `vatGstDetails[${index}]`)
+          : vat;
+        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
+        if (!parsedVat.vatStatus) {
+          throw createAppError(
+            `VAT status is required for vatGstDetails[${index}]`,
+            400,
+            'MISSING_VAT_STATUS'
+          );
+        }
+        const vatStatus = validStatuses.includes(parsedVat.vatStatus.toUpperCase())
+          ? parsedVat.vatStatus.toUpperCase()
+          : 'UNREGISTERED';
+        return {
+          vatStatus,
+          vatNumber: parsedVat.vatNumber || '',
+          documents: parsedVat.documents || [],
+        };
+      });
+    } else {
+      Object.keys(req.body).forEach((key) => {
+        const match = key.match(vatFieldPattern);
+        if (match) {
+          const index = parseInt(match[1]);
+          const field = match[2];
+          if (!vatMap[index]) {
+            vatMap[index] = {};
+          }
+          vatMap[index][field] = req.body[key];
+        }
+      });
+      parsedVatGstDetails = Object.values(vatMap).map((vat, index) => {
+        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
+        if (!vat.vatStatus) {
+          throw createAppError(
+            `VAT status is required for vatGstDetails[${index}]`,
+            400,
+            'MISSING_VAT_STATUS'
+          );
+        }
+        const vatStatus = validStatuses.includes(vat.vatStatus.toUpperCase())
+          ? vat.vatStatus.toUpperCase()
+          : 'UNREGISTERED';
+        return {
+          vatStatus,
+          vatNumber: vat.vatNumber || '',
+          documents: [],
+        };
+      });
+    }
 
-      const normalizedStatus =
-        vatStatusMap[parsedVatGstDetails.vatStatus.toLowerCase()];
-      if (normalizedStatus) {
-        parsedVatGstDetails.vatStatus = normalizedStatus;
-      } else {
-        parsedVatGstDetails.vatStatus = null;
-      }
+    // Parse kycDetails from individual fields or JSON
+    const kycFieldPattern = /^kycDetails\[(\d+)\]\[(\w+)\]$/;
+    const kycMap = {};
+    if (kycDetails && Array.isArray(kycDetails)) {
+      parsedKycDetails = kycDetails.map((kyc, index) =>
+        typeof kyc === 'string'
+          ? parseJsonField(kyc, `kycDetails[${index}]`)
+          : kyc['']
+          ? parseJsonField(kyc[''], `kycDetails[${index}]`)
+          : kyc
+      );
+    } else if (kycDetails && typeof kycDetails === 'string') {
+      parsedKycDetails = parseJsonField(kycDetails, 'kycDetails');
+    } else {
+      Object.keys(req.body).forEach((key) => {
+        const match = key.match(kycFieldPattern);
+        if (match) {
+          const index = parseInt(match[1]);
+          const field = match[2];
+          if (!kycMap[index]) {
+            kycMap[index] = {};
+          }
+          kycMap[index][field] = req.body[key];
+        }
+      });
+      parsedKycDetails = Object.values(kycMap);
     }
 
     // Validate addresses
-    if (
-      parsedAddresses &&
-      Array.isArray(parsedAddresses) &&
-      parsedAddresses.length > 0
-    ) {
+    if (parsedAddresses && Array.isArray(parsedAddresses) && parsedAddresses.length > 0) {
       for (const address of parsedAddresses) {
         if (
           address.email &&
           !/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(address.email)
         ) {
           throw createAppError(
-            "Invalid email format in address",
+            'Invalid email format in address',
             400,
-            "INVALID_EMAIL_FORMAT"
+            'INVALID_EMAIL_FORMAT'
           );
         }
       }
     }
 
     // Handle employee documents
-    if (
-      parsedEmployees &&
-      Array.isArray(parsedEmployees) &&
-      parsedEmployees.length > 0
-    ) {
+    if (parsedEmployees && Array.isArray(parsedEmployees) && parsedEmployees.length > 0) {
       for (let i = 0; i < parsedEmployees.length; i++) {
         const employee = parsedEmployees[i];
-
         if (
           employee.email &&
           !/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(employee.email)
         ) {
           throw createAppError(
-            "Invalid email format in employee",
+            'Invalid email format in employee',
             400,
-            "INVALID_EMAIL_FORMAT"
+            'INVALID_EMAIL_FORMAT'
           );
         }
-
         const employeeDocField = `employees[${i}][document]`;
         if (req.filesByField && req.filesByField[employeeDocField]) {
           const docFile = req.filesByField[employeeDocField][0];
-
           let fileType = null;
-          if (docFile.mimetype.startsWith("image/")) {
-            fileType = "image";
-          } else if (docFile.mimetype === "application/pdf") {
-            fileType = "pdf";
+          if (docFile.mimetype.startsWith('image/')) {
+            fileType = 'image';
+          } else if (docFile.mimetype === 'application/pdf') {
+            fileType = 'pdf';
           } else {
             throw createAppError(
               `Invalid file type for employee document: ${docFile.mimetype}`,
               400,
-              "INVALID_FILE_TYPE"
+              'INVALID_FILE_TYPE'
             );
           }
-
           employee.document = {
             fileName: docFile.originalname,
             filePath: docFile.location || docFile.path,
@@ -273,60 +284,58 @@ export const createTradeDebtor = async (req, res, next) => {
     }
 
     // Handle VAT/GST documents
-    let processedVatGstDetails = parsedVatGstDetails;
-    if (req.filesByField && req.filesByField["vatGstDetails.documents"]) {
-      if (!processedVatGstDetails) {
-        processedVatGstDetails = {};
-      }
-      if (!processedVatGstDetails.documents) {
-        processedVatGstDetails.documents = [];
-      }
-      processedVatGstDetails.documents.push(
-        ...req.filesByField["vatGstDetails.documents"].map((file) => {
-          let fileType = null;
-          if (file.mimetype.startsWith("image/")) {
-            fileType = "image";
-          } else if (file.mimetype === "application/pdf") {
-            fileType = "pdf";
-          } else {
-            throw createAppError(
-              `Invalid file type for VAT/GST document: ${file.mimetype}`,
-              400,
-              "INVALID_FILE_TYPE"
-            );
-          }
+    if (req.filesByField && parsedVatGstDetails.length > 0) {
+      parsedVatGstDetails = parsedVatGstDetails.map((vat, index) => {
+        const vatDocField = `vatGstDetails[${index}][documents][0]`;
+        if (req.filesByField[vatDocField]) {
+          const vatDocuments = req.filesByField[vatDocField].map((file) => {
+            let fileType = null;
+            if (file.mimetype.startsWith('image/')) {
+              fileType = 'image';
+            } else if (file.mimetype === 'application/pdf') {
+              fileType = 'pdf';
+            } else {
+              throw createAppError(
+                `Invalid file type for VAT/GST document: ${file.mimetype}`,
+                400,
+                'INVALID_FILE_TYPE'
+              );
+            }
+            return {
+              fileName: file.originalname,
+              filePath: file.location || file.path,
+              fileType: fileType,
+              s3Key: file.key || null,
+              uploadedAt: new Date(),
+            };
+          });
           return {
-            fileName: file.originalname,
-            filePath: file.location || file.path,
-            fileType: fileType,
-            s3Key: file.key || null,
-            uploadedAt: new Date(),
+            ...vat,
+            documents: vatDocuments,
           };
-        })
-      );
+        }
+        return vat;
+      });
     }
 
-    // Handle multiple KYC documents
-    let processedKycDetails = parsedKycDetails || [];
-    if (req.filesByField) {
-      processedKycDetails = processedKycDetails.map((kyc, index) => {
+    // Handle KYC documents
+    if (req.filesByField && parsedKycDetails.length > 0) {
+      parsedKycDetails = parsedKycDetails.map((kyc, index) => {
         const kycDocField = `kycDetails[${index}][document]`;
         if (req.filesByField[kycDocField]) {
           const file = req.filesByField[kycDocField][0];
-
           let fileType = null;
-          if (file.mimetype.startsWith("image/")) {
-            fileType = "image";
-          } else if (file.mimetype === "application/pdf") {
-            fileType = "pdf";
+          if (file.mimetype.startsWith('image/')) {
+            fileType = 'image';
+          } else if (file.mimetype === 'application/pdf') {
+            fileType = 'pdf';
           } else {
             throw createAppError(
               `Invalid file type for KYC document at index ${index}: ${file.mimetype}`,
               400,
-              "INVALID_FILE_TYPE"
+              'INVALID_FILE_TYPE'
             );
           }
-
           return {
             ...kyc,
             documents: [
@@ -345,20 +354,20 @@ export const createTradeDebtor = async (req, res, next) => {
     }
 
     // Validate KYC details
-    if (processedKycDetails.length > 0) {
-      for (const [index, kyc] of processedKycDetails.entries()) {
+    if (parsedKycDetails.length > 0) {
+      for (const [index, kyc] of parsedKycDetails.entries()) {
         if (!kyc.documentType || !kyc.documentNumber) {
           throw createAppError(
             `KYC entry at index ${index} is missing documentType or documentNumber`,
             400,
-            "MISSING_KYC_FIELDS"
+            'MISSING_KYC_FIELDS'
           );
         }
         if (!kyc.documents || kyc.documents.length === 0) {
           throw createAppError(
             `KYC entry at index ${index} is missing a document`,
             400,
-            "MISSING_KYC_DOCUMENT"
+            'MISSING_KYC_DOCUMENT'
           );
         }
       }
@@ -371,39 +380,27 @@ export const createTradeDebtor = async (req, res, next) => {
       accountCode: accountCode.trim().toUpperCase(),
       customerName: customerName.trim(),
       acDefinition: parsedAcDefinition,
+      vatGstDetails: parsedVatGstDetails,
+      createdBy: req.admin.id,
     };
 
     // Add optional fields
     if (classification) tradeDebtorData.classification = classification.trim();
     if (remarks) tradeDebtorData.remarks = remarks.trim();
     if (isSupplier !== undefined)
-      tradeDebtorData.isSupplier = isSupplier === "true" || isSupplier === true;
+      tradeDebtorData.isSupplier = isSupplier === 'true' || isSupplier === true;
     if (favorite !== undefined)
-      tradeDebtorData.favorite = favorite === "true" || favorite === true;
-
+      tradeDebtorData.favorite = favorite === 'true' || favorite === true;
     if (parsedLimitsMargins && parsedLimitsMargins.length > 0)
       tradeDebtorData.limitsMargins = parsedLimitsMargins;
     if (parsedAddresses && parsedAddresses.length > 0)
       tradeDebtorData.addresses = parsedAddresses;
     if (parsedEmployees && parsedEmployees.length > 0)
       tradeDebtorData.employees = parsedEmployees;
-
-    if (
-      processedVatGstDetails &&
-      (processedVatGstDetails.vatStatus ||
-        processedVatGstDetails.vatNumber ||
-        (processedVatGstDetails.documents &&
-          processedVatGstDetails.documents.length > 0))
-    ) {
-      tradeDebtorData.vatGstDetails = processedVatGstDetails;
-    }
-
     if (parsedBankDetails && parsedBankDetails.length > 0)
       tradeDebtorData.bankDetails = parsedBankDetails;
-
-    if (processedKycDetails && processedKycDetails.length > 0) {
-      tradeDebtorData.kycDetails = processedKycDetails;
-    }
+    if (parsedKycDetails && parsedKycDetails.length > 0)
+      tradeDebtorData.kycDetails = parsedKycDetails;
 
     // Initialize cash balances
     if (parsedAcDefinition.currencies && parsedAcDefinition.currencies.length > 0) {
@@ -431,12 +428,15 @@ export const createTradeDebtor = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      message: "Trade debtor created successfully",
+      message: 'Trade debtor created successfully',
       data: tradeDebtor,
       uploadedFiles: {
         total: req.filesInfo?.length || 0,
-        vatGstDocuments: processedVatGstDetails?.documents?.length || 0,
-        kycDocuments: processedKycDetails.reduce(
+        vatGstDocuments: parsedVatGstDetails.reduce(
+          (sum, vat) => sum + (vat.documents?.length || 0),
+          0
+        ),
+        kycDocuments: parsedKycDetails.reduce(
           (sum, kyc) => sum + (kyc.documents?.length || 0),
           0
         ),
@@ -449,16 +449,455 @@ export const createTradeDebtor = async (req, res, next) => {
       try {
         const s3Keys = req.files.map((file) => file.key).filter((key) => key);
         if (s3Keys.length > 0) {
-          await deleteMultipleS3Files(s3Keys);
+          const cleanupResult = await deleteMultipleS3Files(s3Keys);
+          // console.log(
+          //   `S3 Deletion Summary: ${cleanupResult.successful.length} successful, ${cleanupResult.failed.length} failed`
+          // );
         }
       } catch (cleanupError) {
-        console.error("Error cleaning up files:", cleanupError);
+        console.error('Error cleaning up files:', cleanupError);
       }
     }
     next(error);
   }
 };
+// controllers/modules/accountTypeController.js
+export const updateTradeDebtor = async (req, res, next) => {
+  let uploadedFiles = [];
+  // console.log('Updating trade debtor...');
+  // console.log('Request body:', req.body);
+  // console.log('Files info:', req.filesInfo);
+  // console.log('Files by field:', req.filesByField);
 
+  try {
+    const { id } = req.params;
+    const { updatetype } = req.query;
+    let updateData = { ...req.body };
+
+    if (!id) {
+      throw createAppError('Trade debtor ID is required', 400, 'MISSING_ID');
+    }
+
+    // Handle type update separately
+    if (updatetype === 'true') {
+      const updatedTradeDebtor = await AccountTypeService.updateTradeDebtor(
+        id,
+        updateData,
+        req.admin.id
+      );
+      return res.status(200).json({ message: 'Type updated', data: updatedTradeDebtor });
+    }
+
+    // Keep track of uploaded files for cleanup on error
+    if (req.files && req.files.length > 0) {
+      uploadedFiles = req.files
+        .map((file) => file.key || file.filename)
+        .filter(Boolean);
+    }
+
+    // Helper function to process uploaded files
+    const processUploadedFiles = (files) => {
+      return files.map((file) => {
+        let fileType = null;
+        if (file.mimetype.startsWith('image/')) {
+          fileType = 'image';
+        } else if (file.mimetype === 'application/pdf') {
+          fileType = 'pdf';
+        } else {
+          throw createAppError(
+            `Invalid file type: ${file.mimetype}. Only image and PDF are allowed.`,
+            400,
+            'INVALID_FILE_TYPE'
+          );
+        }
+        return {
+          fileName: file.originalname,
+          filePath: file.location || file.path,
+          fileType: fileType,
+          s3Key: file.key || null,
+          uploadedAt: new Date(),
+        };
+      });
+    };
+
+    // Parse JSON fields safely
+    const parseJsonField = (field, fieldName) => {
+      if (!field) return field;
+      if (typeof field === 'string') {
+        try {
+          return JSON.parse(field);
+        } catch (e) {
+          console.warn(`Failed to parse JSON field: ${fieldName}`, e);
+          throw createAppError(
+            `Invalid JSON format for ${fieldName}`,
+            400,
+            'INVALID_JSON_FORMAT'
+          );
+        }
+      }
+      return field;
+    };
+
+    // Required fields validation
+    if (!updateData.accountCode || !updateData.customerName || !updateData.title) {
+      throw createAppError(
+        'Required fields missing: accountCode, customerName, title',
+        400,
+        'REQUIRED_FIELDS_MISSING'
+      );
+    }
+
+    // Parse and validate acDefinition
+    if (updateData.acDefinition) {
+      updateData.acDefinition = parseJsonField(updateData.acDefinition, 'acDefinition');
+      if (
+        !updateData.acDefinition ||
+        !updateData.acDefinition.currencies ||
+        !Array.isArray(updateData.acDefinition.currencies) ||
+        updateData.acDefinition.currencies.length === 0
+      ) {
+        throw createAppError(
+          'At least one currency is required in acDefinition',
+          400,
+          'MISSING_CURRENCY'
+        );
+      }
+
+      // Validate USD and AED are included
+      const currencyCodes = updateData.acDefinition.currencies.map(
+        (c) => c.currency?.currencyCode || c.currencyCode
+      );
+      const requiredCurrencies = ['USD', 'AED'];
+      const missingCurrencies = requiredCurrencies.filter(
+        (code) => !currencyCodes.includes(code)
+      );
+      if (missingCurrencies.length > 0) {
+        throw createAppError(
+          `Required currencies missing: ${missingCurrencies.join(', ')}. USD and AED must be included.`,
+          400,
+          'MISSING_REQUIRED_CURRENCIES'
+        );
+      }
+    }
+
+    // Parse optional JSON fields
+    const jsonFields = ['addresses', 'employees', 'bankDetails', 'limitsMargins'];
+    jsonFields.forEach((field) => {
+      if (updateData[field]) {
+        updateData[field] = parseJsonField(updateData[field], field);
+      }
+    });
+
+    // Parse vatGstDetails from individual fields or JSON
+    const vatFieldPattern = /^vatGstDetails\[(\d+)\]\[(\w+)\]$/;
+    const vatMap = {};
+    if (updateData.vatGstDetails && Array.isArray(updateData.vatGstDetails)) {
+      updateData.vatGstDetails = updateData.vatGstDetails.map((vat, index) => {
+        const parsedVat = typeof vat === 'string'
+          ? parseJsonField(vat, `vatGstDetails[${index}]`)
+          : vat['']
+          ? parseJsonField(vat[''], `vatGstDetails[${index}]`)
+          : vat;
+        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
+        if (!parsedVat.vatStatus) {
+          throw createAppError(
+            `VAT status is required for vatGstDetails[${index}]`,
+            400,
+            'MISSING_VAT_STATUS'
+          );
+        }
+        const vatStatus = validStatuses.includes(parsedVat.vatStatus.toUpperCase())
+          ? parsedVat.vatStatus.toUpperCase()
+          : 'UNREGISTERED';
+        return {
+          vatStatus,
+          vatNumber: parsedVat.vatNumber || '',
+          documents: parsedVat.documents || [],
+        };
+      });
+    } else {
+      Object.keys(req.body).forEach((key) => {
+        const match = key.match(vatFieldPattern);
+        if (match) {
+          const index = parseInt(match[1]);
+          const field = match[2];
+          if (!vatMap[index]) {
+            vatMap[index] = {};
+          }
+          vatMap[index][field] = req.body[key];
+        }
+      });
+      updateData.vatGstDetails = Object.values(vatMap).map((vat, index) => {
+        const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
+        if (!vat.vatStatus) {
+          throw createAppError(
+            `VAT status is required for vatGstDetails[${index}]`,
+            400,
+            'MISSING_VAT_STATUS'
+          );
+        }
+        const vatStatus = validStatuses.includes(vat.vatStatus.toUpperCase())
+          ? vat.vatStatus.toUpperCase()
+          : 'UNREGISTERED';
+        return {
+          vatStatus,
+          vatNumber: vat.vatNumber || '',
+          documents: vat.documents || [],
+        };
+      });
+    }
+
+    // Handle VAT/GST documents
+    if (req.filesByField && updateData.vatGstDetails) {
+      updateData.vatGstDetails = updateData.vatGstDetails.map((vat, index) => {
+        const vatDocField = `vatGstDetails[${index}][documents][0]`;
+        if (req.filesByField[vatDocField]) {
+          const vatDocuments = processUploadedFiles(req.filesByField[vatDocField]);
+          const replaceVatDocs = vat._replaceDocuments === 'true' || vat._replaceDocuments === true;
+          return {
+            ...vat,
+            documents: replaceVatDocs ? vatDocuments : [...(vat.documents || []), ...vatDocuments],
+            _replaceDocuments: undefined,
+          };
+        }
+        return vat;
+      });
+    }
+
+    // Handle KYC documents
+    if (updateData.kycDetails) {
+      let parsedKycDetails = [];
+      if (Array.isArray(updateData.kycDetails)) {
+        parsedKycDetails = updateData.kycDetails.map((kyc, index) => {
+          const parsedKyc = typeof kyc === 'string'
+            ? parseJsonField(kyc, `kycDetails[${index}]`)
+            : kyc['']
+            ? parseJsonField(kyc[''], `kycDetails[${index}]`)
+            : kyc;
+          return {
+            ...parsedKyc,
+            documents: parsedKyc.documents || [],
+          };
+        });
+      } else {
+        const kycFieldPattern = /^kycDetails\[(\d+)\]\[(\w+)\]$/;
+        const kycMap = {};
+        Object.keys(req.body).forEach((key) => {
+          const match = key.match(kycFieldPattern);
+          if (match) {
+            const index = parseInt(match[1]);
+            const field = match[2];
+            if (!kycMap[index]) {
+              kycMap[index] = {};
+            }
+            kycMap[index][field] = req.body[key];
+          }
+        });
+        parsedKycDetails = Object.values(kycMap);
+      }
+
+      // Process KYC documents with file uploads
+      if (req.filesByField) {
+        parsedKycDetails = parsedKycDetails.map((kyc, index) => {
+          const kycDocField = `kycDetails[${index}][document]`;
+          if (req.filesByField[kycDocField]) {
+            const file = req.filesByField[kycDocField][0];
+            let fileType = null;
+            if (file.mimetype.startsWith('image/')) {
+              fileType = 'image';
+            } else if (file.mimetype === 'application/pdf') {
+              fileType = 'pdf';
+            } else {
+              throw createAppError(
+                `Invalid file type for KYC document at index ${index}: ${file.mimetype}`,
+                400,
+                'INVALID_FILE_TYPE'
+              );
+            }
+            const replaceKycDocs = kyc._replaceDocuments === 'true' || kyc._replaceDocuments === true;
+            return {
+              ...kyc,
+              documents: replaceKycDocs
+                ? [{
+                    fileName: file.originalname,
+                    filePath: file.location || file.path,
+                    fileType: fileType,
+                    s3Key: file.key || null,
+                    uploadedAt: new Date(),
+                  }]
+                : [
+                    ...(kyc.documents || []),
+                    {
+                      fileName: file.originalname,
+                      filePath: file.location || file.path,
+                      fileType: fileType,
+                      s3Key: file.key || null,
+                      uploadedAt: new Date(),
+                    },
+                  ],
+              _replaceDocuments: undefined,
+            };
+          }
+          return kyc;
+        });
+      }
+
+      // Validate KYC details
+      updateData.kycDetails = parsedKycDetails.filter(
+        (kyc) => kyc.documentType && kyc.documentNumber
+      );
+    }
+
+    // Handle employees and their documents
+    if (updateData.employees) {
+      if (typeof updateData.employees === 'string') {
+        updateData.employees = parseJsonField(updateData.employees, 'employees');
+      } else if (!Array.isArray(updateData.employees)) {
+        const employeeFieldPattern = /^employees\[(\d+)\]\[(\w+)\]$/;
+        const employeeMap = {};
+        Object.keys(req.body).forEach((key) => {
+          const match = key.match(employeeFieldPattern);
+          if (match) {
+            const index = parseInt(match[1]);
+            const field = match[2];
+            if (!employeeMap[index]) {
+              employeeMap[index] = {};
+            }
+            employeeMap[index][field] = req.body[key];
+          }
+        });
+        updateData.employees = Object.values(employeeMap);
+      }
+
+      // Validate employee emails and process documents
+      if (Array.isArray(updateData.employees) && updateData.employees.length > 0) {
+        for (let i = 0; i < updateData.employees.length; i++) {
+          const employee = updateData.employees[i];
+          if (
+            employee.email &&
+            !/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(employee.email)
+          ) {
+            throw createAppError(
+              'Invalid email format in employee',
+              400,
+              'INVALID_EMAIL_FORMAT'
+            );
+          }
+
+          const employeeDocField = `employees[${i}][document]`;
+          if (req.filesByField && req.filesByField[employeeDocField]) {
+            const docFile = req.filesByField[employeeDocField][0];
+            let fileType = null;
+            if (docFile.mimetype.startsWith('image/')) {
+              fileType = 'image';
+            } else if (docFile.mimetype === 'application/pdf') {
+              fileType = 'pdf';
+            } else {
+              throw createAppError(
+                `Invalid file type for employee document: ${docFile.mimetype}`,
+                400,
+                'INVALID_FILE_TYPE'
+              );
+            }
+            employee.document = {
+              fileName: docFile.originalname,
+              filePath: docFile.location || file.path,
+              fileType: fileType,
+              s3Key: docFile.key || null,
+              uploadedAt: new Date(),
+            };
+          }
+        }
+      }
+    }
+
+    // Trim string fields
+    const stringFields = [
+      'accountCode',
+      'customerName',
+      'title',
+      'shortName',
+      'parentGroup',
+      'remarks',
+    ];
+    stringFields.forEach((field) => {
+      if (updateData[field] && typeof updateData[field] === 'string') {
+        updateData[field] =
+          field === 'accountCode'
+            ? updateData[field].trim().toUpperCase()
+            : updateData[field].trim();
+      }
+    });
+
+    // Convert boolean fields
+    if (updateData.isSupplier !== undefined) {
+      updateData.isSupplier = updateData.isSupplier === 'true' || updateData.isSupplier === true;
+    }
+    if (updateData.favorite !== undefined) {
+      updateData.favorite = updateData.favorite === 'true' || updateData.favorite === true;
+    }
+
+    // Clean up client-side flags
+    delete updateData.replaceVatDocuments;
+    delete updateData.replaceKycDocuments;
+    delete updateData.removeVatDocuments;
+    delete updateData.removeKycDocuments;
+    delete updateData.confirmPassword;
+
+    // Call the service to update the trade debtor
+    const updatedTradeDebtor = await AccountTypeService.updateTradeDebtor(
+      id,
+      updateData,
+      req.admin.id
+    );
+
+    // Calculate uploaded files info
+    const filesUploaded = {
+      vatDocuments: updateData.vatGstDetails?.reduce(
+        (sum, vat) => sum + (vat.documents?.length || 0),
+        0
+      ) || 0,
+      kycDocuments: updateData.kycDetails?.reduce(
+        (sum, kyc) => sum + (kyc.documents?.length || 0),
+        0
+      ) || 0,
+      employeeDocuments: updateData.employees?.filter((emp) => emp.document).length || 0,
+      generalDocuments:
+        (req.filesByField?.['documents']?.length || 0) +
+        (req.filesByField?.['files']?.length || 0) +
+        (req.filesByField?.['file']?.length || 0),
+      total: (req.files || []).length,
+    };
+
+    const response = {
+      success: true,
+      message: 'Trade debtor updated successfully',
+      data: updatedTradeDebtor,
+    };
+
+    if (filesUploaded.total > 0) {
+      response.filesUploaded = filesUploaded;
+    }
+
+    res.status(200).json(response);
+  } catch (error) {
+    console.error('Error updating trade debtor:', error);
+
+    if (uploadedFiles.length > 0) {
+      // console.log(`Cleaning up ${uploadedFiles.length} uploaded files due to error`);
+      try {
+        const cleanupResult = await deleteMultipleS3Files(uploadedFiles);
+        // console.log(
+        //   `S3 Deletion Summary: ${cleanupResult.successful.length} successful, ${cleanupResult.failed.length} failed`
+        // );
+      } catch (cleanupError) {
+        console.error('Error during file cleanup:', cleanupError);
+      }
+    }
+
+    next(error);
+  }
+};
 
 // Get all trade debtors
 export const getAllTradeDebtors = async (req, res, next) => {
@@ -528,334 +967,7 @@ export const getTradeDebtorById = async (req, res, next) => {
   }
 };
 
-// Update trade debtor
-export const updateTradeDebtor = async (req, res, next) => {
 
-  let uploadedFiles = [];
-
-  try {
-    const { id } = req.params;
-    let updateData = { ...req.body };
-    const { updatetype } = req.query;
-    // for updating type
-    if (updatetype === "true") {
-      const updatedTradeDebtor = await AccountTypeService.updateTradeDebtor(
-        id,
-        updateData,
-        req.admin.id
-      );
-      return res.status(200).json({ message: "Type updated", data: updatedTradeDebtor });
-    }
-
-    if (!id) {
-      throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
-    }
-
-
-    // Keep track of uploaded files for cleanup on error
-    if (req.files && req.files.length > 0) {
-      uploadedFiles = req.files
-        .map((file) => file.key || file.filename)
-        .filter(Boolean);
-    }
-
-    // Helper function to process uploaded files
-    const processUploadedFiles = (files) => {
-      return files.map((file) => ({
-        fileName: file.originalname,
-        filePath: file.location || file.path,
-        fileType: file.mimetype,
-        s3Key: file.key || null,
-        uploadedAt: new Date(),
-      }));
-    };
-
-    // Parse JSON strings if they come as strings (common with FormData)
-    const parseJsonField = (field) => {
-      if (typeof field === "string") {
-        try {
-          return JSON.parse(field);
-        } catch (e) {
-          console.warn(`Failed to parse JSON field: ${field}`);
-          return field;
-        }
-      }
-      return field;
-    };
-
-    // Handle file uploads and document management
-    if (req.filesByField && Object.keys(req.filesByField).length > 0) {
-      // Process VAT documents
-      if (req.filesByField["vatGstDetails.documents"]) {
-        const vatDocuments = processUploadedFiles(
-          req.filesByField["vatGstDetails.documents"]
-        );
-        let processedVatGstDetails =
-          parseJsonField(updateData.vatGstDetails) || {};
-
-        // Check if we should replace existing documents or append
-        const replaceVatDocs =
-          updateData.replaceVatDocuments === "true" ||
-          updateData.replaceVatDocuments === true;
-
-        if (replaceVatDocs) {
-          // Replace all existing VAT documents
-          processedVatGstDetails.documents = vatDocuments;
-          updateData._replaceVatDocuments = true;
-          console.log(
-            `Replacing VAT documents with ${vatDocuments.length} new files`
-          );
-        } else {
-          // Append to existing documents
-          processedVatGstDetails.documents = vatDocuments; // New documents only
-          console.log(`Adding ${vatDocuments.length} new VAT documents`);
-        }
-
-        updateData.vatGstDetails = processedVatGstDetails;
-      }
-
-      // Handle VAT document removal
-      if (updateData.removeVatDocuments) {
-        const documentsToRemove = Array.isArray(updateData.removeVatDocuments)
-          ? updateData.removeVatDocuments
-          : [updateData.removeVatDocuments];
-        updateData._removeVatDocuments = documentsToRemove;
-        console.log(`Removing VAT documents:`, documentsToRemove);
-      }
-
-      // Process KYC documents
-      if (req.filesByField["kycDetails.documents"]) {
-        const kycDocuments = processUploadedFiles(
-          req.filesByField["kycDetails.documents"]
-        );
-        let processedKycDetails = parseJsonField(updateData.kycDetails) || [];
-
-        const replaceKycDocs =
-          updateData.replaceKycDocuments === "true" ||
-          updateData.replaceKycDocuments === true;
-
-        // Ensure processedKycDetails is an array
-        if (!Array.isArray(processedKycDetails)) {
-          processedKycDetails = [];
-        }
-
-        // Get or create the first KYC entry
-        if (processedKycDetails.length === 0) {
-          processedKycDetails.push({});
-        }
-
-        if (replaceKycDocs) {
-          // Replace documents in first KYC entry
-          processedKycDetails[0].documents = kycDocuments;
-          processedKycDetails[0]._replaceDocuments = true;
-          console.log(
-            `Replacing KYC documents with ${kycDocuments.length} new files`
-          );
-        } else {
-          // Add new documents (will be merged with existing in service)
-          processedKycDetails[0].documents = kycDocuments;
-          console.log(`Adding ${kycDocuments.length} new KYC documents`);
-        }
-
-        updateData.kycDetails = processedKycDetails;
-      }
-
-      // Handle KYC document removal
-      if (updateData.removeKycDocuments) {
-        const documentsToRemove = Array.isArray(updateData.removeKycDocuments)
-          ? updateData.removeKycDocuments
-          : [updateData.removeKycDocuments];
-
-        if (!updateData.kycDetails) {
-          updateData.kycDetails = [{}];
-        } else if (!Array.isArray(updateData.kycDetails)) {
-          updateData.kycDetails = [updateData.kycDetails];
-        }
-
-        if (updateData.kycDetails.length === 0) {
-          updateData.kycDetails.push({});
-        }
-
-        updateData.kycDetails[0]._removeDocuments = documentsToRemove;
-        console.log(`Removing KYC documents:`, documentsToRemove);
-      }
-
-      // Process general documents (add to VAT documents)
-      const generalDocuments = [];
-      ["documents", "files", "file"].forEach((fieldName) => {
-        if (req.filesByField[fieldName]) {
-          generalDocuments.push(
-            ...processUploadedFiles(req.filesByField[fieldName])
-          );
-        }
-      });
-
-      if (generalDocuments.length > 0) {
-        if (!updateData.vatGstDetails) {
-          updateData.vatGstDetails = {};
-        }
-        const vatGstDetails = parseJsonField(updateData.vatGstDetails);
-        vatGstDetails.documents = [
-          ...(vatGstDetails.documents || []),
-          ...generalDocuments,
-        ];
-        updateData.vatGstDetails = vatGstDetails;
-        console.log(
-          `Added ${generalDocuments.length} general documents to VAT section`
-        );
-      }
-    }
-
-    // Parse JSON fields that might come as strings
-    const jsonFields = [
-      "addresses",
-      "employees",
-      "acDefinition",
-      "limitsMargins",
-      "bankDetails",
-      "kycDetails",
-      "vatGstDetails",
-    ];
-
-    jsonFields.forEach((field) => {
-      if (updateData[field]) {
-        updateData[field] = parseJsonField(updateData[field]);
-      }
-    });
-
-    // Trim string fields if they exist
-    const stringFields = [
-      "accountCode",
-      "customerName",
-      "title",
-      "shortName",
-      "parentGroup",
-      "remarks",
-    ];
-    stringFields.forEach((field) => {
-      if (updateData[field] && typeof updateData[field] === "string") {
-        updateData[field] =
-          field === "accountCode"
-            ? updateData[field].trim().toUpperCase()
-            : updateData[field].trim();
-      }
-    });
-
-    // Validate addresses if provided
-    // if (updateData.addresses && Array.isArray(updateData.addresses)) {
-    //   for (const address of updateData.addresses) {
-    //     if (
-    //       !address.streetAddress ||
-    //       !address.city ||
-    //       !address.country ||
-    //       !address.zipCode
-    //     ) {
-    //       throw createAppError(
-    //         "Address must include streetAddress, city, country, and zipCode",
-    //         400,
-    //         "INVALID_ADDRESS_DATA"
-    //       );
-    //     }
-    //   }
-    // }
-
-    // Validate employees if provided
-    // if (updateData.employees && Array.isArray(updateData.employees)) {
-    //   for (const employee of updateData.employees) {
-    //     if (
-    //       !employee.name ||
-    //       !employee.designation ||
-    //       !employee.email ||
-    //       !employee.mobile
-    //     ) {
-    //       throw createAppError(
-    //         "Employee must include name, designation, email, and mobile",
-    //         400,
-    //         "INVALID_EMPLOYEE_DATA"
-    //       );
-    //     }
-    //   }
-    // }
-
-    // Clean up client-side flags
-    delete updateData.replaceVatDocuments;
-    delete updateData.replaceKycDocuments;
-    delete updateData.removeVatDocuments;
-    delete updateData.removeKycDocuments;
-
-    // Call the service to update the trade debtor
-    const updatedTradeDebtor = await AccountTypeService.updateTradeDebtor(
-      id,
-      updateData,
-      req.admin.id
-    );
-
-    // Calculate uploaded files info
-    const filesUploaded = {
-      vatDocuments: req.filesByField?.["vatGstDetails.documents"]?.length || 0,
-      kycDocuments: req.filesByField?.["kycDetails.documents"]?.length || 0,
-      generalDocuments:
-        (req.filesByField?.["documents"]?.length || 0) +
-        (req.filesByField?.["files"]?.length || 0) +
-        (req.filesByField?.["file"]?.length || 0),
-      total: (req.files || []).length,
-    };
-
-    const response = {
-      success: true,
-      message: "Trade debtor updated successfully",
-      data: updatedTradeDebtor,
-    };
-
-    // Add file upload info if files were uploaded
-    if (filesUploaded.total > 0) {
-      response.filesUploaded = filesUploaded;
-    }
-
-    // Add file management info if files were deleted
-    if (updatedTradeDebtor._filesManagement?.filesDeleted > 0) {
-      response.filesManagement = {
-        oldFilesDeleted: updatedTradeDebtor._filesManagement.filesDeleted,
-        filesFailedToDelete:
-          updatedTradeDebtor._filesManagement.filesFailedToDelete || 0,
-        message: `${updatedTradeDebtor._filesManagement.filesDeleted} old files were removed from S3`,
-      };
-
-      if (updatedTradeDebtor._filesManagement.filesFailedToDelete > 0) {
-        response.filesManagement.warning = `${updatedTradeDebtor._filesManagement.filesFailedToDelete} files could not be deleted from S3`;
-      }
-    }
-
-    res.status(200).json(response);
-  } catch (error) {
-    console.error("Error updating trade debtor:", error);
-
-    // Clean up uploaded files if error occurs and we have files to clean up
-    if (uploadedFiles.length > 0) {
-      console.log(
-        `Cleaning up ${uploadedFiles.length} uploaded files due to error`
-      );
-      try {
-        const cleanupResult = await deleteMultipleS3Files(uploadedFiles);
-        if (cleanupResult.successful?.length > 0) {
-          console.log(
-            `Successfully cleaned up ${cleanupResult.successful.length} uploaded files`
-          );
-        }
-        if (cleanupResult.failed?.length > 0) {
-          console.warn(
-            `Failed to clean up ${cleanupResult.failed.length} files:`,
-            cleanupResult.failed
-          );
-        }
-      } catch (cleanupError) {
-        console.error("Error during file cleanup:", cleanupError);
-      }
-    }
-
-    next(error);
-  }
-};
 
 // Delete trade debtor (soft delete)
 export const deleteTradeDebtor = async (req, res, next) => {
@@ -890,7 +1002,7 @@ export const hardDeleteTradeDebtor = async (req, res, next) => {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
     }
 
-    console.log(`Processing hard delete request for trade debtor: ${id}`);
+    // console.log(`Processing hard delete request for trade debtor: ${id}`);
 
     const result = await AccountTypeService.hardDeleteTradeDebtor(id);
 
@@ -919,11 +1031,11 @@ export const hardDeleteTradeDebtor = async (req, res, next) => {
       }
     }
 
-    console.log(`Hard delete completed for trade debtor ${id}:`, {
-      filesTotal: result.filesDeleted?.total || 0,
-      filesDeleted: result.filesDeleted?.successful || 0,
-      filesFailed: result.filesDeleted?.failed || 0,
-    });
+    // console.log(`Hard delete completed for trade debtor ${id}:`, {
+    //   filesTotal: result.filesDeleted?.total || 0,
+    //   filesDeleted: result.filesDeleted?.successful || 0,
+    //   filesFailed: result.filesDeleted?.failed || 0,
+    // });
 
     res.status(200).json(response);
   } catch (error) {
