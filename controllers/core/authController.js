@@ -11,6 +11,7 @@ import { decryptPassword, verifyPassword } from "../../utils/passwordUtils.js";
 export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
+    
     const ipAddress = req.ip || req.connection.remoteAddress;
     const result = await loginAdmin(email, password, ipAddress);
     // for login
