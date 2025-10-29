@@ -48,7 +48,8 @@ router.put(
 );
 router.put("/:id/toggle-status", toggleTradeDebtorStatus);
 // DELETE routes
-router.delete("/:id", deleteTradeDebtor);
+// router.delete("/:id", deleteTradeDebtor);
+router.delete("/:id", hardDeleteTradeDebtor);
 router.delete("/:id/hard-delete", hardDeleteTradeDebtor);
 
 export default router;
