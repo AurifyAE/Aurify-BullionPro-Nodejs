@@ -32,7 +32,7 @@ class BranchMasterService {
 
     const [branches, total] = await Promise.all([
       Branch.find(query)
-        .populate("currency", "code name symbol")
+        .populate("currency", "currencyCode conversionRate")
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email")
         .sort({ createdAt: -1 })
