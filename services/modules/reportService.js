@@ -268,7 +268,7 @@ export class ReportService {
       let getOpeningBalance = { opening: 0, purityDifference: 100, netPurchase: 0 };
       if (!filters.excludeOpening) {
         openingDate = filters.fromDate;
-        getOpeningBalance = await this.getOpeningBalance(openingDate); // Await the Promise
+        getOpeningBalance = await this.getOpeningBalance(openingDate, validatedFilters);
       }
 
       const receivablesPayablesPipeline = this.getReceivablesAndPayables();
@@ -2759,7 +2759,7 @@ export class ReportService {
     return pipeline;
   }
 
-  async getOpeningBalance(fromDate) {
+  async getOpeningBalance(fromDate, filters) {
     try {
       if (!fromDate)
         throw new Error("From date is required to calculate opening balance");
@@ -2780,14 +2780,36 @@ export class ReportService {
         {
           $match: {
             isActive: true,
-            type: { $in: ["purchase-fixing", "sales-fixing", "PURITY_DIFFERENCE"] },
+            type: { $in: ["purchase-fixing", "sales-fixing"] },
             transactionDate: { $gte: financialStart, $lte: previousDay },
+          },
+        },
+        {
+          $lookup: {
+            from: "metaltransactions",
+            localField: "metalTransactionId",
+            foreignField: "_id",
+            as: "metalTransaction",
+          },
+        },
+        { $unwind: { path: "$metalTransaction", preserveNullAndEmptyArrays: true } },
+        {
+          $unwind: {
+            path: "$metalTransaction.stockItems",
+            preserveNullAndEmptyArrays: true,
           },
         },
         {
           $project: {
             type: 1,
             grossWeight: { $ifNull: ["$grossWeight", 0] },
+            purityDiffWeight: {
+              $cond: [
+                { $eq: ["$metalTransaction.fixed", true] },
+                { $ifNull: ["$metalTransaction.stockItems.purityDiffWeight", 0] },
+                0,
+              ],
+            },
           },
         },
         {
@@ -2795,56 +2817,39 @@ export class ReportService {
             _id: null,
             totalPurchase: {
               $sum: {
-                $cond: [
-                  { $eq: ["$type", "purchase-fixing"] },
-                  "$grossWeight",
-                  0,
-                ],
+                $cond: [{ $eq: ["$type", "purchase-fixing"] }, "$grossWeight", 0],
               },
             },
             totalSales: {
               $sum: {
-                $cond: [
-                  { $eq: ["$type", "sales-fixing"] },
-                  "$grossWeight",
-                  0,
-                ],
+                $cond: [{ $eq: ["$type", "sales-fixing"] }, "$grossWeight", 0],
               },
             },
-            purityDifference: {
-              $sum: {
-                $cond: [
-                  { $eq: ["$type", "PURITY_DIFFERENCE"] },
-                  "$grossWeight",
-                  0,
-                ],
-              },
-            },
+            totalPurityDiff: { $sum: "$purityDiffWeight" },
           },
         },
         {
           $project: {
             _id: 0,
             netPurchase: { $subtract: ["$totalPurchase", "$totalSales"] },
-            purityDifference: 1,
+            purityDifference: "$totalPurityDiff",
           },
         },
       ];
 
       const result = await Registry.aggregate(pipeline);
       const data = result[0] || { netPurchase: 0, purityDifference: 0 };
-      console.log(data.purityDifference);
 
-      // Opening = 0 + net purchase + purity diff
-      const opening = 0 + data.netPurchase + data.purityDifference;
+      const opening = data.netPurchase + data.purityDifference;
 
       return { opening, ...data };
-
     } catch (error) {
       console.error("Error calculating opening balance:", error);
       throw new Error(`Failed to calculate opening balance: ${error.message}`);
     }
   }
+
+
 
 
 
@@ -2999,7 +3004,7 @@ export class ReportService {
 
     // log puriy difference
     console.log("Purity Difference - Purchase:", purchasePurityDifference, "Sale:", salePurityDifference, "Total:", summary.purityDifference);
-  
+
     return {
       summary,
       categories
