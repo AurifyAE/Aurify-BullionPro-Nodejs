@@ -37,7 +37,7 @@ const StockItemSchema = new mongoose.Schema(
       min: [0, "Standard Purity cannot be negative"],
       max: [100, "Standard Purity cannot exceed 100%"],
     },
-    purityDiff: {
+    purityDiffWeight: {
       type: Number,
       default: 0,
     },
