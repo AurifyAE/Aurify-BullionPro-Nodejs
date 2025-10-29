@@ -33,8 +33,9 @@ const AccountSchema = new mongoose.Schema(
     },
     title: {
       type: String,
-      required: [true, 'Title is required'],
+      required: false,
       trim: true,
+      default:"null",
       maxlength: [10, 'Title cannot exceed 10 characters'],
     },
     favorite: {
@@ -98,43 +99,41 @@ const AccountSchema = new mongoose.Schema(
       currencies: {
         type: [
           {
-            currency: { type: mongoose.Schema.Types.ObjectId, ref: 'CurrencyMaster' },
+            currency: { type: mongoose.Schema.Types.ObjectId, ref: 'CurrencyMaster', required: true },
             isDefault: { type: Boolean, default: false },
-            minRate: { type: Number, default: 1.0 },
-            maxRate: { type: Number, default: 1.0 },
+            purchasePrice: { type: Number, min: 0, default: 0 },
+            sellPrice: { type: Number, min: 0, default: 0 },
+            convertRate: { type: Number, min: 0, default: 1 },
           },
         ],
         required: [true, 'At least one currency is required'],
         validate: {
-          validator: function (currencies) {
-            return currencies && currencies.length > 0;
-          },
+          validator: (currencies) => currencies && currencies.length > 0,
           message: 'At least one currency must be specified',
         },
       },
       branches: {
-        type: [
-          {
-            branch: { type: mongoose.Schema.Types.ObjectId },
-            isDefault: { type: Boolean, default: false },
-          },
-        ],
-        default: [],
-      },
+        type: [{
+          branch: { type: mongoose.Schema.Types.ObjectId },
+          isDefault: { type: Boolean, default: false }
+        }],
+        default: []
+      }
     },
 
     // Limits & Margins
     limitsMargins: {
       type: [
         {
+          limitType: { type: String, enum: ['Fixed', 'Flexible', 'Unlimited'], default: 'Fixed' },
+          currency: { type: mongoose.Schema.Types.ObjectId, ref: 'CurrencyMaster' },
+          unfixGold: { type: Number, min: 0, default: 0 },
+          netAmount: { type: Number, min: 0, default: 0 },
           creditDaysAmt: { type: Number, min: 0, default: 0 },
           creditDaysMtl: { type: Number, min: 0, default: 0 },
-          Margin: {
-            type: Number,
-            min: 0,
-            max: 100,
-            required: [true, 'Margin is required'],
-          },
+          Margin: { type: Number, min: 0, max: 100, required: true },
+          creditAmount: { type: Number, min: 0, default: 0 },
+          metalAmount: { type: Number, min: 0, default: 0 },
         },
       ],
       default: [],

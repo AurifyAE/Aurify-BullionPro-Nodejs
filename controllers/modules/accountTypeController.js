@@ -24,13 +24,21 @@ export const createTradeDebtor = async (req, res, next) => {
       employees,
       kycDetails,
     } = req.body;
-
+    // console.log("req body data :", req.body)
     let accountType = 'DEBTOR';
 
+    // ✅ Helper function to handle 'null' and 'undefined' strings
+    const sanitizeString = (value, defaultValue = '') => {
+      if (!value || value === 'null' || value === 'undefined') {
+        return defaultValue;
+      }
+      return typeof value === 'string' ? value.trim() : value;
+    };
+
     // Basic validation - required fields
-    if (!accountCode || !customerName || !title || !accountType) {
+    if (!accountCode || !customerName || !accountType) {
       throw createAppError(
-        'Required fields missing: accountType, title, accountCode, customerName',
+        'Required fields missing: accountType, accountCode, customerName',
         400,
         'REQUIRED_FIELDS_MISSING'
       );
@@ -62,47 +70,58 @@ export const createTradeDebtor = async (req, res, next) => {
       !Array.isArray(parsedAcDefinition.currencies) ||
       parsedAcDefinition.currencies.length === 0
     ) {
-      throw createAppError(
-        'At least one currency is required in acDefinition',
-        400,
-        'MISSING_CURRENCY'
-      );
+      throw createAppError('At least one currency is required in acDefinition', 400, 'MISSING_CURRENCY');
     }
 
-    // Validate USD and AED are included
-    const currencyCodes = parsedAcDefinition.currencies.map(
-      (c) => c.currency?.currencyCode || c.currencyCode
-    );
-    const requiredCurrencies = ['USD', 'AED'];
-    const missingCurrencies = requiredCurrencies.filter(
-      (code) => !currencyCodes.includes(code)
-    );
-    if (missingCurrencies.length > 0) {
+    // ✅ Validate USD & AED BEFORE processing currencies
+    const incomingCurrencyCodes = parsedAcDefinition.currencies.map((c) => c.currency?.currencyCode);
+    const missing = ['USD', 'AED'].filter((code) => !incomingCurrencyCodes.includes(code));
+    if (missing.length > 0) {
       throw createAppError(
-        `Required currencies missing: ${missingCurrencies.join(
-          ', '
-        )}. USD and AED must be included.`,
+        `Required currencies missing: ${missing.join(', ')}. Both USD and AED must be included.`,
         400,
         'MISSING_REQUIRED_CURRENCIES'
       );
     }
 
-    // Validate Margin if limitsMargins provided
-    let parsedLimitsMargins = parseJsonField(limitsMargins, 'limitsMargins');
-    if (
-      parsedLimitsMargins &&
-      Array.isArray(parsedLimitsMargins) &&
-      parsedLimitsMargins.length > 0
-    ) {
-      for (const limit of parsedLimitsMargins) {
-        if (limit.Margin === undefined || limit.Margin === null) {
-          throw createAppError(
-            'Margin is required in limitsMargins',
-            400,
-            'MISSING_MARGIN'
-          );
-        }
+    // Now process currencies (extract IDs)
+    parsedAcDefinition.currencies = parsedAcDefinition.currencies.map((c) => {
+      const currencyId = c.currency?._id || c.currency;
+      if (!currencyId) {
+        throw createAppError('Invalid currency reference', 400, 'INVALID_CURRENCY');
       }
+      return {
+        currency: currencyId,
+        isDefault: !!c.isDefault,
+        purchasePrice: parseFloat(c.purchasePrice) || 0,
+        sellPrice: parseFloat(c.sellPrice) || 0,
+        convertRate: parseFloat(c.convertRate) || 1,
+      };
+    });
+
+    // ✅ Clean up branches if null/empty (prevent Branch model error)
+    if (parsedAcDefinition.branches === null || 
+        (Array.isArray(parsedAcDefinition.branches) && parsedAcDefinition.branches.length === 0)) {
+      delete parsedAcDefinition.branches;
+    }
+
+    // ✅ Parse and validate limitsMargins
+    let ParsedlimitsMargins = parseJsonField(limitsMargins, 'limitsMargins') || [];
+    ParsedlimitsMargins = ParsedlimitsMargins.map((l) => ({
+      limitType: l.limitType || 'Fixed',
+      currency: l.currency?._id || l.currency,
+      unfixGold: parseFloat(l.unfixGold) || 0,
+      netAmount: parseFloat(l.netAmount) || 0,
+      creditDaysAmt: parseInt(l.creditDaysAmt) || 0,
+      creditDaysMtl: parseInt(l.creditDaysMtl) || 0,
+      Margin: parseFloat(l.Margin),
+      creditAmount: parseFloat(l.creditAmount) || 0,
+      metalAmount: parseFloat(l.metalAmount) || 0,
+    }));
+
+    // Validate Margin
+    if (ParsedlimitsMargins.some((l) => l.Margin === undefined || isNaN(l.Margin))) {
+      throw createAppError('Margin is required and must be a valid number', 400, 'MISSING_MARGIN');
     }
 
     // Parse optional fields
@@ -333,10 +352,10 @@ export const createTradeDebtor = async (req, res, next) => {
       }
     }
 
-    // Build trade debtor data
+    // ✅ Build trade debtor data with sanitized strings
     const tradeDebtorData = {
       accountType: accountType.trim(),
-      title: title.trim(),
+      title: sanitizeString(title, 'N/A'), // Default to 'N/A' if null/undefined
       accountCode: accountCode.trim().toUpperCase(),
       customerName: customerName.trim(),
       acDefinition: parsedAcDefinition,
@@ -344,15 +363,23 @@ export const createTradeDebtor = async (req, res, next) => {
       createdBy: req.admin.id,
     };
 
-    // Add optional fields
-    if (classification) tradeDebtorData.classification = classification.trim();
-    if (remarks) tradeDebtorData.remarks = remarks.trim();
+    // Add optional fields with proper null/undefined handling using sanitizeString
+    const sanitizedClassification = sanitizeString(classification, null);
+    const sanitizedRemarks = sanitizeString(remarks, null);
+    const sanitizedShortName = sanitizeString(shortName, null);
+    const sanitizedParentGroup = sanitizeString(parentGroup, null);
+
+    if (sanitizedClassification) tradeDebtorData.classification = sanitizedClassification;
+    if (sanitizedRemarks) tradeDebtorData.remarks = sanitizedRemarks;
+    if (sanitizedShortName) tradeDebtorData.shortName = sanitizedShortName;
+    if (sanitizedParentGroup) tradeDebtorData.parentGroup = sanitizedParentGroup;
+    
     if (isSupplier !== undefined)
       tradeDebtorData.isSupplier = isSupplier === 'true' || isSupplier === true;
     if (favorite !== undefined)
       tradeDebtorData.favorite = favorite === 'true' || favorite === true;
-    if (parsedLimitsMargins && parsedLimitsMargins.length > 0)
-      tradeDebtorData.limitsMargins = parsedLimitsMargins;
+    if (ParsedlimitsMargins && ParsedlimitsMargins.length > 0)
+      tradeDebtorData.limitsMargins = ParsedlimitsMargins;
     if (parsedAddresses && parsedAddresses.length > 0)
       tradeDebtorData.addresses = parsedAddresses;
     if (parsedEmployees && parsedEmployees.length > 0)
@@ -371,7 +398,7 @@ export const createTradeDebtor = async (req, res, next) => {
           lastUpdated: new Date(),
         },
         cashBalance: parsedAcDefinition.currencies.map((curr) => ({
-          currency: curr.currency?._id || curr.currency,
+          currency: curr.currency,
           amount: 0,
           isDefault: curr.isDefault || false,
           lastUpdated: new Date(),
@@ -422,7 +449,7 @@ export const updateTradeDebtor = async (req, res, next) => {
     const { id } = req.params;
     const { updatetype } = req.query;
     let updateData = { ...req.body };
-
+    // console.log("update dataa.....",updateData)
     if (!id) {
       throw createAppError('Trade debtor ID is required', 400, 'MISSING_ID');
     }
@@ -488,9 +515,9 @@ export const updateTradeDebtor = async (req, res, next) => {
     };
 
     // Required fields validation
-    if (!updateData.accountCode || !updateData.customerName || !updateData.title) {
+    if (!updateData.accountCode || !updateData.customerName) {
       throw createAppError(
-        'Required fields missing: accountCode, customerName, title',
+        'Required fields missing: accountCode, customerName',
         400,
         'REQUIRED_FIELDS_MISSING'
       );
@@ -512,13 +539,13 @@ export const updateTradeDebtor = async (req, res, next) => {
         );
       }
 
-      // Validate USD and AED are included
-      const currencyCodes = updateData.acDefinition.currencies.map(
-        (c) => c.currency?.currencyCode || c.currencyCode
+      // ✅ FIX: Validate USD and AED BEFORE processing
+      const incomingCurrencyCodes = updateData.acDefinition.currencies.map(
+        (c) => c.currency?.currencyCode
       );
       const requiredCurrencies = ['USD', 'AED'];
       const missingCurrencies = requiredCurrencies.filter(
-        (code) => !currencyCodes.includes(code)
+        (code) => !incomingCurrencyCodes.includes(code)
       );
       if (missingCurrencies.length > 0) {
         throw createAppError(
@@ -527,6 +554,27 @@ export const updateTradeDebtor = async (req, res, next) => {
           'MISSING_REQUIRED_CURRENCIES'
         );
       }
+
+      // Now process currencies
+      updateData.acDefinition.currencies = updateData.acDefinition.currencies.map((c) => {
+        const currencyId = c.currency?._id || c.currency;
+        if (!currencyId) {
+          throw createAppError('Invalid currency reference', 400, 'INVALID_CURRENCY');
+        }
+        return {
+          currency: currencyId,
+          isDefault: !!c.isDefault,
+          purchasePrice: parseFloat(c.purchasePrice) || 0,
+          sellPrice: parseFloat(c.sellPrice) || 0,
+          convertRate: parseFloat(c.convertRate) || 1,
+        };
+      });
+
+      // ✅ Clean up branches if null/empty (prevent Branch model error)
+      if (updateData.acDefinition.branches === null || 
+          (Array.isArray(updateData.acDefinition.branches) && updateData.acDefinition.branches.length === 0)) {
+        delete updateData.acDefinition.branches;
+      }
     }
 
     // Parse optional JSON fields
@@ -534,6 +582,26 @@ export const updateTradeDebtor = async (req, res, next) => {
     jsonFields.forEach((field) => {
       if (updateData[field]) {
         updateData[field] = parseJsonField(updateData[field], field);
+        
+        // ✅ Process limitsMargins properly
+        if (field === 'limitsMargins' && Array.isArray(updateData[field])) {
+          updateData[field] = updateData[field].map((l) => ({
+            limitType: l.limitType || 'Fixed',
+            currency: l.currency?._id || l.currency,
+            unfixGold: parseFloat(l.unfixGold) || 0,
+            netAmount: parseFloat(l.netAmount) || 0,
+            creditDaysAmt: parseInt(l.creditDaysAmt) || 0,
+            creditDaysMtl: parseInt(l.creditDaysMtl) || 0,
+            Margin: parseFloat(l.Margin),
+            creditAmount: parseFloat(l.creditAmount) || 0,
+            metalAmount: parseFloat(l.metalAmount) || 0,
+          }));
+
+          // Validate Margin
+          if (updateData[field].some((l) => l.Margin === undefined || isNaN(l.Margin))) {
+            throw createAppError('Margin is required and must be a valid number', 400, 'MISSING_MARGIN');
+          }
+        }
       }
     });
 
@@ -722,7 +790,7 @@ export const updateTradeDebtor = async (req, res, next) => {
       }
     }
 
-    // Trim string fields
+    // Trim string fields with null/undefined checks
     const stringFields = [
       'accountCode',
       'customerName',
@@ -732,11 +800,13 @@ export const updateTradeDebtor = async (req, res, next) => {
       'remarks',
     ];
     stringFields.forEach((field) => {
-      if (updateData[field] && typeof updateData[field] === 'string') {
+      if (updateData[field] && typeof updateData[field] === 'string' && updateData[field] !== 'null' && updateData[field] !== 'undefined') {
         updateData[field] =
           field === 'accountCode'
             ? updateData[field].trim().toUpperCase()
             : updateData[field].trim();
+      } else if (updateData[field] === 'null' || updateData[field] === 'undefined') {
+        updateData[field] = field === 'title' ? '' : null;
       }
     });
 
