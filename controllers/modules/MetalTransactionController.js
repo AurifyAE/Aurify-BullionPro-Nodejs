@@ -22,7 +22,10 @@ export const createMetalTransaction = async (req, res, next) => {
       notes,
       voucher
     } = req.body;
-    // Validation (already handled by middleware, but ensuring critical fields)
+
+    console.log(req.body);
+    
+    
     if (
       !transactionType ||
       !partyCode ||
@@ -68,8 +71,10 @@ export const createMetalTransaction = async (req, res, next) => {
         pieces: Number(item.pieces || 0),
         grossWeight: Number(item.grossWeight || 0),
         purity: Number(item.purity),
+        standerdPurity: Number(item.standerdPurity),
+        purityDiffWeight: Number(item.purityDiffWeight || 0),
         pureWeight: Number(item.pureWeight || 0),
-        purityWeight: Number(item.purityWeight),
+        purityWeight: Number(item.pureWeight),
         weightInOz: Number(item.weightInOz),
         metalRate: item.metalRate.trim(),
         metalRateRequirements: {

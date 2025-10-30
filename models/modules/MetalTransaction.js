@@ -31,6 +31,16 @@ const StockItemSchema = new mongoose.Schema(
       min: [0, "Purity cannot be negative"],
       max: [100, "Purity cannot exceed 100%"],
     },
+    standerdPurity: {
+      type: Number,
+      required: [true, "Standard Purity is required"],
+      min: [0, "Standard Purity cannot be negative"],
+      max: [100, "Standard Purity cannot exceed 100%"],
+    },
+    purityDiffWeight: {
+      type: Number,
+      default: 0,
+    },
     purityWeight: {
       type: Number,
       required: [true, "Purity Weight is required"],

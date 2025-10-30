@@ -235,7 +235,7 @@ export class ReportService {
 
       // Construct MongoDB aggregation pipeline
       const pipeline = this.buildTransactionSummaryPipeline(validatedFilters);
-      
+
 
       // Execute aggregation query
       const reportData = await Registry.aggregate(pipeline);
@@ -263,26 +263,39 @@ export class ReportService {
 
       // 2. Construct aggregation pipelines
       const stockPipeline = this.OwnStockPipeLine(validatedFilters);
+
+      let openingDate = null;
+      let getOpeningBalance = { opening: 0, purityDifference: 100, netPurchase: 0 };
+      if (!filters.excludeOpening) {
+        openingDate = filters.fromDate;
+        getOpeningBalance = await this.getOpeningBalance(openingDate, validatedFilters);
+      }
+
       const receivablesPayablesPipeline = this.getReceivablesAndPayables();
 
       // 3. Run both aggregations in parallel
+      const [reportData, receivablesAndPayables] = await Promise.all([
+        Registry.aggregate(stockPipeline),
+        Account.aggregate(receivablesPayablesPipeline),
+      ]);
 
-      const reportData = await Registry.aggregate(stockPipeline)
-      const receivablesAndPayables = await Account.aggregate(receivablesPayablesPipeline)
+      console.log("-----receivablesAndPayables------");
+      console.log(reportData);
+      console.log(receivablesAndPayables);
+      console.log(getOpeningBalance);
 
-      const finilized = this.formatedOwnStock(reportData, receivablesAndPayables)
+      // 4. Format the output
+      const formatted = this.formatedOwnStock(reportData, receivablesAndPayables, getOpeningBalance);
 
       // 5. Return structured response
       return {
         success: true,
-        data: finilized,
+        data: formatted,
+        totalRecords: reportData.length,
       };
-
     } catch (error) {
-      console.error("Error generating stock report:", error);
-      throw new Error(
-        `Failed to generate metal stock ledger report: ${error.message}`
-      );
+      console.error("Error generating stock by stockCode report:", error);
+      throw new Error(`Failed to generate stock report: ${error.message}`);
     }
   }
 
@@ -771,7 +784,7 @@ export class ReportService {
   }
 
   buildAccountStatementPipeline(filters) {
-  
+
 
     const goldTypes = ["PARTY_GOLD_BALANCE"];
     const cashTypes = ["PARTY_CASH_BALANCE", "MAKING_CHARGES", "PREMIUM", "DISCOUNT"];
@@ -2746,6 +2759,99 @@ export class ReportService {
     return pipeline;
   }
 
+  async getOpeningBalance(fromDate, filters) {
+    try {
+      if (!fromDate)
+        throw new Error("From date is required to calculate opening balance");
+
+      const startDate = new Date(fromDate);
+      const year = startDate.getFullYear();
+      const financialStart = new Date(`${year}-01-01T00:00:00.000Z`);
+
+      const previousDay = new Date(startDate);
+      previousDay.setDate(previousDay.getDate() - 1);
+      previousDay.setHours(23, 59, 59, 999);
+
+      if (previousDay < financialStart) {
+        return { opening: 0 };
+      }
+
+      const pipeline = [
+        {
+          $match: {
+            isActive: true,
+            type: { $in: ["purchase-fixing", "sales-fixing"] },
+            transactionDate: { $gte: financialStart, $lte: previousDay },
+          },
+        },
+        {
+          $lookup: {
+            from: "metaltransactions",
+            localField: "metalTransactionId",
+            foreignField: "_id",
+            as: "metalTransaction",
+          },
+        },
+        { $unwind: { path: "$metalTransaction", preserveNullAndEmptyArrays: true } },
+        {
+          $unwind: {
+            path: "$metalTransaction.stockItems",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            type: 1,
+            grossWeight: { $ifNull: ["$grossWeight", 0] },
+            purityDiffWeight: {
+              $cond: [
+                { $eq: ["$metalTransaction.fixed", true] },
+                { $ifNull: ["$metalTransaction.stockItems.purityDiffWeight", 0] },
+                0,
+              ],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalPurchase: {
+              $sum: {
+                $cond: [{ $eq: ["$type", "purchase-fixing"] }, "$grossWeight", 0],
+              },
+            },
+            totalSales: {
+              $sum: {
+                $cond: [{ $eq: ["$type", "sales-fixing"] }, "$grossWeight", 0],
+              },
+            },
+            totalPurityDiff: { $sum: "$purityDiffWeight" },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            netPurchase: { $subtract: ["$totalPurchase", "$totalSales"] },
+            purityDifference: "$totalPurityDiff",
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      const data = result[0] || { netPurchase: 0, purityDifference: 0 };
+
+      const opening = data.netPurchase + data.purityDifference;
+
+      return { opening, ...data };
+    } catch (error) {
+      console.error("Error calculating opening balance:", error);
+      throw new Error(`Failed to calculate opening balance: ${error.message}`);
+    }
+  }
+
+
+
+
 
   getReceivablesAndPayables() {
     const pipeline = [
@@ -2827,7 +2933,9 @@ export class ReportService {
 
     return pipeline;
   }
-  formatedOwnStock(reportData, receivablesAndPayables) {
+  formatedOwnStock(reportData, receivablesAndPayables, openingBalance) {
+    console.log();
+
     const summary = {
       totalGrossWeight: 0,
       netGrossWeight: 0,
@@ -2835,23 +2943,39 @@ export class ReportService {
       totalReceivableGrams: 0,
       totalPayableGrams: 0,
       avgGrossWeight: 0,
-      avgReceivableGrams: 0,
-      avgPayableGrams: 0,
-      avgBidValue: 0
+      avgBidValue: 0,
+      openingBalance: openingBalance?.opening || 0, // Use resolved opening balance
+      netPurchase: 0,
+      purityDifference: 0, // Use resolved or default
+      shortLongPosition: 0
     };
 
     // Extract receivable/payable safely
     if (receivablesAndPayables?.length) {
-      summary.totalReceivableGrams = receivablesAndPayables[0].totalReceivableGrams || 0;
-      summary.totalPayableGrams = receivablesAndPayables[0].totalPayableGrams || 0;
-      summary.avgReceivableGrams = receivablesAndPayables[0].avgReceivableGrams || 0;
-      summary.avgPayableGrams = receivablesAndPayables[0].avgPayableGrams || 0;
+      summary.totalReceivableGrams = Number(receivablesAndPayables[0].totalReceivableGrams?.toFixed(2)) || 0;
+      summary.totalPayableGrams = Number(receivablesAndPayables[0].totalPayableGrams?.toFixed(2)) || 0;
     }
 
-    const categories = reportData.map((item) => {
+    // Define purchase and sale categories
+    const purchaseCategories = ['PRM', 'PF', 'PR'];
+    const saleCategories = ['SAL', 'PR', 'SF'];
+
+    let totalPurchase = 0;
+    let totalSale = 0;
+    let purchasePurityDifference = 0;
+    let salePurityDifference = 0;
+
+    const categories = reportData?.length ? reportData.map((item) => {
       summary.totalGrossWeight += item.totalGrossWeight || 0;
-      summary.netGrossWeight += item.netGrossWeight || 0;
       summary.totalValue += item.totalValue || 0;
+
+      if (purchaseCategories.includes(item.category)) {
+        totalPurchase += item.totalGrossWeight || 0;
+        purchasePurityDifference += item.totalPurityDiff || 0;
+      } else if (saleCategories.includes(item.category)) {
+        totalSale += item.totalGrossWeight || 0;
+        salePurityDifference += item.totalPurityDiff || 0;
+      }
 
       return {
         category: item.category,
@@ -2863,8 +2987,23 @@ export class ReportService {
         avgBidValue: item.avgBidValue,
         netGrossWeight: item.netGrossWeight,
         latestTransactionDate: item.latestTransactionDate,
+        totalPurityDiff: item.totalPurityDiff
       };
-    });
+    }) : [];
+
+    // Calculate averages
+    const totalCategories = reportData?.length || 0;
+    summary.avgGrossWeight = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgGrossWeight || 0), 0) / totalCategories : 0;
+    summary.avgBidValue = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgBidValue || 0), 0) / totalCategories : 0;
+
+    // Calculate summary fields
+    summary.netPurchase = totalPurchase - totalSale;
+    summary.purityDifference = purchasePurityDifference + salePurityDifference;
+    summary.netGrossWeight = totalPurchase - totalSale;
+    summary.shortLongPosition = summary.openingBalance + summary.netPurchase + summary.purityDifference;
+
+    // log puriy difference
+    console.log("Purity Difference - Purchase:", purchasePurityDifference, "Sale:", salePurityDifference, "Total:", summary.purityDifference);
 
     return {
       summary,
@@ -2977,27 +3116,17 @@ export class ReportService {
       $unwind: { path: "$metalstocks", preserveNullAndEmptyArrays: true },
     });
 
+    pipeline.push({
+      $unwind: {
+        path: "$metaltransactions.stockItems",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
 
     /* ------------------------------------------
        Step 7: Sort by transactionDate to ensure consistent $first selection
     ------------------------------------------ */
     pipeline.push({ $sort: { transactionDate: 1 } });
-
-    // pipeline.push({
-    //   $unwind: {
-    //     path: "$metaltransactions.stockItems",
-    //     preserveNullAndEmptyArrays: true
-    //   }
-    // });
-    // pipeline.push({
-    //   $unwind: {
-    //     path: "$transactionfixings.orders",
-    //     preserveNullAndEmptyArrays: true
-    //   }
-    // });
-
-    // return pipeline
-
 
     /* ------------------------------------------
        Step 8: First Group by full reference to take first value per unique voucher
@@ -3010,6 +3139,7 @@ export class ReportService {
         totalbidvalue: { $first: { $ifNull: ["$goldBidValue", 0] } },
         totalDebit: { $first: { $ifNull: ["$debit", 0] } },
         totalCredit: { $first: { $ifNull: ["$credit", 0] } },
+        totalPurityDiff: { $sum: { $ifNull: ["$metaltransactions.stockItems.purityDiffWeight", 0] } },
         latestTransactionDate: { $max: "$transactionDate" },
       },
     });
@@ -3047,6 +3177,7 @@ export class ReportService {
         totalbidvalue: { $sum: "$totalbidvalue" },
         totalDebit: { $sum: "$totalDebit" },
         totalCredit: { $sum: "$totalCredit" },
+        totalPurityDiff: { $sum: "$totalPurityDiff" }, // <-- added
         transactionCount: { $sum: 1 },
         latestTransactionDate: { $max: "$latestTransactionDate" },
       },
@@ -3089,6 +3220,8 @@ export class ReportService {
         },
         transactionCount: 1,
         latestTransactionDate: 1,
+        totalPurityDiff: 1, // <-- included in output
+
       },
     });
 

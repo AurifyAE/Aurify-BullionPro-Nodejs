@@ -29,44 +29,20 @@ const connectDB = async () => {
 const dummyAdmins = [
   {
     name: "Super Administrator",
-    email: "superadmin@bullion.com",
-    password: "SuperAdmin123!",
+    email: "admin@bullion.com",
+    password: "Admin123!",
     type: "super_admin",
     status: "active",
     isActive: true
   },
   {
     name: "System Administrator",
-    email: "admin@bullion.com",
-    password: "Admin123!",
+    email: "aurify@bullion.com",
+    password: "aurify123!",
     type: "admin", 
     status: "active",
     isActive: true
   },
-  {
-    name: "Operations Manager",
-    email: "manager@bullion.com",
-    password: "Manager123!",
-    type: "manager",
-    status: "active",
-    isActive: true
-  },
-  {
-    name: "Data Operator",
-    email: "operator@bullion.com",
-    password: "Operator123!",
-    type: "operator",
-    status: "active",
-    isActive: true
-  },
-  {
-    name: "Report Viewer",
-    email: "viewer@bullion.com",
-    password: "Viewer123!",
-    type: "viewer",
-    status: "active",
-    isActive: true
-  }
 ];
 
 // Create admin dummy data

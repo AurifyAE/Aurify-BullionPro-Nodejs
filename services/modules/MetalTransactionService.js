@@ -177,6 +177,7 @@ class MetalTransactionService {
   }
 
   static buildRegistryEntries(metalTransaction, party, adminId) {
+    console.log("teeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
 
     const {
       transactionType,
@@ -190,6 +191,8 @@ class MetalTransactionService {
       metalRateRequirements
     } = metalTransaction;
 
+    console.log(metalTransaction)
+
     const baseTransactionId = this.generateTransactionId();
     const mode = this.getTransactionMode(fixed, unfix);
 
@@ -199,6 +202,8 @@ class MetalTransactionService {
     for (let i = 0; i < stockItems.length; i++) {
       const item = stockItems[i];
       const totals = this.calculateTotals([item], totalAmountSession); // Pass only one item
+      console.log("Hyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy");
+      console.log(totals);
 
       switch (transactionType) {
         case "purchase":
@@ -426,7 +431,7 @@ class MetalTransactionService {
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
-
+    console.log(totals)
 
     // Purchase-fixing entry
     if (totals.pureWeight > 0) {
@@ -633,6 +638,36 @@ class MetalTransactionService {
         )
       );
     }
+    console.log(totals);
+
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight > 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight > 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
+    }
+
 
     if (totals.grossWeight > 0) {
       entries.push(
@@ -834,6 +869,36 @@ class MetalTransactionService {
         )
       );
     }
+
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight > 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight > 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
+    }
+
+
     // Gold Stock - DEBIT
 
     if (totals.grossWeight > 0) {
@@ -905,6 +970,33 @@ class MetalTransactionService {
           adminId
         )
       );
+    }
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight < 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight < 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
     }
 
     if (totals.totalAmount > 0) {
@@ -1189,6 +1281,34 @@ class MetalTransactionService {
           adminId
         )
       );
+    }
+
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight < 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight < 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
     }
 
     if (totals.otherChargesAmount > 0) {
@@ -1549,6 +1669,34 @@ class MetalTransactionService {
       );
     }
 
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight < 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight < 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
+    }
+
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -1613,6 +1761,34 @@ class MetalTransactionService {
           adminId
         )
       );
+    }
+
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight < 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight < 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
     }
 
     if (totals.makingCharges > 0) {
@@ -1821,6 +1997,34 @@ class MetalTransactionService {
       );
     }
 
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight > 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight > 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
+    }
+
     if (totals.makingCharges > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -2018,6 +2222,34 @@ class MetalTransactionService {
           adminId
         )
       );
+    }
+
+    if (totals.purityDiffWeight != 0) {
+      // if purity difference -negative then debit else credit
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          "006",
+          "PURITY_DIFFERENCE",
+          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          null,
+          true,
+          totals.purityDiffWeight,
+          totals.purityDiffWeight > 0 ? totals.purityDiffWeight : 0, // credit
+          {
+            debit: totals.purityDiffWeight > 0 ? 0 : totals.purityDiffWeight,
+            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        ));
     }
 
     if (totals.totalAmount > 0) {
@@ -2229,6 +2461,8 @@ class MetalTransactionService {
   }
 
   static calculateTotals(stockItems, totalAmountSession) {
+    console.log(stockItems);
+
 
     const totals = stockItems.reduce(
       (acc, item) => {
@@ -2245,6 +2479,7 @@ class MetalTransactionService {
         const premium = premiumDiscountAmount > 0 ? premiumDiscountAmount : 0;
         const discount =
           premiumDiscountAmount < 0 ? Math.abs(premiumDiscountAmount) : 0;
+        const purityDiffWeight = item.purityDiffWeight || 0;
 
         return {
           makingCharges: acc.makingCharges + makingChargesAmount,
@@ -2257,6 +2492,7 @@ class MetalTransactionService {
           pureWeight: acc.pureWeight + pureWeight,
           grossWeight: acc.grossWeight + grossWeight,
           purity: acc.purity + purity,
+          purityDiffWeight: acc.purityDiffWeight + purityDiffWeight,
           goldBidValue: acc.goldBidValue || item.metalRateRequirements?.rate || 0, // Take the first valid goldBidValue
         };
       },
@@ -2271,6 +2507,7 @@ class MetalTransactionService {
         vatAmount: 0,
         otherChargesAmount: 0,
         goldBidValue: 0,
+        purityDiffWeight: 0
       }
     );
 
@@ -3308,7 +3545,7 @@ class MetalTransactionService {
 
 
     // minus the old blancees fist , take it from the metaltransaction itself
-   this.updateTradeDebtorsBalances(oldParty._id, originalData, session, false, true);
+    this.updateTradeDebtorsBalances(oldParty._id, originalData, session, false, true);
 
     // Create new registry entries
     console.log(`[UPDATE_TRANSACTION] Creating new registry entries for transaction ${transaction._id}`);
