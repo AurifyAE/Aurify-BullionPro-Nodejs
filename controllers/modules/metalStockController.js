@@ -26,14 +26,14 @@ export const createMetalStock = async (req, res, next) => {
       brand,
       country,
       price,
-      unit,
+      MakingUnit,
       ozDecimal,
-      pastPurityDiff,
+      passPurityDiff,
       exclusiveVAT,
       vatOnMaking,
       wastage,
     } = req.body;
-
+    console.log("req.body :",req.body)
     // Validate required fields
     if (!metalType || !code || !description || !karat) {
       throw createAppError("Required fields missing", 400, "REQUIRED_FIELDS_MISSING");
@@ -75,24 +75,12 @@ export const createMetalStock = async (req, res, next) => {
       price: price || null,
       referenceType: "metal-stock",
       // NEW FIELDS
-      unit: unit || "grams",
+      MakingUnit: MakingUnit || "grams",
       ozDecimal: ozDecimal ? parseFloat(ozDecimal) : null,
-      pastPurityDiff: pastPurityDiff ? {
-        piece: parseInt(pastPurityDiff.piece) || 0,
-        weight: parseFloat(pastPurityDiff.weight) || 0,
-      } : { piece: 0, weight: 0 },
-      exclusiveVAT: exclusiveVAT ? {
-        piece: parseInt(exclusiveVAT.piece) || 0,
-        weight: parseFloat(exclusiveVAT.weight) || 0,
-      } : { piece: 0, weight: 0 },
-      vatOnMaking: vatOnMaking ? {
-        piece: parseInt(vatOnMaking.piece) || 0,
-        weight: parseFloat(vatOnMaking.weight) || 0,
-      } : { piece: 0, weight: 0 },
-      wastage: wastage ? {
-        piece: parseInt(wastage.piece) || 0,
-        weight: parseFloat(wastage.weight) || 0,
-      } : { piece: 0, weight: 0 },
+      passPurityDiff: passPurityDiff || false,
+      exclusiveVAT: exclusiveVAT || false,
+      vatOnMaking: vatOnMaking || false,
+      wastage: wastage || false,
     };
 
     const result = await MetalStockService.createMetalStock(metalStockData, req.admin.id);
@@ -184,9 +172,9 @@ export const updateMetalStock = async (req, res, next) => {
       brand,
       country,
       price,
-      unit,
+      MakingUnit,
       ozDecimal,
-      pastPurityDiff,
+      passPurityDiff,
       exclusiveVAT,
       vatOnMaking,
       wastage,
@@ -233,36 +221,16 @@ export const updateMetalStock = async (req, res, next) => {
     if (price !== undefined) cleanedUpdateData.price = price || null;
 
     // NEW FIELDS
-    if (unit !== undefined) cleanedUpdateData.unit = unit;
+    if (MakingUnit !== undefined) cleanedUpdateData.MakingUnit = MakingUnit;
     if (ozDecimal !== undefined) cleanedUpdateData.ozDecimal = ozDecimal ? parseFloat(ozDecimal) : null;
     
-    if (pastPurityDiff !== undefined) {
-      cleanedUpdateData.pastPurityDiff = pastPurityDiff ? {
-        piece: parseInt(pastPurityDiff.piece) || 0,
-        weight: parseFloat(pastPurityDiff.weight) || 0,
-      } : { piece: 0, weight: 0 };
-    }
+    if (passPurityDiff !== undefined)cleanedUpdateData.passPurityDiff = passPurityDiff || false;
     
-    if (exclusiveVAT !== undefined) {
-      cleanedUpdateData.exclusiveVAT = exclusiveVAT ? {
-        piece: parseInt(exclusiveVAT.piece) || 0,
-        weight: parseFloat(exclusiveVAT.weight) || 0,
-      } : { piece: 0, weight: 0 };
-    }
+    if (exclusiveVAT !== undefined) cleanedUpdateData.exclusiveVAT = exclusiveVAT || false;
     
-    if (vatOnMaking !== undefined) {
-      cleanedUpdateData.vatOnMaking = vatOnMaking ? {
-        piece: parseInt(vatOnMaking.piece) || 0,
-        weight: parseFloat(vatOnMaking.weight) || 0,
-      } : { piece: 0, weight: 0 };
-    }
+    if (vatOnMaking !== undefined) cleanedUpdateData.vatOnMaking = vatOnMaking || false;
     
-    if (wastage !== undefined) {
-      cleanedUpdateData.wastage = wastage ? {
-        piece: parseInt(wastage.piece) || 0,
-        weight: parseFloat(wastage.weight) || 0,
-      } : { piece: 0, weight: 0 };
-    }
+    if (wastage !== undefined) cleanedUpdateData.wastage = wastage || false;
 
     const updatedMetalStock = await MetalStockService.updateMetalStock(id, cleanedUpdateData, req.admin.id);
 

@@ -127,7 +127,7 @@ const MetalStockSchema = new mongoose.Schema(
       default: null,
     },
     // NEW FIELDS
-    unit: {
+    MakingUnit: {
       type: String,
       enum: ["grams", "pieces", "percentage"],
       default: "grams",
@@ -137,53 +137,21 @@ const MetalStockSchema = new mongoose.Schema(
       default: null,
       min: [0, "OZ Decimal cannot be negative"],
     },
-    pastPurityDiff: {
-      piece: {
-        type: Number,
-        default: 0,
-        min: [0, "Piece cannot be negative"],
-      },
-      weight: {
-        type: Number,
-        default: 0,
-        min: [0, "Weight cannot be negative"],
-      },
+    passPurityDiff: {
+      type: Boolean,
+      default:false
     },
-    exclusiveVAT: {
-      piece: {
-        type: Number,
-        default: 0,
-        min: [0, "Piece cannot be negative"],
-      },
-      weight: {
-        type: Number,
-        default: 0,
-        min: [0, "Weight cannot be negative"],
-      },
+    exclusiveVAT:{
+      type: Boolean,
+      default:false
     },
     vatOnMaking: {
-      piece: {
-        type: Number,
-        default: 0,
-        min: [0, "Piece cannot be negative"],
-      },
-      weight: {
-        type: Number,
-        default: 0,
-        min: [0, "Weight cannot be negative"],
-      },
+      type: Boolean,
+      default:false
     },
     wastage: {
-      piece: {
-        type: Number,
-        default: 0,
-        min: [0, "Piece cannot be negative"],
-      },
-      weight: {
-        type: Number,
-        default: 0,
-        min: [0, "Weight cannot be negative"],
-      },
+      type: Boolean,
+      default:false
     },
     isActive: {
       type: Boolean,
@@ -224,7 +192,7 @@ MetalStockSchema.index({ karat: 1 });
 MetalStockSchema.index({ pcs: 1 });
 MetalStockSchema.index({ pcsCount: 1 });
 MetalStockSchema.index({ totalValue: 1 });
-MetalStockSchema.index({ unit: 1 });
+MetalStockSchema.index({ MakingUnit: 1 });
 
 // Compound indexes
 MetalStockSchema.index({ branch: 1, category: 1 });
