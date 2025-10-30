@@ -23,10 +23,11 @@ export const createTradeDebtor = async (req, res, next) => {
       vatGstDetails,
       employees,
       kycDetails,
+      accountType,
     } = req.body;
     // console.log("req body data :", req.body)
-    let accountType = 'DEBTOR';
-
+    // let accountType = accountType;
+console.log(req.body)
     // ✅ Helper function to handle 'null' and 'undefined' strings
     const sanitizeString = (value, defaultValue = '') => {
       if (!value || value === 'null' || value === 'undefined') {
