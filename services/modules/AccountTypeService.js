@@ -329,6 +329,8 @@ static async getAllTradeDebtors(options = {}) {
       classification = "",
       sortBy = "createdAt",
       sortOrder = "desc",
+      accountType,
+      sort,
     } = options;
 
     const skip = (page - 1) * limit;
@@ -354,17 +356,26 @@ static async getAllTradeDebtors(options = {}) {
       query.classification = classification;
     }
 
+    // AccountType filter (array)
+    if (Array.isArray(accountType) && accountType.length > 0) {
+      query.accountType = { $in: accountType };
+    }
+
     // Sort options - Always prioritize favorites first
-    const sort = {};
-    
-    // If sorting by favorite specifically
-    if (sortBy === "favorite") {
-      sort.favorite = sortOrder === "desc" ? -1 : 1;
-      sort.createdAt = -1; // Secondary sort by creation date
+    let sortObj = {};
+    if (Array.isArray(sort)) {
+      sort.forEach(([field, dir]) => {
+        sortObj[field] = dir;
+      });
     } else {
-      // For any other sort field, favorites always come first
-      sort.favorite = -1; // Favorites first (true before false)
-      sort[sortBy] = sortOrder === "desc" ? -1 : 1; // Then by requested field
+      // fallback to old logic
+      if (sortBy === "favorite") {
+        sortObj.favorite = sortOrder === "desc" ? -1 : 1;
+        sortObj.createdAt = -1;
+      } else {
+        sortObj.favorite = -1;
+        sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
+      }
     }
 
     const [tradeDebtors, total] = await Promise.all([
@@ -378,7 +389,7 @@ static async getAllTradeDebtors(options = {}) {
           { path: "createdBy", select: "name email" },
           { path: "updatedBy", select: "name email" },
         ])
-        .sort(sort)
+        .sort(sortObj)
         .skip(skip)
         .limit(parseInt(limit)),
       AccountType.countDocuments(query),

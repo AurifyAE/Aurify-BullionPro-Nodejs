@@ -883,8 +883,9 @@ export const getAllTradeDebtors = async (req, res, next) => {
       search = "",
       status = "",
       classification = "",
-      sortBy = "createdAt", // Assuming this is the date field; if it's 'createdBy' (user ID), change to that
+      sortBy = "createdAt",
       sortOrder = "desc",
+      accountType,
     } = req.query;
 
     const trimmedSortBy = sortBy.trim();
@@ -899,13 +900,22 @@ export const getAllTradeDebtors = async (req, res, next) => {
       sortArray.push([trimmedSortBy, direction]);
     }
 
+    // Handle accountType[] as array or string
+    let accountTypeArray = [];
+    if (Array.isArray(accountType)) {
+      accountTypeArray = accountType;
+    } else if (typeof accountType === 'string' && accountType) {
+      accountTypeArray = [accountType];
+    }
+
     const options = {
       page: parseInt(page, 10),
       limit: parseInt(limit, 10),
       search: search.trim(),
       status: status.trim(),
       classification: classification.trim(),
-      sort: sortArray, // Send sort as array for explicit order
+      sort: sortArray,
+      accountType: accountTypeArray.length > 0 ? accountTypeArray : undefined,
     };
 
     const result = await AccountTypeService.getAllTradeDebtors(options);
