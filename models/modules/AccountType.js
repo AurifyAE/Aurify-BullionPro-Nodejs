@@ -27,7 +27,7 @@ const AccountSchema = new mongoose.Schema(
     // Basic Account Information
     accountType: {
       type: String,
-      default: 'DEBTOR',
+      default: 'PAYABLE',
       required: [true, 'Account type is required'],
       trim: true,
     },

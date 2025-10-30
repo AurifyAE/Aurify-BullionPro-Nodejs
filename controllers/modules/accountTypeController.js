@@ -887,7 +887,7 @@ export const getAllTradeDebtors = async (req, res, next) => {
       sortOrder = "desc",
       accountType,
     } = req.query;
-
+    console.log("req.query",req.query)
     const trimmedSortBy = sortBy.trim();
     const direction = sortOrder.trim() === "asc" ? 1 : -1;
 
@@ -900,13 +900,23 @@ export const getAllTradeDebtors = async (req, res, next) => {
       sortArray.push([trimmedSortBy, direction]);
     }
 
-    // Handle accountType[] as array or string
+    // Handle accountType[] and accountType as array or string
     let accountTypeArray = [];
     if (Array.isArray(accountType)) {
       accountTypeArray = accountType;
     } else if (typeof accountType === 'string' && accountType) {
       accountTypeArray = [accountType];
     }
+    // Handle accountType[] from query (e.g., accountType[]=RECEIVABLE&accountType[]=PARABLE)
+    if (req.query['accountType[]']) {
+      if (Array.isArray(req.query['accountType[]'])) {
+        accountTypeArray = accountTypeArray.concat(req.query['accountType[]']);
+      } else if (typeof req.query['accountType[]'] === 'string') {
+        accountTypeArray.push(req.query['accountType[]']);
+      }
+    }
+    // Remove duplicates
+    accountTypeArray = [...new Set(accountTypeArray)];
 
     const options = {
       page: parseInt(page, 10),
