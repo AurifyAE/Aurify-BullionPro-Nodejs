@@ -3,6 +3,7 @@ import MetalStockService from "../../services/modules/MetalStockService.js";
 import InventoryService from "../../services/modules/inventoryService.js";
 
 // Create new metal stock
+
 export const createMetalStock = async (req, res, next) => {
   try {
     const {
@@ -25,6 +26,12 @@ export const createMetalStock = async (req, res, next) => {
       brand,
       country,
       price,
+      unit,
+      ozDecimal,
+      pastPurityDiff,
+      exclusiveVAT,
+      vatOnMaking,
+      wastage,
     } = req.body;
 
     // Validate required fields
@@ -45,7 +52,7 @@ export const createMetalStock = async (req, res, next) => {
         throw createAppError("Total value is required and must be a non-negative number for piece-based stock", 400, "INVALID_TOTAL_VALUE");
       }
     }
-    // Validate charges and makingCharge
+
     const metalStockData = {
       metalType: metalType.trim(),
       code: code.trim(),
@@ -66,7 +73,26 @@ export const createMetalStock = async (req, res, next) => {
       brand: brand || null,
       country: country || null,
       price: price || null,
-      referenceType:"metal-stock"
+      referenceType: "metal-stock",
+      // NEW FIELDS
+      unit: unit || "grams",
+      ozDecimal: ozDecimal ? parseFloat(ozDecimal) : null,
+      pastPurityDiff: pastPurityDiff ? {
+        piece: parseInt(pastPurityDiff.piece) || 0,
+        weight: parseFloat(pastPurityDiff.weight) || 0,
+      } : { piece: 0, weight: 0 },
+      exclusiveVAT: exclusiveVAT ? {
+        piece: parseInt(exclusiveVAT.piece) || 0,
+        weight: parseFloat(exclusiveVAT.weight) || 0,
+      } : { piece: 0, weight: 0 },
+      vatOnMaking: vatOnMaking ? {
+        piece: parseInt(vatOnMaking.piece) || 0,
+        weight: parseFloat(vatOnMaking.weight) || 0,
+      } : { piece: 0, weight: 0 },
+      wastage: wastage ? {
+        piece: parseInt(wastage.piece) || 0,
+        weight: parseFloat(wastage.weight) || 0,
+      } : { piece: 0, weight: 0 },
     };
 
     const result = await MetalStockService.createMetalStock(metalStockData, req.admin.id);
@@ -158,6 +184,12 @@ export const updateMetalStock = async (req, res, next) => {
       brand,
       country,
       price,
+      unit,
+      ozDecimal,
+      pastPurityDiff,
+      exclusiveVAT,
+      vatOnMaking,
+      wastage,
     } = req.body;
 
     if (!id) {
@@ -199,6 +231,38 @@ export const updateMetalStock = async (req, res, next) => {
     if (brand !== undefined) cleanedUpdateData.brand = brand || null;
     if (country !== undefined) cleanedUpdateData.country = country || null;
     if (price !== undefined) cleanedUpdateData.price = price || null;
+
+    // NEW FIELDS
+    if (unit !== undefined) cleanedUpdateData.unit = unit;
+    if (ozDecimal !== undefined) cleanedUpdateData.ozDecimal = ozDecimal ? parseFloat(ozDecimal) : null;
+    
+    if (pastPurityDiff !== undefined) {
+      cleanedUpdateData.pastPurityDiff = pastPurityDiff ? {
+        piece: parseInt(pastPurityDiff.piece) || 0,
+        weight: parseFloat(pastPurityDiff.weight) || 0,
+      } : { piece: 0, weight: 0 };
+    }
+    
+    if (exclusiveVAT !== undefined) {
+      cleanedUpdateData.exclusiveVAT = exclusiveVAT ? {
+        piece: parseInt(exclusiveVAT.piece) || 0,
+        weight: parseFloat(exclusiveVAT.weight) || 0,
+      } : { piece: 0, weight: 0 };
+    }
+    
+    if (vatOnMaking !== undefined) {
+      cleanedUpdateData.vatOnMaking = vatOnMaking ? {
+        piece: parseInt(vatOnMaking.piece) || 0,
+        weight: parseFloat(vatOnMaking.weight) || 0,
+      } : { piece: 0, weight: 0 };
+    }
+    
+    if (wastage !== undefined) {
+      cleanedUpdateData.wastage = wastage ? {
+        piece: parseInt(wastage.piece) || 0,
+        weight: parseFloat(wastage.weight) || 0,
+      } : { piece: 0, weight: 0 };
+    }
 
     const updatedMetalStock = await MetalStockService.updateMetalStock(id, cleanedUpdateData, req.admin.id);
 
