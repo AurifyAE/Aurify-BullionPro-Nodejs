@@ -332,7 +332,7 @@ static async getAllTradeDebtors(options = {}) {
       accountType,
       sort,
     } = options;
-
+    console.log(options)
     const skip = (page - 1) * limit;
     const query = {};
 
@@ -377,7 +377,7 @@ static async getAllTradeDebtors(options = {}) {
         sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
       }
     }
-
+    console.log("query",query)
     const [tradeDebtors, total] = await Promise.all([
       AccountType.find(query)
         .populate([
@@ -405,6 +405,7 @@ static async getAllTradeDebtors(options = {}) {
       },
     };
   } catch (error) {
+    console.log(error)
     throw createAppError("Error fetching trade debtors", 500, "FETCH_ERROR");
   }
 }
