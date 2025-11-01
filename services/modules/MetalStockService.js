@@ -1,6 +1,8 @@
 import MetalStock from "../../models/modules/MetalStock.js";
 import Registry from "../../models/modules/Registry.js";
 import { createAppError } from "../../utils/errorHandler.js";
+import InventoryService from "./inventoryService.js";
+
 
 class MetalStockService {
   // Helper method to create Registry entries for stock operations
@@ -397,23 +399,17 @@ class MetalStockService {
       throw error;
     }
   }
-
-  // Delete metal stock (soft delete)
+  
+  /* ---------------- DELETE (soft) ---------------- */
   static async deleteMetalStock(id, adminId) {
     try {
       const metalStock = await MetalStock.findById(id);
       if (!metalStock) {
-        throw createAppError(
-          "Metal stock not found",
-          404,
-          "METAL_STOCK_NOT_FOUND"
-        );
+        throw createAppError("Metal stock not found", 404, "METAL_STOCK_NOT_FOUND");
       }
-
-      // Create Registry entries for stock deletion before soft delete
+  
       await this.createRegistryEntries(metalStock, "DELETE", adminId);
-
-      // Soft delete - update status and isActive
+  
       const deletedMetalStock = await MetalStock.findByIdAndUpdate(
         id,
         {
@@ -423,7 +419,7 @@ class MetalStockService {
         },
         { new: true }
       );
-
+  
       return deletedMetalStock;
     } catch (error) {
       throw error;
@@ -470,7 +466,7 @@ class MetalStockService {
       const lowStockItems = await MetalStock.find(query)
         .populate([
           { path: "metalType", select: "code description" },
-          { path: "branch", select: "name code" },
+          // { path: "branch", select: "name code" },
           { path: "category", select: "name code" },
         ])
         .sort({ pcsCount: 1 })
@@ -555,7 +551,7 @@ class MetalStockService {
         { new: true }
       ).populate([
         { path: "metalType", select: "code description" },
-        { path: "branch", select: "name code" },
+        // { path: "branch", select: "name code" },
         { path: "karat", select: "standardPurity" },
       ]);
 

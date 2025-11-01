@@ -3,6 +3,7 @@ import MetalStockService from "../../services/modules/MetalStockService.js";
 import InventoryService from "../../services/modules/inventoryService.js";
 
 // Create new metal stock
+
 export const createMetalStock = async (req, res, next) => {
   try {
     const {
@@ -25,8 +26,14 @@ export const createMetalStock = async (req, res, next) => {
       brand,
       country,
       price,
+      MakingUnit,
+      ozDecimal,
+      passPurityDiff,
+      exclusiveVAT,
+      vatOnMaking,
+      wastage,
     } = req.body;
-
+    console.log("req.body :",req.body)
     // Validate required fields
     if (!metalType || !code || !description || !karat) {
       throw createAppError("Required fields missing", 400, "REQUIRED_FIELDS_MISSING");
@@ -45,7 +52,7 @@ export const createMetalStock = async (req, res, next) => {
         throw createAppError("Total value is required and must be a non-negative number for piece-based stock", 400, "INVALID_TOTAL_VALUE");
       }
     }
-    // Validate charges and makingCharge
+
     const metalStockData = {
       metalType: metalType.trim(),
       code: code.trim(),
@@ -66,7 +73,14 @@ export const createMetalStock = async (req, res, next) => {
       brand: brand || null,
       country: country || null,
       price: price || null,
-      referenceType:"metal-stock"
+      referenceType: "metal-stock",
+      // NEW FIELDS
+      MakingUnit: MakingUnit || "grams",
+      ozDecimal: ozDecimal ? parseFloat(ozDecimal) : null,
+      passPurityDiff: passPurityDiff || false,
+      exclusiveVAT: exclusiveVAT || false,
+      vatOnMaking: vatOnMaking || false,
+      wastage: wastage || false,
     };
 
     const result = await MetalStockService.createMetalStock(metalStockData, req.admin.id);
@@ -158,6 +172,12 @@ export const updateMetalStock = async (req, res, next) => {
       brand,
       country,
       price,
+      MakingUnit,
+      ozDecimal,
+      passPurityDiff,
+      exclusiveVAT,
+      vatOnMaking,
+      wastage,
     } = req.body;
 
     if (!id) {
@@ -199,6 +219,18 @@ export const updateMetalStock = async (req, res, next) => {
     if (brand !== undefined) cleanedUpdateData.brand = brand || null;
     if (country !== undefined) cleanedUpdateData.country = country || null;
     if (price !== undefined) cleanedUpdateData.price = price || null;
+
+    // NEW FIELDS
+    if (MakingUnit !== undefined) cleanedUpdateData.MakingUnit = MakingUnit;
+    if (ozDecimal !== undefined) cleanedUpdateData.ozDecimal = ozDecimal ? parseFloat(ozDecimal) : null;
+    
+    if (passPurityDiff !== undefined)cleanedUpdateData.passPurityDiff = passPurityDiff || false;
+    
+    if (exclusiveVAT !== undefined) cleanedUpdateData.exclusiveVAT = exclusiveVAT || false;
+    
+    if (vatOnMaking !== undefined) cleanedUpdateData.vatOnMaking = vatOnMaking || false;
+    
+    if (wastage !== undefined) cleanedUpdateData.wastage = wastage || false;
 
     const updatedMetalStock = await MetalStockService.updateMetalStock(id, cleanedUpdateData, req.admin.id);
 

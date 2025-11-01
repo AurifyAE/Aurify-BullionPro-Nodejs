@@ -7,7 +7,6 @@ const MetalStockSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "DivisionMaster",
       default: null,
-      // required: [true, "Metal type is required"],
     },
     referenceType: {
       type: String,
@@ -19,10 +18,10 @@ const MetalStockSchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
       maxlength: [20, "Metal stock code cannot exceed 20 characters"],
-      match: [
-        /^[A-Z0-9]+$/,
-        "Metal stock code should contain only uppercase letters and numbers",
-      ],
+      // match: [
+      //   /^[A-Z0-9]+$/,
+      //   "Metal stock code should contain only uppercase letters and numbers",
+      // ],
     },
     description: {
       type: String,
@@ -39,11 +38,9 @@ const MetalStockSchema = new mongoose.Schema(
       ref: "KaratMaster",
       required: [true, "Karat is required"],
     },
-
     pcs: {
       type: Boolean,
-      default: false, // true for pieces, false for weight-based
-      // required: [true, "Pieces tracking option is required"],
+      default: false,
     },
     pcsCount: {
       type: Number,
@@ -77,7 +74,6 @@ const MetalStockSchema = new mongoose.Schema(
       trim: true,
       maxlength: [50, "Voucher number cannot exceed 50 characters"],
       index: true,
-      // Allow null values but enforce uniqueness when present
     },
     charges: {
       type: Number,
@@ -95,18 +91,15 @@ const MetalStockSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "MainCategory",
       default: null,
-      // required: [true, "Category is required"],
     },
     subCategory: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SubCategory",
       default: null,
-      // required: [true, "Sub category is required"],
     },
     type: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Type",
-      // required: [true, "Type is required"],
       default: null,
     },
     size: {
@@ -132,6 +125,33 @@ const MetalStockSchema = new mongoose.Schema(
     price: {
       type: mongoose.Schema.Types.ObjectId,
       default: null,
+    },
+    // NEW FIELDS
+    MakingUnit: {
+      type: String,
+      enum: ["grams", "pieces", "percentage"],
+      default: "grams",
+    },
+    ozDecimal: {
+      type: Number,
+      default: null,
+      min: [0, "OZ Decimal cannot be negative"],
+    },
+    passPurityDiff: {
+      type: Boolean,
+      default:false
+    },
+    exclusiveVAT:{
+      type: Boolean,
+      default:false
+    },
+    vatOnMaking: {
+      type: Boolean,
+      default:false
+    },
+    wastage: {
+      type: Boolean,
+      default:false
     },
     isActive: {
       type: Boolean,
@@ -172,12 +192,13 @@ MetalStockSchema.index({ karat: 1 });
 MetalStockSchema.index({ pcs: 1 });
 MetalStockSchema.index({ pcsCount: 1 });
 MetalStockSchema.index({ totalValue: 1 });
+MetalStockSchema.index({ MakingUnit: 1 });
 
 // Compound indexes
 MetalStockSchema.index({ branch: 1, category: 1 });
 MetalStockSchema.index({ metalType: 1, karat: 1 });
 
-// Pre-save middleware to ensure uppercase codes, validate purity, and enforce pcs logic
+// Pre-save middleware
 MetalStockSchema.pre("save", async function (next) {
   try {
     if (this.code) {
@@ -230,7 +251,6 @@ MetalStockSchema.pre("save", async function (next) {
   }
 });
 
-
 // Static method to check if code exists
 MetalStockSchema.statics.isCodeExists = async function (
   code,
@@ -242,8 +262,6 @@ MetalStockSchema.statics.isCodeExists = async function (
   }
   return !!(await this.findOne(query));
 };
-
-
 
 const MetalStock = mongoose.model("MetalStock", MetalStockSchema);
 

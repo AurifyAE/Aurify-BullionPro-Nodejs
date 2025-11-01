@@ -72,9 +72,9 @@ export const createMetalTransaction = async (req, res, next) => {
         grossWeight: Number(item.grossWeight || 0),
         purity: Number(item.purity),
         standerdPurity: Number(item.standerdPurity),
-        purityDiff: Number(item.purityDiff || 0),
+        purityDiffWeight: Number(item.purityDiffWeight || 0),
         pureWeight: Number(item.pureWeight || 0),
-        purityWeight: Number(item.purityWeight),
+        purityWeight: Number(item.pureWeight),
         weightInOz: Number(item.weightInOz),
         metalRate: item.metalRate.trim(),
         metalRateRequirements: {

@@ -23,6 +23,9 @@ import fundTransferRoutes from "./routes/modules/fundTransferRoutes.js";
 import inventoryRoutes from "./routes/modules/inventoryRoutes.js";
 import reportsRoutes from "./routes/modules/reportsRoutes.js";
 import userRouter from './routes/user/userRouters.js'
+import classificationRoutes from "./routes/modules/classificationRoutes.js"
+import branchMasterRoutes from "./routes/modules/branchMasterRoutes.js"
+
 
 import { mongodb } from "./config/db.js";
 import { errorHandler } from "./utils/errorHandler.js";
@@ -88,6 +91,9 @@ app.use("/api/v1/entry", entryRoutes);
 app.use("/api/v1/fund-transfer", fundTransferRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
 app.use("/api/v1/reports", reportsRoutes)
+app.use("/api/v1/classification", classificationRoutes)
+app.use("/api/v1/branch", branchMasterRoutes)
+
 
 // Global error handling middleware
 app.use(errorHandler);
