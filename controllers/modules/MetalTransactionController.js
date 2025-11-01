@@ -23,9 +23,6 @@ export const createMetalTransaction = async (req, res, next) => {
       voucher
     } = req.body;
 
-    console.log(req.body);
-    
-    
     if (
       !transactionType ||
       !partyCode ||
@@ -75,6 +72,7 @@ export const createMetalTransaction = async (req, res, next) => {
         purityDiffWeight: Number(item.purityDiffWeight || 0),
         pureWeight: Number(item.pureWeight || 0),
         purityWeight: Number(item.pureWeight),
+        standerdPureWeight: Number(item.standerdPurity * item.grossWeight),
         weightInOz: Number(item.weightInOz),
         metalRate: item.metalRate.trim(),
         metalRateRequirements: {

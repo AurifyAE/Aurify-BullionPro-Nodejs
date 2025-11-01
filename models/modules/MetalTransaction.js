@@ -25,32 +25,50 @@ const StockItemSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Gross Weight cannot be negative"],
     },
+
+    //  Purity Information user typed purity than from stock master or default purity
     purity: {
       type: Number,
       required: [true, "Purity is required"],
       min: [0, "Purity cannot be negative"],
       max: [100, "Purity cannot exceed 100%"],
     },
+
+    // Standard Purity from Metal Stock Master
     standerdPurity: {
       type: Number,
       required: [true, "Standard Purity is required"],
       min: [0, "Standard Purity cannot be negative"],
       max: [100, "Standard Purity cannot exceed 100%"],
     },
+
+    // Purity Difference Weight = (Gross Weight * (Purity - Standard Purity)) 
     purityDiffWeight: {
       type: Number,
       default: 0,
     },
+
     purityWeight: {
       type: Number,
       required: [true, "Purity Weight is required"],
       min: [0, "Purity Weight cannot be negative"],
     },
+
+    // Standard Purity Weight = (Gross Weight * Standard Purity)
+    standerdPureWeight: {
+      type: Number,
+      required: [true, "Standard Purity Weight is required"],
+      min: [0, "Standard Purity Weight cannot be negative"],
+    },
+
+    // pureWeight = user entered weight based on  user typed purity
     pureWeight: {
       type: Number,
       required: [true, "pureWeight is required"],
       min: [0, "pureWeight cannot be negative"],
     },
+
+
     weightInOz: {
       type: Number,
       required: [true, "Weight in Oz is required"],

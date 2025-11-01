@@ -177,7 +177,6 @@ class MetalTransactionService {
   }
 
   static buildRegistryEntries(metalTransaction, party, adminId) {
-    console.log("teeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
 
     const {
       transactionType,
@@ -611,6 +610,7 @@ class MetalTransactionService {
       );
     }
 
+    // if the purityDiffWeight is not zero then 
     if (totals.pureWeight > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -621,14 +621,14 @@ class MetalTransactionService {
           `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
+          totals.standerdPureWeight,
           0,
           {
-            debit: totals.pureWeight,
+            debit: totals.standerdPureWeight,
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.standerdPureWeight,
             purity: totals.purity,
             goldBidValue: totals.goldBidValue
           },
@@ -713,6 +713,9 @@ class MetalTransactionService {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
+    console.log(totals);
+    
+    // in here if there is purityDiffWeight is not zero then pureWeight
     // Party Gold Balance - CREDIT
     if (totals.pureWeight > 0) {
       entries.push(
@@ -726,7 +729,11 @@ class MetalTransactionService {
           false,
           totals.pureWeight,
           totals.pureWeight,
-          { debit: 0, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            debit: 0,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -860,9 +867,9 @@ class MetalTransactionService {
           `Gold inventory - Unfix purchase from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
+          totals.standerdPureWeight,
           0,
-          { debit: totals.pureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          { debit: totals.standerdPureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
           voucherDate,
           voucherNumber,
           adminId
@@ -1171,13 +1178,13 @@ class MetalTransactionService {
           `Gold inventory - Purchase return from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
-          totals.pureWeight,
+          totals.standerdPureWeight,
+          totals.standerdPureWeight,
           {
             goldDebit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.standerdPureWeight,
             purity: totals.purity,
             goldBidValue: totals.goldBidValue
           },
@@ -1411,8 +1418,8 @@ class MetalTransactionService {
           `Gold inventory - Unfix purchase return from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
-          totals.pureWeight,
+          totals.standerdPureWeight,
+          totals.standerdPureWeight,
           {},
           voucherDate,
           voucherNumber,
@@ -1654,8 +1661,8 @@ class MetalTransactionService {
           `Gold inventory - Sale to ${partyName}`,
           null,
           true,
-          totals.pureWeight,
-          totals.pureWeight,
+          totals.standerdPureWeight,
+          totals.standerdPureWeight,
           {
             goldCredit: totals.grossWeight,
             cashCredit: totals.goldValue,
@@ -1924,8 +1931,8 @@ class MetalTransactionService {
           `Gold inventory - Unfix Sale return from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
-          totals.pureWeight,
+          totals.standerdPureWeight,
+          totals.standerdPureWeight,
           {
             grossWeight: totals.grossWeight,
             goldBidValue: totals.goldBidValue
@@ -2145,9 +2152,9 @@ class MetalTransactionService {
           `Gold inventory - Unfix sale return from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
+          totals.standerdPureWeight,
           0,
-          { debit: totals.pureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          { debit: totals.standerdPureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
           voucherDate,
           voucherNumber,
           adminId
@@ -2412,10 +2419,10 @@ class MetalTransactionService {
           `Gold inventory - Sale return from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
+          totals.standerdPureWeight,
           0,
           {
-            debit: totals.pureWeight,
+            debit: totals.standerdPureWeight,
             goldCredit: totals.grossWeight,
             cashDebit: totals.goldValue,
             purity: totals.purity,
@@ -2477,9 +2484,9 @@ class MetalTransactionService {
         const purity = item.purity || 0;
         const grossWeight = item.grossWeight || 0;
         const premium = premiumDiscountAmount > 0 ? premiumDiscountAmount : 0;
-        const discount =
-          premiumDiscountAmount < 0 ? Math.abs(premiumDiscountAmount) : 0;
+        const discount = premiumDiscountAmount < 0 ? Math.abs(premiumDiscountAmount) : 0;
         const purityDiffWeight = item.purityDiffWeight || 0;
+        const standerdPureWeight = item.standerdPureWeight || 0;
 
         return {
           makingCharges: acc.makingCharges + makingChargesAmount,
@@ -2493,6 +2500,7 @@ class MetalTransactionService {
           grossWeight: acc.grossWeight + grossWeight,
           purity: acc.purity + purity,
           purityDiffWeight: acc.purityDiffWeight + purityDiffWeight,
+          standerdPureWeight: acc.standerdPureWeight + standerdPureWeight,
           goldBidValue: acc.goldBidValue || item.metalRateRequirements?.rate || 0, // Take the first valid goldBidValue
         };
       },
@@ -2507,7 +2515,8 @@ class MetalTransactionService {
         vatAmount: 0,
         otherChargesAmount: 0,
         goldBidValue: 0,
-        purityDiffWeight: 0
+        purityDiffWeight: 0,
+        standerdPureWeight: 0
       }
     );
 
