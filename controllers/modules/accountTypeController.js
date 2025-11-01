@@ -1,4 +1,5 @@
 import AccountTypeService from "../../services/modules/AccountTypeService.js";
+import { generateUniqueAccountCode, validateAccountMode } from "../../utils/createAccountCode.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import { deleteMultipleS3Files } from "../../utils/s3Utils.js"; // Ensure this import is added
 
@@ -7,11 +8,9 @@ export const createTradeDebtor = async (req, res, next) => {
   try {
     const {
       title,
-      accountCode,
       customerName,
       remarks,
       classification,
-      mode,
       shortName,
       parentGroup,
       isSupplier,
@@ -25,9 +24,9 @@ export const createTradeDebtor = async (req, res, next) => {
       kycDetails,
       accountType,
     } = req.body;
-    // console.log("req body data :", req.body)
-    // let accountType = accountType;
-console.log(req.body)
+
+    console.log("req.body : ",req.body,);
+
     // ✅ Helper function to handle 'null' and 'undefined' strings
     const sanitizeString = (value, defaultValue = '') => {
       if (!value || value === 'null' || value === 'undefined') {
@@ -36,10 +35,26 @@ console.log(req.body)
       return typeof value === 'string' ? value.trim() : value;
     };
 
-    // Basic validation - required fields
-    if (!accountCode || !customerName || !accountType) {
+    // ✅ NEW: Validate accountModeId is provided
+    if (!accountType) {
       throw createAppError(
-        'Required fields missing: accountType, accountCode, customerName',
+        'Account mode ID is required',
+        400,
+        'MISSING_ACCOUNT_MODE'
+      );
+    }
+
+    // ✅ NEW: Validate account mode exists and is active
+    await validateAccountMode(accountType);
+
+    // ✅ NEW: Generate unique account code automatically
+    const accountCode = await generateUniqueAccountCode(accountType);
+    console.log('Generated account code:', accountCode);
+
+    // Basic validation - required fields (removed accountCode from here)
+    if (!customerName || !accountType) {
+      throw createAppError(
+        'Required fields missing: accountType, customerName',
         400,
         'REQUIRED_FIELDS_MISSING'
       );
@@ -353,11 +368,11 @@ console.log(req.body)
       }
     }
 
-    // ✅ Build trade debtor data with sanitized strings
+    // ✅ Build trade debtor data with generated account code
     const tradeDebtorData = {
       accountType: accountType.trim(),
-      title: sanitizeString(title, 'N/A'), // Default to 'N/A' if null/undefined
-      accountCode: accountCode.trim().toUpperCase(),
+      title: sanitizeString(title, 'N/A'),
+      accountCode: accountCode, // ✅ Use generated code
       customerName: customerName.trim(),
       acDefinition: parsedAcDefinition,
       vatGstDetails: parsedVatGstDetails,
@@ -418,6 +433,7 @@ console.log(req.body)
       success: true,
       message: 'Trade debtor created successfully',
       data: tradeDebtor,
+      accountCode: accountCode, // ✅ Return generated account code
       uploadedFiles: {
         total: req.filesInfo?.length || 0,
         vatGstDocuments: parsedVatGstDetails.documents?.length || 0,
@@ -972,7 +988,7 @@ export const deleteTradeDebtor = async (req, res, next) => {
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
     }
-
+    console.log(id,'---')
     const deletedTradeDebtor = await AccountTypeService.deleteTradeDebtor(
       id,
       req.admin.id
@@ -996,7 +1012,7 @@ export const hardDeleteTradeDebtor = async (req, res, next) => {
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
     }
-
+    console.log(id,'----')
     // console.log(`Processing hard delete request for trade debtor: ${id}`);
 
     const result = await AccountTypeService.hardDeleteTradeDebtor(id);

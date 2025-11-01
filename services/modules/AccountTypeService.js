@@ -3,6 +3,9 @@ import { createAppError } from "../../utils/errorHandler.js";
 import { deleteMultipleS3Files } from "../../utils/s3Utils.js";
 import bcrypt from "bcrypt";
 import { hashPassword, encryptPassword, decryptPassword, verifyPassword } from "../../utils/passwordUtils.js";
+import AccountMode from "../../models/modules/AccountMode.js";
+import Registry from "../../models/modules/Registry.js";
+import mongoose from "mongoose";
 
 
 class AccountTypeService {
@@ -319,7 +322,7 @@ static getFilesToDelete(tradeDebtor, updateData) {
 
 
  // Get all trade debtors with pagination and filters
-static async getAllTradeDebtors(options = {}) {
+ static async getAllTradeDebtors(options = {}) {
   try {
     const {
       page = 1,
@@ -332,11 +335,11 @@ static async getAllTradeDebtors(options = {}) {
       accountType,
       sort,
     } = options;
-    console.log(options)
+
     const skip = (page - 1) * limit;
     const query = {};
 
-    // Search functionality
+    // === 1. SEARCH ===
     if (search) {
       query.$or = [
         { accountType: { $regex: search, $options: "i" } },
@@ -346,44 +349,71 @@ static async getAllTradeDebtors(options = {}) {
       ];
     }
 
-    // Status filter
     if (status) {
       query.status = status;
     }
 
-    // Classification filter
     if (classification) {
       query.classification = classification;
     }
 
-    // AccountType filter (array)
+    console.log(accountType,'-----------------------')
+    let accountTypeIds = [];
     if (Array.isArray(accountType) && accountType.length > 0) {
-      query.accountType = { $in: accountType };
+      const normalizedNames = accountType.map(name => name.trim().toLowerCase());
+
+      const modes = await AccountMode.find(
+        { name: { $regex: `^(${normalizedNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`, $options: "i" } },
+        { _id: 1 }
+      ).lean();
+
+      accountTypeIds = modes.map(m => m._id);
+      console.log(accountTypeIds,'================')
+      if (accountTypeIds.length === 0) {
+        return {
+          tradeDebtors: [],
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: 0,
+            totalItems: 0,
+            itemsPerPage: parseInt(limit),
+          },
+        };
+      }
+
+      query.accountType = { $in: accountTypeIds };
     }
 
-    // Sort options - Always prioritize favorites first
-    let sortObj = {};
-    if (Array.isArray(sort)) {
-      sort.forEach(([field, dir]) => {
-        sortObj[field] = dir;
-      });
-    } else {
-      // fallback to old logic
-      if (sortBy === "favorite") {
-        sortObj.favorite = sortOrder === "desc" ? -1 : 1;
-        sortObj.createdAt = -1;
-      } else {
-        sortObj.favorite = -1;
-        sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
-      }
-    }
-    console.log("query",query)
+    // === 5. SORTING ===
+    let sortObj = { favorite: -1,createdAt :-1 }; // Always show favorites first
+
+    // if (sort && typeof sort === 'object' && !Array.isArray(sort)) {
+    //   // If sort is a plain object, use it directly
+    //   sortObj = sort;
+    // } else if (Array.isArray(sort)) {
+    //   sort.forEach(([field, dir]) => {
+    //     sortObj[field] = dir === "desc" ? -1 : 1;
+    //   });
+    // } else {
+    //   if (sortBy === "favorite") {
+    //     sortObj.favorite = sortOrder === "desc" ? -1 : 1;
+    //     sortObj.createdAt = -1;
+    //   } else {
+    //     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
+    //   }
+    // }
+    console.log(sortObj,'////////////////////')
+    // === 6. EXECUTE QUERY ===
     const [tradeDebtors, total] = await Promise.all([
       AccountType.find(query)
         .populate([
           {
             path: "acDefinition.currencies.currency",
             select: "currencyCode description",
+          },
+          {
+            path:"accountType",
+            select:"name prefix"
           },
           { path: "acDefinition.branches.branch", select: "code name" },
           { path: "createdBy", select: "name email" },
@@ -392,6 +422,7 @@ static async getAllTradeDebtors(options = {}) {
         .sort(sortObj)
         .skip(skip)
         .limit(parseInt(limit)),
+
       AccountType.countDocuments(query),
     ]);
 
@@ -405,10 +436,11 @@ static async getAllTradeDebtors(options = {}) {
       },
     };
   } catch (error) {
-    console.log(error)
+    console.error("Error in getAllTradeDebtors:", error);
     throw createAppError("Error fetching trade debtors", 500, "FETCH_ERROR");
   }
 }
+
 
   // Get trade debtor by ID
   static async getTradeDebtorById(id) {
@@ -598,15 +630,36 @@ static async getAllTradeDebtors(options = {}) {
 
 
 
-  // Delete trade debtor (soft delete)
+  static async _isDebtorUsedInRegistry(debtorId) {
+    const count = await Registry.countDocuments({
+      party: debtorId,
+      isActive: true,              
+    }).exec();
+  
+    return count > 0;
+  }
+  
+  /**
+   * Soft-delete trade debtor (mark as inactive)
+   */
   static async deleteTradeDebtor(id, adminId) {
     try {
-      const tradeDebtor = await AccountType.findById(id);
+      const tradeDebtor = await AccountType.findById(id).select(
+        "_id accountType isActive"
+      );
       if (!tradeDebtor) {
         throw createAppError("Trade debtor not found", 404, "DEBTOR_NOT_FOUND");
       }
-
-      // Soft delete - mark as inactive
+  
+      const isUsed = await this._isDebtorUsedInRegistry(id);
+      if (isUsed) {
+        throw createAppError(
+          "Cannot soft-delete: this trade debtor has active transactions in the registry.",
+          409,
+          "DEBTOR_HAS_TRANSACTIONS"
+        );
+      }
+  
       const deletedTradeDebtor = await AccountType.findByIdAndUpdate(
         id,
         {
@@ -616,7 +669,7 @@ static async getAllTradeDebtors(options = {}) {
         },
         { new: true }
       );
-
+  
       return deletedTradeDebtor;
     } catch (error) {
       if (error.name === "CastError") {
@@ -625,51 +678,57 @@ static async getAllTradeDebtors(options = {}) {
       throw error;
     }
   }
-
-  // Hard delete trade debtor
+  
+  /**
+   * Hard-delete trade debtor (permanent removal + S3 cleanup)
+   */
   static async hardDeleteTradeDebtor(id) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    console.log(id,"delete user id")
     try {
-      const tradeDebtor = await AccountType.findById(id);
+      const tradeDebtor = await AccountType.findById(id).session(session);
       if (!tradeDebtor) {
         throw createAppError("Trade debtor not found", 404, "DEBTOR_NOT_FOUND");
       }
-
-      // Extract all S3 keys from the document
+  
+      const isUsed = await this._isDebtorUsedInRegistry(id);
+      if (isUsed) {
+        throw createAppError(
+          "Cannot hard-delete: this trade debtor has active transactions in the registry.",
+          409,
+          "DEBTOR_HAS_TRANSACTIONS"
+        );
+      }
+  
+      // Extract S3 keys *before* DB removal
       const s3Keys = this.extractS3Keys(tradeDebtor);
-
-      // console.log(
-      //   `Preparing to delete trade debtor ${id} with ${s3Keys.length} associated files`
-      // );
-
-      // Delete the trade debtor from database first
-      await AccountType.findByIdAndDelete(id);
-
-      // Delete associated S3 files if any exist
+  
+      // 1. Delete DB record
+      await AccountType.findByIdAndDelete(id).session(session);
+  
+      // 2. Delete S3 files (outside transaction – idempotent & fire-and-forget)
       let s3DeletionResult = { successful: [], failed: [] };
       if (s3Keys.length > 0) {
-        // console.log(
-        //   `Deleting ${s3Keys.length} S3 files for trade debtor ${id}:`,
-        //   s3Keys
-        // );
-
         try {
           s3DeletionResult = await deleteMultipleS3Files(s3Keys);
-
-          if (s3DeletionResult.failed?.length > 0) {
+          if (s3DeletionResult.failed?.length) {
             console.warn(
               "Some S3 files could not be deleted:",
               s3DeletionResult.failed
             );
           }
         } catch (s3Error) {
-          console.error("Error deleting S3 files:", s3Error);
+          console.error("S3 deletion error:", s3Error);
           s3DeletionResult = {
             successful: [],
             failed: s3Keys.map((key) => ({ key, error: s3Error.message })),
           };
         }
       }
-
+  
+      await session.commitTransaction();
+  
       const result = {
         message: "Trade debtor permanently deleted",
         filesDeleted: {
@@ -677,23 +736,26 @@ static async getAllTradeDebtors(options = {}) {
           successful: s3DeletionResult.successful?.length || 0,
           failed: s3DeletionResult.failed?.length || 0,
           successfulKeys:
-            s3DeletionResult.successful?.map((result) => result.key) || [],
-          failedKeys:
-            s3DeletionResult.failed?.map((result) => result.key) || [],
+            s3DeletionResult.successful?.map((r) => r.key) || [],
+          failedKeys: s3DeletionResult.failed?.map((r) => r.key) || [],
         },
       };
-
-      if (s3DeletionResult.failed?.length > 0) {
+  
+      if (s3DeletionResult.failed?.length) {
         result.message += " (warning: some files may remain in S3)";
         result.filesDeleted.errors = s3DeletionResult.failed;
       }
-
+  
       return result;
     } catch (error) {
+      await session.abortTransaction();
+  
       if (error.name === "CastError") {
         throw createAppError("Invalid trade debtor ID", 400, "INVALID_ID");
       }
       throw error;
+    } finally {
+      session.endSession();
     }
   }
 
