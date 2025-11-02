@@ -15,6 +15,10 @@ const vatGstDetailsSchema = new mongoose.Schema({
     default: 'UNREGISTERED',
     required: [true, 'VAT status is required'],
   },
+  isVerified: {
+    type: Boolean,
+    default: false, 
+  },
   vatNumber: { type: String, trim: true, maxlength: 50, default: '' },
   documents: {
     type: [documentSchema],
@@ -26,8 +30,8 @@ const AccountSchema = new mongoose.Schema(
   {
     // Basic Account Information
     accountType: {
-      type: String,
-      default: 'PAYABLE',
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'AccountMode',
       required: [true, 'Account type is required'],
       trim: true,
     },
@@ -47,8 +51,8 @@ const AccountSchema = new mongoose.Schema(
       required: [true, 'Account code is required'],
       trim: true,
       uppercase: true,
-      maxlength: [20, 'Account code cannot exceed 20 characters'],
-      match: [/^[A-Z0-9]+$/, 'Account code should contain only uppercase letters and numbers'],
+      maxlength: [10, 'Account code cannot exceed 20 characters'],
+      match: [/^[A-Z0-9_-]+$/, "Account code can only contain uppercase letters, numbers, hyphen or underscore"],
     },
     customerName: {
       type: String,
@@ -234,6 +238,10 @@ const AccountSchema = new mongoose.Schema(
               message: 'Expiry date must be after issue date',
             },
             default: null,
+          },
+          isVerified: {
+            type: Boolean,
+            default: false, 
           },
           documents: {
             type: [documentSchema],
@@ -502,6 +510,17 @@ AccountSchema.methods.removeCurrencyBalance = function (currencyId) {
 
   return this.save();
 };
+
+AccountSchema.pre('validate', function (next) {
+  if (this.accountCode && this.accountCode.length > 10) {
+    this.invalidate(
+      'accountCode',
+      'Account code cannot exceed 10 characters'
+    );
+  }
+  next();
+});
+
 
 const Account = mongoose.model('Account', AccountSchema);
 export default Account;
