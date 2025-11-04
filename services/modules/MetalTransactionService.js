@@ -39,7 +39,7 @@ class MetalTransactionService {
       await session.endSession();
     }
   }
-
+///
   static async validateParty(partyCode, session) {
     const party = await Account.findById(partyCode)
       .select("_id isActive accountCode customerName balances")
@@ -51,7 +51,7 @@ class MetalTransactionService {
     }
     return party;
   }
-
+///
   static createTransaction(transactionData, adminId) {
     const transaction = new MetalTransaction({
       ...transactionData,
@@ -64,7 +64,7 @@ class MetalTransactionService {
 
     return transaction;
   }
-
+///
   static async createRegistryEntries(
     metalTransaction,
     party,
@@ -175,14 +175,13 @@ class MetalTransactionService {
       );
     }
   }
-
+////
   static buildRegistryEntries(metalTransaction, party, adminId) {
 
     const {
       transactionType,
       _id,
-      fixed,
-      unfix,
+      hedge,
       stockItems,
       totalAmountSession,
       voucherDate,
@@ -845,7 +844,7 @@ class MetalTransactionService {
           `Party discount - Unfix purchase from ${partyName}`,
           party._id,
           false,
-          totals.discount,
+          totals.discount, 
           0,
           { debit: totals.discount, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
           voucherDate,
@@ -2577,7 +2576,7 @@ class MetalTransactionService {
       purity,
     };
   }
-
+///
   static async updateAccountBalances(party, metalTransaction, session) {
     const { transactionType, fixed, unfix, stockItems, totalAmountSession } = metalTransaction;
     const totals = this.calculateTotals(stockItems, totalAmountSession);
@@ -2770,7 +2769,7 @@ class MetalTransactionService {
       "INTERNAL_SERVER_ERROR"
     );
   }
-
+////
   static validateTransactionData(transactionData, adminId) {
     const required = [
       "partyCode",
@@ -2958,6 +2957,8 @@ class MetalTransactionService {
 
     return true;
   }
+
+
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Get all metal transactions with pagination and filters
   static async getAllMetalTransactions(page = 1, limit = 50, filters = {}) {
@@ -3506,7 +3507,7 @@ class MetalTransactionService {
 
     return [oldParty, newParty];
   }
-
+////
   static applyTransactionUpdates(transaction, updateData) {
     // Update only allowed fields
     const allowedFields = [
@@ -3527,6 +3528,7 @@ class MetalTransactionService {
     }
   }
 
+  ///
   static async handleRegistryAndBalances(
     transaction,
     originalData,
@@ -3609,6 +3611,7 @@ class MetalTransactionService {
       console.log(`[UPDATE_TRANSACTION] No balance-affecting fields updated for transaction ${transaction._id}`);
     }
   }
+
   static async updateReverseAccountBalances(party, originalData, session) {
     try {
       // MINUS THE OLD BALANCES

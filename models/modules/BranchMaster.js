@@ -91,6 +91,25 @@ const BranchSchema = new mongoose.Schema(
       default: 31.1035,
       min: [0, "Gold conversion factor cannot be negative"],
     },
+    metalDecimal: {
+      type: Number,
+      required: [true, "Metal decimal precision is required"],
+      min: [0, "Metal decimal cannot be negative"],
+      max: [6, "Metal decimal cannot exceed 6"],
+      default: 3,
+    },
+    amountDecimal: {
+      type: Number,
+      required: [true, "Amount decimal precision is required"],
+      min: [0, "Amount decimal cannot be negative"],
+      max: [6, "Amount decimal cannot exceed 6"],
+      default: 2,
+    },
+    financialYear: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "FinancialYear",
+      required: [true, "Financial year is required"],
+    },
 
     isActive: {
       type: Boolean,
