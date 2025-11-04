@@ -25,8 +25,10 @@ import reportsRoutes from "./routes/modules/reportsRoutes.js";
 import userRouter from './routes/user/userRouters.js'
 import classificationRoutes from "./routes/modules/classificationRoutes.js"
 import branchMasterRoutes from "./routes/modules/branchMasterRoutes.js"
-
-
+import otherChargesRoutes from "./routes/modules/otherChargesRoutes.js"
+import accountModeRoutes from './routes/modules/accountModeRoutes.js'
+import financialYearRoutes from "./routes/modules/financialYearMasterRoutes.js";
+import commodityRoutes from "./routes/modules/commodityRoutes.js";
 import { mongodb } from "./config/db.js";
 import { errorHandler } from "./utils/errorHandler.js";
 
@@ -93,6 +95,10 @@ app.use("/api/v1/inventory", inventoryRoutes);
 app.use("/api/v1/reports", reportsRoutes)
 app.use("/api/v1/classification", classificationRoutes)
 app.use("/api/v1/branch", branchMasterRoutes)
+app.use("/api/v1/other-charges", otherChargesRoutes)
+app.use("/api/v1/account-mode", accountModeRoutes)
+app.use("/api/v1/financial-year", financialYearRoutes);
+app.use("/api/v1/commodity", commodityRoutes);
 
 
 // Global error handling middleware
