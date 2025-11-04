@@ -214,6 +214,21 @@ const AccountSchema = new mongoose.Schema(
           routingCode: { type: String, trim: true, maxlength: 20, default: null },
           address: { type: String, trim: true, maxlength: 200, default: null },
           isPrimary: { type: Boolean, default: false },
+          // New PDC related fields
+          pdcIssue: { 
+            type: String, 
+            trim: true, 
+            // enum: ['Bank', 'Customer', 'Supplier', 'Vendor', ''], 
+            default: '' 
+          },
+          maturityDate: { 
+            type: Date, 
+            default: null 
+          },
+          pdcReceiptMaturityDate: { 
+            type: Date, 
+            default: null 
+          },
         },
       ],
       default: [],

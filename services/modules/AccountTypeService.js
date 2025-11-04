@@ -69,8 +69,31 @@ static async createTradeDebtor(debtorData, adminId) {
       if (debtorData.kycDetails.length === 0) delete debtorData.kycDetails;
     }
 
-    // 6. Ensure single primary: address, employee, bank
-    ['addresses', 'employees', 'bankDetails'].forEach((field) => {
+    // 6. Process bankDetails - ensure single primary and convert dates
+    if (debtorData.bankDetails?.length > 0) {
+      let primaryFound = false;
+      debtorData.bankDetails.forEach((bank, i) => {
+        // Ensure single primary
+        if (bank.isPrimary && !primaryFound) {
+          primaryFound = true;
+        } else if (bank.isPrimary && primaryFound) {
+          bank.isPrimary = false;
+        } else if (i === 0 && !primaryFound) {
+          bank.isPrimary = true;
+          primaryFound = true;
+        }
+        // Convert date fields
+        if (bank.maturityDate) {
+          bank.maturityDate = new Date(bank.maturityDate);
+        }
+        if (bank.pdcReceiptMaturityDate) {
+          bank.pdcReceiptMaturityDate = new Date(bank.pdcReceiptMaturityDate);
+        }
+      });
+    }
+
+    // Ensure single primary for addresses and employees
+    ['addresses', 'employees'].forEach((field) => {
       if (debtorData[field]?.length > 0) {
         let primaryFound = false;
         debtorData[field].forEach((item, i) => {
@@ -169,7 +192,26 @@ static async updateTradeDebtor(id, updateData, adminId) {
       delete updateData._removeVatDocuments;
     }
 
-    // 3. Process KYC updates
+    // 3. Process bankDetails updates - convert dates
+    if (updateData.bankDetails?.length) {
+      updateData.bankDetails = updateData.bankDetails.map((bank) => {
+        const updatedBank = { ...bank };
+        // Convert date fields
+        if (bank.maturityDate) {
+          updatedBank.maturityDate = new Date(bank.maturityDate);
+        } else if (bank.maturityDate === null || bank.maturityDate === '') {
+          updatedBank.maturityDate = null;
+        }
+        if (bank.pdcReceiptMaturityDate) {
+          updatedBank.pdcReceiptMaturityDate = new Date(bank.pdcReceiptMaturityDate);
+        } else if (bank.pdcReceiptMaturityDate === null || bank.pdcReceiptMaturityDate === '') {
+          updatedBank.pdcReceiptMaturityDate = null;
+        }
+        return updatedBank;
+      });
+    }
+
+    // 4. Process KYC updates
     if (updateData.kycDetails?.length) {
       const oldKyc = tradeDebtor.kycDetails || [];
       updateData.kycDetails = updateData.kycDetails
@@ -202,7 +244,7 @@ static async updateTradeDebtor(id, updateData, adminId) {
         });
     }
 
-    // 4. Re-init cash balances if currencies changed
+    // 5. Re-init cash balances if currencies changed
     if (updateData.acDefinition?.currencies?.length > 0) {
       updateData.balances = {
         cashBalance: updateData.acDefinition.currencies.map((c) => ({
@@ -217,14 +259,14 @@ static async updateTradeDebtor(id, updateData, adminId) {
       };
     }
 
-    // 5. Set audit fields
+    // 6. Set audit fields
     updateData.updatedBy = adminId;
     updateData.updatedAt = new Date();
 
-    // 6. Collect S3 keys to delete
+    // 7. Collect S3 keys to delete
     const filesToDelete = this.getFilesToDelete(tradeDebtor, updateData);
 
-    // 7. Update DB
+    // 8. Update DB
     const updated = await AccountType.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
@@ -237,7 +279,7 @@ static async updateTradeDebtor(id, updateData, adminId) {
       { path: 'updatedBy', select: 'name email role' },
     ]);
 
-    // 8. Delete old S3 files
+    // 9. Delete old S3 files
     let s3Result = { successful: [], failed: [] };
     if (filesToDelete.length > 0) {
       try {
