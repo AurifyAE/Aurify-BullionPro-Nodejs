@@ -450,6 +450,10 @@ static getFilesToDelete(tradeDebtor, updateData) {
           path: "acDefinition.currencies.currency",
           select: "code name symbol",
         },
+        {
+          path: "balances.cashBalance.currency",
+          select: "code name symbol",
+        },
         { path: "acDefinition.branches.branch", select: "code name" },
         { path: "createdBy", select: "name email" },
         { path: "updatedBy", select: "name email" },
