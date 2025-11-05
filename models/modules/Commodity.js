@@ -75,9 +75,6 @@ const CommoditySchema = new mongoose.Schema(
   }
 );
 
-// Indexes
-CommoditySchema.index({ code: 1 }, { unique: true });
-CommoditySchema.index({ description: 1 });
 
 // Static: Check if code exists
 CommoditySchema.statics.isCodeExists = async function (code, excludeId) {
