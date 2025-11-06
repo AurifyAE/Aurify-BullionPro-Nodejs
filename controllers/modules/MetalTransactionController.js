@@ -12,25 +12,25 @@ const toDate = (val) => (val ? new Date(val) : null);
 
 // ======================== CREATE METAL TRANSACTION ========================
 export const createMetalTransaction = async (req, res, next) => {
-  console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
+  // console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
   try {
     const {
       transactionType,
-      hedge = false,
+      fix,
+      unfix,
       partyCode,
       partyCurrency,
       itemCurrency,
       partyCurrencyRate = 1,
       voucherType,
       voucherDate,
-      voucherNumber,
+      voucherNumber,  
       supplierInvoiceNo,
       supplierDate,
       metalRateUnit,
       stockItems = [],
       otherCharges = [],
-      netAmount = 0,
-      rounded = 0,
+      totalSummary,
       totalAmount = 0,
       enteredBy,
       salesman,
@@ -106,11 +106,13 @@ export const createMetalTransaction = async (req, res, next) => {
         purityStd: toNumber(purityStd, 0.999),
         purity: toNumber(purity),
         pureWeightStd: toNumber(pureWeightStd),
-        pureWeight: toNumber(pureWeight),
-        purityDifference: toNumber(purityDifference),
+        pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
+        purityDifference: toNumber(purityDifference) ?toNumber(purityDifference) : 0 ,
+        purityDifferenceAmount : fix ? toNumber(item.purityDifference) * toNumber(grossWeight)  : 0,
         weightInOz: toNumber(weightInOz),
-        metalRate: {
-          rate: toNumber(metalRate?.rate),
+        metalRate: metalRate?.type || null,
+        metalRateRequirements: {
+          amount: toNumber(metalRate?.rate),
           rateInGram: toNumber(metalRate?.rateInGram),
         },
         metalAmount: toNumber(itemTotal?.baseAmount),
@@ -124,7 +126,7 @@ export const createMetalTransaction = async (req, res, next) => {
           amount: toNumber(premiumDiscount?.amount),
         },
         vat: {
-          rate: toNumber(vat?.rate),
+          percentage: toNumber(vat?.rate),
           amount: toNumber(vat?.amount),
         },
         itemTotal: {
@@ -169,13 +171,16 @@ export const createMetalTransaction = async (req, res, next) => {
               vatAmount: toNumber(charge.vatDetails.vatAmount),
             }
           : null,
+          remarks: trim(charge.remarks) || "",
       };
     });
 
+    
     // === FINAL TRANSACTION DATA ===
     const transactionData = {
       transactionType,
-      hedge: Boolean(hedge),
+      fixed: Boolean(fix),
+      unfix: Boolean(unfix),
       partyCode: trim(partyCode),
       partyCurrency: trim(partyCurrency),
       itemCurrency: trim(itemCurrency),
@@ -194,9 +199,16 @@ export const createMetalTransaction = async (req, res, next) => {
         : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,
-      netAmount: toNumber(netAmount),
-      rounded: toNumber(rounded),
-      totalAmount: toNumber(totalAmount),
+      totalSummary : {
+        itemSubTotal: toNumber(totalSummary?.itemSubTotal) || 0,
+        itemTotalVat: toNumber(totalSummary?.itemTotalVat) || 0,
+        itemTotalAmount: toNumber(totalSummary?.itemTotalAmount) || 0,
+        totalOtherCharges: toNumber(totalSummary?.totalOtherCharges) || 0,
+        totalOtherChargesVat: toNumber(totalSummary?.totalOtherChargesVat) || 0,
+        netAmount: toNumber(totalSummary?.netAmount) || 0,
+        rounded: toNumber(totalSummary?.rounded) || 0,
+        totalAmount: toNumber(totalSummary?.totalAmount) || 0
+      },
       enteredBy: trim(enteredBy),
       salesman: trim(salesman),
       status,
@@ -283,7 +295,8 @@ export const updateMetalTransaction = async (req, res, next) => {
       pureWeight: toNumber(item.pureWeight),
       purityDifference: toNumber(item.purityDifference),
       weightInOz: toNumber(item.weightInOz),
-      metalRate: {
+      metalRate:metalRateUnit?.rateType || null,
+      metalRateRequirements: {
         rate: toNumber(item.metalRate?.rate),
         rateInGram: toNumber(item.metalRate?.rateInGram),
       },
@@ -368,7 +381,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       status,
       notes: trim(notes),
     };
-
+console.log(transactionData)
     const updated = await MetalTransactionService.updateMetalTransaction(
       id,
       transactionData,

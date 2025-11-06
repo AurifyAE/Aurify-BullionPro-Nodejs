@@ -7,6 +7,24 @@ import InventoryLog from "../../models/modules/InventoryLog.js";
 import Inventory from "../../models/modules/inventory.js";
 import MetalStock from "../../models/modules/MetalStock.js";
 import InventoryService from "./inventoryService.js";
+import Branch from "../../models/modules/BranchMaster.js";
+import FixingPrice from "../../models/modules/FixingPrice.js";
+
+/* ---------- HARD-CODED LEDGER ACCOUNTS ---------- */
+const chartsOfAccount = {
+  PHYSICAL_STOCK_OF_GOLD: "690c3b5639faec86b05ccb70",
+  INPUT_VAT: "690c3cc839faec86b05ccba2",
+  OUTPUT_VAT: "690c3cd939faec86b05ccbd9",
+  PURCHASES_MAKING_CHARGES_GOLD: "690c3cfc39faec86b05ccc15",
+  PURCHASES_GOLD_JEWELLER: "690c3d5639faec86b05ccc56",
+  PURITY_DIFFERENCE: "690c3f8239faec86b05ccc9c",
+  PREMIUM_DISCOUNT: "690c3fa439faec86b05ccce7",
+  SALES_HEDGING_FIXING: "690c40b239faec86b05ccdfe",
+  PURCHASE_HEDGING_FIXING: "690c40d339faec86b05cce54",
+  SALES_GOLD_MAKING_CHARGES: "690c40ea39faec86b05cceaf",
+  SALES_GOLD_JEWELLERY: "690c40f939faec86b05ccf0f",
+  OTHER_CHARGERS: "690c412439faec86b05ccf74",
+};
 
 class MetalTransactionService {
   static async createMetalTransaction(transactionData, adminId) {
@@ -14,7 +32,6 @@ class MetalTransactionService {
     let createdTransaction;
     try {
       await session.withTransaction(async () => {
-
         this.validateTransactionData(transactionData);
 
         const [party, metalTransaction] = await Promise.all([
@@ -39,7 +56,7 @@ class MetalTransactionService {
       await session.endSession();
     }
   }
-///
+  ///
   static async validateParty(partyCode, session) {
     const party = await Account.findById(partyCode)
       .select("_id isActive accountCode customerName balances")
@@ -51,20 +68,20 @@ class MetalTransactionService {
     }
     return party;
   }
-///
+  ///
   static createTransaction(transactionData, adminId) {
     const transaction = new MetalTransaction({
       ...transactionData,
       createdBy: adminId,
     });
 
-    if (!transactionData.totalAmountSession?.totalAmountAED) {
-      transaction.calculateSessionTotals();
-    }
+    // if (!transactionData.totalAmountSession?.totalAmountAED) {
+    //   transaction.calculateSessionTotals();
+    // }
 
     return transaction;
   }
-///
+  ///
   static async createRegistryEntries(
     metalTransaction,
     party,
@@ -88,10 +105,15 @@ class MetalTransactionService {
       }
 
       const result = await query;
-      console.log(`[DELETE_REGISTRY] Deleted ${result.deletedCount} registry entries for transaction ${metalTransaction._id}`);
+      console.log(
+        `[DELETE_REGISTRY] Deleted ${result.deletedCount} registry entries for transaction ${metalTransaction._id}`
+      );
       return result;
     } catch (error) {
-      console.error(`[DELETE_REGISTRY_ERROR] Failed to delete registry entries for transaction ${metalTransaction._id}`, error);
+      console.error(
+        `[DELETE_REGISTRY_ERROR] Failed to delete registry entries for transaction ${metalTransaction._id}`,
+        error
+      );
       throw createAppError(
         `Failed to delete registry entries: ${error.message}`,
         500,
@@ -106,7 +128,10 @@ class MetalTransactionService {
       await InventoryLog.deleteMany({ voucherCode });
       console.log(`[CLEANUP] Deletion complete for voucher: ${voucherCode}`);
     } catch (error) {
-      console.error(`[CLEANUP_ERROR] Failed to delete data for voucher: ${voucherCode}`, error);
+      console.error(
+        `[CLEANUP_ERROR] Failed to delete data for voucher: ${voucherCode}`,
+        error
+      );
       throw error;
     }
   }
@@ -152,16 +177,17 @@ class MetalTransactionService {
         await InventoryLog.create({
           code: metal.code,
           stockCode: metal._id,
-          voucherCode: transaction.voucherNumber || item.voucherNumber || '',
+          voucherCode: transaction.voucherNumber || item.voucherNumber || "",
           voucherDate: transaction.voucherDate || new Date(),
           grossWeight: item.grossWeight || 0,
           action: isSale ? "remove" : "add",
-          transactionType: transaction.transactionType || (isSale ? "sale" : "purchase"),
+          transactionType:
+            transaction.transactionType || (isSale ? "sale" : "purchase"),
           createdBy: transaction.createdBy || admin || null,
-          pcs: !!item.pieces,  // whether it's piece-based
+          pcs: !!item.pieces, // whether it's piece-based
           note: isSale
             ? "Inventory reduced due to sale transaction"
-            : "Inventory increased due to purchase transaction"
+            : "Inventory increased due to purchase transaction",
         });
       }
 
@@ -175,104 +201,222 @@ class MetalTransactionService {
       );
     }
   }
-////
-  static buildRegistryEntries(metalTransaction, party, adminId) {
 
+  // Add this to your MetalTransaction model (or a service file)
+  static async createFixingPriceEntry(metalTransaction, adminId) {
     const {
+      _id: transactionId,
       transactionType,
-      _id,
-      hedge,
-      stockItems,
-      totalAmountSession,
+      partyCode,
+      stockItems = [],
       voucherDate,
-      voucherNumber,
-      metalRateRequirements
     } = metalTransaction;
 
-    console.log(metalTransaction)
+    if (!stockItems?.length) return [];
 
+    // 1. Fetch Party + USD currency definition
+    const party = await Account.findById(partyCode)
+      .populate({
+        path: "acDefinition.currencies.currency",
+        match: { currencyCode: "USD" },
+        select: "currencyCode conversionRate",
+      })
+      .select("acDefinition.currencies");
+
+    if (!party) throw new Error("Party not found");
+
+    const usdCurrencyDef = party.acDefinition.currencies.find(
+      (c) => c.currency?.currencyCode === "USD"
+    );
+
+    if (!usdCurrencyDef?.currency)
+      throw new Error("USD not defined in party currencies");
+
+    // 2. Get USD conversion values
+    const usdPurchasePrice =
+      usdCurrencyDef.purchasePrice > 0
+        ? usdCurrencyDef.purchasePrice
+        : usdCurrencyDef.currency.conversionRate;
+
+    const usdSellPrice =
+      usdCurrencyDef.sellPrice > 0
+        ? usdCurrencyDef.sellPrice
+        : usdCurrencyDef.currency.conversionRate;
+
+    // 3. Get goldOzConversion from fixed branch
+    const branch = await Branch.findById("690224d4dbda6f93e986e0ca")
+      .select("goldOzConversion")
+      .lean();
+
+    const goldOzConversion = branch?.goldOzConversion || 31.1035;
+
+    // 4. Create fixing entries
+    const fixingEntries = [];
+
+    for (const item of stockItems) {
+      const rateInGram = item.metalRateRequirements?.rateInGram;
+
+      if (!rateInGram || rateInGram <= 0) continue;
+
+      // Choose correct USD price based on transaction type
+      const usdPricePerGram = transactionType.includes("purchase")
+        ? usdPurchasePrice
+        : usdSellPrice;
+
+      // Convert to USD per Oz
+      const bidValue = Number(
+        ((rateInGram / usdPricePerGram) * goldOzConversion).toFixed(2)
+      );
+
+      const fixing = await FixingPrice.create({
+        transaction: transactionId,
+        transactionFix: null,
+        rateInGram: Number(rateInGram.toFixed(4)),
+        bidValue,
+        entryBy: adminId,
+        metalRate: item.metalRate,
+        status: "active",
+        fixedAt: voucherDate || new Date(),
+      });
+
+      fixingEntries.push(fixing);
+    }
+
+    return fixingEntries;
+  }
+  ////
+  // === ADD THIS TO YOUR MetalTransaction MODEL ===
+  static async buildRegistryEntries(metalTransaction, party, adminId) {
+    const {
+      _id: transactionId,
+      transactionType,
+      fixed,
+      unfix,
+      stockItems = [],
+      otherCharges = [],
+      totalSummary = {},
+      voucherDate,
+      voucherNumber,
+      partyCurrency, // populated CurrencyMaster ref
+    } = metalTransaction;
+
+    if (!stockItems.length && !otherCharges.length) {
+      return [];
+    }
+    // Charts of Accounts
+    const coa = {
+      PHYSICAL_STOCK_OF_GOLD: "690c3b5639faec86b05ccb70",
+      INPUT_VAT: "690c3cc839faec86b05ccba2",
+      PURCHASES_MAKING_CHARGES_GOLD: "690c3cfc39faec86b05ccc15",
+      PURCHASES_GOLD_JEWELLER: "690c3d5639faec86b05ccc56",
+      PURITY_DIFFERENCE: "690c3f8239faec86b05ccc9c",
+      PREMIUM_DISCOUNT: "690c3fa439faec86b05ccce7",
+      PURCHASE_HEDGING_FIXING: "690c40d339faec86b05cce54",
+      OTHER_CHARGES: "690c412439faec86b05ccf74",
+    };
     const baseTransactionId = this.generateTransactionId();
-    const mode = this.getTransactionMode(fixed, unfix);
-
+    const mode = this.getTransactionMode(fixed, unfix); // "fix" or "unfix"
     const entries = [];
+    console.log("Hyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy");
 
-    // Loop over each stock item
+    // ==============================
+    // 1. PROCESS EACH STOCK ITEM
+    // ==============================
     for (let i = 0; i < stockItems.length; i++) {
       const item = stockItems[i];
-      const totals = this.calculateTotals([item], totalAmountSession); // Pass only one item
-      console.log("Hyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy");
-      console.log(totals);
+
+      // Build itemTotals from stockItems
+      const itemTotals = {
+        baseAmount: item.itemTotal?.baseAmount || 0,
+        makingCharges: item.makingUnit?.makingAmount || 0,
+        premiumDiscount: item.premiumDiscount?.amount || 0,
+        vatAmount: item.vat?.amount || 0,
+        itemTotalAmount: item.itemTotal?.itemTotalAmount || 0,
+        pureWeight: item.pureWeight || 0,
+        pureWeightStd: item.pureWeightStd || 0,
+        grossWeight: item.grossWeight || 0,
+        purity: item.purity || 0,
+        purityDiffWeight: item.purityDifference || 0,
+        purityDifferenceAmount: item.purityDifferenceAmount || 0,
+        goldGram: item.metalRateRequirements?.rateInGram || 480.11,
+        goldBidValue: (
+          (item.metalRateRequirements?.rateInGram / 3.674) *
+          31.1035
+        ).toFixed(2),
+      };
 
       switch (transactionType) {
         case "purchase":
           entries.push(
             ...this.buildPurchaseEntries(
               mode,
-              _id,
-              totals,
+              itemTotals,
+              transactionId,
               party,
-              baseTransactionId,
+              `${baseTransactionId}-I${i + 1}`,
               voucherDate,
               voucherNumber,
               adminId,
-              item // optionally pass item if needed
+              item,
+              partyCurrency,
+              coa,
+              totalSummary
             )
           );
           break;
 
         case "sale":
-          entries.push(
-            ...this.buildSaleEntries(
-              mode,
-              _id,
-              totals,
-              party,
-              baseTransactionId,
-              voucherDate,
-              voucherNumber,
-              adminId,
-              item
-            )
+          itemEntries = this.buildSaleEntries(
+            mode,
+            transactionId,
+            itemTotals,
+            party,
+            `${baseTransactionId}-I${i + 1}`,
+            voucherDate,
+            voucherNumber,
+            adminId,
+            item,
+            partyCurrency
           );
           break;
 
         case "purchaseReturn":
-          entries.push(
-            ...this.buildPurchaseReturnEntries(
-              mode,
-              _id,
-              totals,
-              party,
-              baseTransactionId,
-              voucherDate,
-              voucherNumber,
-              adminId,
-              item
-            )
+          itemEntries = this.buildPurchaseReturnEntries(
+            mode,
+            transactionId,
+            itemTotals,
+            party,
+            `${baseTransactionId}-I${i + 1}`,
+            voucherDate,
+            voucherNumber,
+            adminId,
+            item,
+            partyCurrency
           );
           break;
 
         case "saleReturn":
-          entries.push(
-            ...this.buildSaleReturnEntries(
-              mode,
-              _id,
-              totals,
-              party,
-              baseTransactionId,
-              voucherDate,
-              voucherNumber,
-              adminId,
-              item
-            )
+          itemEntries = this.buildSaleReturnEntries(
+            mode,
+            transactionId,
+            itemTotals,
+            party,
+            `${baseTransactionId}-I${i + 1}`,
+            voucherDate,
+            voucherNumber,
+            adminId,
+            item,
+            partyCurrency
           );
           break;
+
+        default:
+          console.warn(`Unknown transactionType: ${transactionType}`);
       }
     }
 
     return entries.filter(Boolean);
   }
-
 
   static getTransactionMode(fixed, unfix) {
     if (fixed && !unfix) return "fix";
@@ -283,36 +427,47 @@ class MetalTransactionService {
 
   static buildPurchaseEntries(
     mode,
+    itemTotals,
     metalTransactionId,
-    totals,
     party,
     baseTransactionId,
     voucherDate,
     voucherNumber,
     adminId,
-    item
+    item,
+    partyCurrency,
+    coa,
+    totalSummary,
   ) {
+    console.log("________________________________________________________");
+    console.log(mode);
+    console.log("________________________________________________________");
+
     return mode === "fix"
       ? this.buildPurchaseFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      )
+          itemTotals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          coa,
+          totalSummary
+        )
       : this.buildPurchaseUnfixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      );
+          itemTotals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency
+        );
   }
 
   static buildSaleEntries(
@@ -328,25 +483,25 @@ class MetalTransactionService {
   ) {
     return mode === "fix"
       ? this.buildSaleFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item
+        )
       : this.buildSaleUnfixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      );
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item
+        );
   }
 
   static buildPurchaseReturnEntries(
@@ -362,25 +517,25 @@ class MetalTransactionService {
   ) {
     return mode === "fix"
       ? this.buildPurchaseReturnFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item
+        )
       : this.buildPurchaseReturnUnfixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      );
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item
+        );
   }
 
   static buildSaleReturnEntries(
@@ -396,25 +551,25 @@ class MetalTransactionService {
   ) {
     return mode === "fix"
       ? this.buildSaleReturnFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item
+        )
       : this.buildSaleReturnUnfixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item
-      );
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item
+        );
   }
 
   static buildPurchaseFixEntries(
@@ -425,12 +580,15 @@ class MetalTransactionService {
     voucherDate,
     voucherNumber,
     adminId,
-    item
+    item,
+    partyCurrency,
+    coa,
+    totalSummary
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
-    console.log(totals)
-
+    console.log(coa);
+    console.log("---------------------------");
     // Purchase-fixing entry
     if (totals.pureWeight > 0) {
       entries.push(
@@ -439,7 +597,7 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           "purchase-fixing",
-          `Party gold balance - Purchase from ${partyName}`,
+          `Fix Entries - Purchase from ${partyName} @ bid value of ${totals.goldBidValue}`,
           party._id,
           true,
           totals.pureWeight,
@@ -447,9 +605,9 @@ class MetalTransactionService {
           {
             debit: 0,
             goldCredit: totals.pureWeight,
-            cashDebit: totals.goldValue,
+            cashDebit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -458,7 +616,7 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.goldValue > 0) {
+    if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
@@ -468,13 +626,13 @@ class MetalTransactionService {
           `Party cash balance -  Gold purchase from ${partyName} at a bid value of ${totals.goldBidValue}`,
           party._id,
           false,
-          totals.goldValue,
-          totals.goldValue,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
             goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            cashDebit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -483,49 +641,64 @@ class MetalTransactionService {
       );
     }
 
+    // 3. Purchases Gold Jeweller (Main CoA entry)
+    if (totals.pureWeightStd > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          coa.PURCHASES_GOLD_JEWELLER,
+          "PURCHASES_GOLD_JEWELLER",
+          `Gold Purchase - ${partyName} | ${totals.grossWeight}g`,
+          null,
+          true,
+          totals.pureWeightStd,
+          0,
+          {
+            cashCredit: totals.pureWeightStd,
+            goldBidValue: totals.goldBidValue,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    // 4. Making Charges
     if (totals.makingCharges > 0) {
+      // Party pays making charges
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
-          "002",
+          "PARTY_CASH_BALANCE",
           "MAKING_CHARGES",
-          `Party making charges - Purchase from ${partyName}`,
+          `Making charges paid to ${partyName}`,
           party._id,
-          false,
+          true,
           totals.makingCharges,
-          totals.makingCharges,
-          {
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
-          },
+          0,
+          { cashDebit: totals.makingCharges },
           voucherDate,
           voucherNumber,
           adminId
         )
       );
-    }
 
-    if (totals.otherChargesAmount > 0) {
+      // CoA: Making Charges
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
-          "008",
-          "OTHER_CHARGES",
-          `${item.otherCharges.description} charges - Purchase from ${partyName}`,
-          party._id,
-          false,
-          totals.otherChargesAmount,
-          totals.otherChargesAmount,
-          {
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
-          },
+          coa.PURCHASES_MAKING_CHARGES_GOLD,
+          "PURCHASES_MAKING_CHARGES_GOLD",
+          `Making charges income - ${partyName}`,
+          null,
+          true,
+          totals.makingCharges,
+          0,
+          { cashCredit: totals.makingCharges },
           voucherDate,
           voucherNumber,
           adminId
@@ -533,161 +706,239 @@ class MetalTransactionService {
       );
     }
 
+    // if (totals.makingCharges > 0) {
+    //   entries.push(
+    //     this.createRegistryEntry(
+    //       baseTransactionId,
+    //       metalTransactionId,
+    //       "002",
+    //       "MAKING_CHARGES",
+    //       `Party making charges - Purchase from ${partyName}`,
+    //       party._id,
+    //       false,
+    //       totals.makingCharges,
+    //       totals.makingCharges,
+    //       {
+    //         goldDebit: totals.grossWeight,
+    //         cashDebit: totals.pureWeightStd,
+    //         grossWeight: totals.grossWeight,
+    //         goldBidValue: totals.goldBidValue,
+    //       },
+    //       voucherDate,
+    //       voucherNumber,
+    //       adminId
+    //     )
+    //   );
+    // }
+
+    // if (totals.otherChargesAmount > 0) {
+    //   entries.push(
+    //     this.createRegistryEntry(
+    //       baseTransactionId,
+    //       metalTransactionId,
+    //       "008",
+    //       "OTHER_CHARGES",
+    //       `${item.otherCharges.description} charges - Purchase from ${partyName}`,
+    //       party._id,
+    //       false,
+    //       totals.otherChargesAmount,
+    //       totals.otherChargesAmount,
+    //       {
+    //         goldDebit: totals.grossWeight,
+    //         cashDebit: totals.pureWeightStd,
+    //         grossWeight: totals.grossWeight,
+    //         goldBidValue: totals.goldBidValue,
+    //       },
+    //       voucherDate,
+    //       voucherNumber,
+    //       adminId
+    //     )
+    //   );
+    // }
+
+    // 5. VAT
     if (totals.vatAmount > 0) {
+      // Party pays VAT
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
-          "009",
-          "VAT_AMOUNT",
-          `Party Vat amount - Purchase from ${partyName}`,
+          "PARTY_CASH_BALANCE",
+          "VAT",
+          `VAT paid to ${partyName}`,
           party._id,
-          false,
+          true,
           totals.vatAmount,
-          totals.vatAmount,
-          {
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
-          },
-          voucherDate,
-          voucherNumber,
-          adminId
-        )
-      );
-    }
-
-    if (totals.premium > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          baseTransactionId,
-          metalTransactionId,
-          "003",
-          "PREMIUM",
-          `Party premium - Purchase from ${partyName}`,
-          party._id,
-          false,
-          totals.premium,
-          totals.premium,
-          {
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
-          },
-          voucherDate,
-          voucherNumber,
-          adminId
-        )
-      );
-    }
-
-    if (totals.discount > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          baseTransactionId,
-          metalTransactionId,
-          "007",
-          "DISCOUNT",
-          `Party discount - Purchase from ${partyName}`,
-          party._id,
-          false,
-          totals.discount,
           0,
-          {
-            debit: totals.discount,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
-          },
+          { cashDebit: totals.vatAmount },
           voucherDate,
           voucherNumber,
           adminId
         )
       );
-    }
 
-    // if the purityDiffWeight is not zero then 
-    if (totals.pureWeight > 0) {
+      // Input VAT
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
-          "004",
-          "GOLD",
-          `Gold inventory - Purchase from ${partyName}`,
+          coa.INPUT_VAT,
+          "INPUT_VAT",
+          `Input VAT on purchase - ${partyName}`,
           null,
           true,
-          totals.standerdPureWeight,
+          totals.vatAmount,
           0,
-          {
-            debit: totals.standerdPureWeight,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            pureWeight: totals.standerdPureWeight,
-            purity: totals.purity,
-            goldBidValue: totals.goldBidValue
-          },
+          { cashCredit: totals.vatAmount },
           voucherDate,
           voucherNumber,
           adminId
         )
       );
     }
-    console.log(totals);
 
-    if (totals.purityDiffWeight != 0) {
-      // if purity difference -negative then debit else credit
+    // 6. Premium/Discount
+    if (totals.premium > 0 || totals.discount > 0) {
+      const amount = totals.premium > 0 ? totals.premium : totals.discount;
+      const isPremium = totals.premium > 0;
+
+      // Party side
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
-          "006",
+          "PARTY_CASH",
+          isPremium ? "PREMIUM" : "DISCOUNT",
+          `${isPremium ? "Premium" : "Discount"} ${
+            isPremium ? "paid to" : "received from"
+          } ${partyName}`,
+          party._id,
+          !isPremium, // Premium: Debit, Discount: Credit
+          isPremium ? amount : 0,
+          isPremium ? 0 : amount,
+          {
+            cashDebit: isPremium ? amount : 0,
+            cashCredit: isPremium ? 0 : amount,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+
+      // CoA: Premium/Discount
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          coa.PREMIUM_DISCOUNT,
+          "PREMIUM_DISCOUNT",
+          `${isPremium ? "Premium income" : "Discount expense"} - ${partyName}`,
+          null,
+          true,
+          amount,
+          0,
+          { cashCredit: amount },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    // if (totals.premium > 0) {
+    //   entries.push(
+    //     this.createRegistryEntry(
+    //       baseTransactionId,
+    //       metalTransactionId,
+    //       "003",
+    //       "PREMIUM",
+    //       `Party premium - Purchase from ${partyName}`,
+    //       party._id,
+    //       false,
+    //       totals.premium,
+    //       totals.premium,
+    //       {
+    //         goldDebit: totals.grossWeight,
+    //         cashDebit: totals.pureWeightStd,
+    //         grossWeight: totals.grossWeight,
+    //         goldBidValue: totals.goldBidValue,
+    //       },
+    //       voucherDate,
+    //       voucherNumber,
+    //       adminId
+    //     )
+    //   );
+    // }
+
+    // if (totals.discount > 0) {
+    //   entries.push(
+    //     this.createRegistryEntry(
+    //       baseTransactionId,
+    //       metalTransactionId,
+    //       "007",
+    //       "DISCOUNT",
+    //       `Party discount - Purchase from ${partyName}`,
+    //       party._id,
+    //       false,
+    //       totals.discount,
+    //       0,
+    //       {
+    //         debit: totals.discount,
+    //         goldDebit: totals.grossWeight,
+    //         cashDebit: totals.pureWeightStd,
+    //         grossWeight: totals.grossWeight,
+    //         goldBidValue: totals.goldBidValue,
+    //       },
+    //       voucherDate,
+    //       voucherNumber,
+    //       adminId
+    //     )
+    //   );
+    // }
+
+    // 7. Purity Difference
+    if (totals.purityDiffWeight !== 0) {
+      const diffAmt = Math.abs(totals.purityDifferenceAmount || 0);
+      const isPositive = totals.purityDiffWeight > 0;
+      // CoA: Purity Difference
+      entries.push(
+        this.createRegistryEntry(
+          baseTransactionId,
+          metalTransactionId,
+          coa.PURITY_DIFFERENCE,
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDiffWeight}`,
+          `Purity difference adjustment`,
           null,
           true,
-          totals.purityDiffWeight,
-          totals.purityDiffWeight > 0 ? totals.purityDiffWeight : 0, // credit
-          {
-            debit: totals.purityDiffWeight > 0 ? 0 : totals.purityDiffWeight,
-            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
-            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
-            grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
-            purity: totals.purity,
-            goldBidValue: totals.goldBidValue
-          },
+          diffAmt,
+          0,
+          { cashCredit: diffAmt },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
 
-
-    if (totals.grossWeight > 0) {
+    // 8. Physical Gold Stock
+    if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           baseTransactionId,
           metalTransactionId,
-          "005",
+          coa.PHYSICAL_STOCK_OF_GOLD,
           "GOLD_STOCK",
-          `Gold stock - Purchase from ${partyName}`,
+          `Physical gold received - ${totals.pureWeightStd}g pure`,
           null,
           true,
-          totals.grossWeight,
+          totals.pureWeightStd,
           0,
           {
-            debit: totals.grossWeight,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            goldDebit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -713,7 +964,7 @@ class MetalTransactionService {
     const partyName = party.customerName || party.accountCode;
 
     console.log(totals);
-    
+
     // in here if there is purityDiffWeight is not zero then pureWeight
     // Party Gold Balance - CREDIT
     if (totals.pureWeight > 0) {
@@ -731,7 +982,7 @@ class MetalTransactionService {
           {
             debit: 0,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -753,7 +1004,11 @@ class MetalTransactionService {
           false,
           totals.makingCharges,
           totals.makingCharges,
-          { debit: 0, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            debit: 0,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -775,9 +1030,9 @@ class MetalTransactionService {
           totals.otherChargesAmount,
           {
             goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            cashDebit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -800,9 +1055,9 @@ class MetalTransactionService {
           totals.vatAmount,
           {
             goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            cashDebit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -825,7 +1080,11 @@ class MetalTransactionService {
           false,
           totals.premium,
           totals.premium,
-          { debit: 0, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            debit: 0,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -844,9 +1103,13 @@ class MetalTransactionService {
           `Party discount - Unfix purchase from ${partyName}`,
           party._id,
           false,
-          totals.discount, 
+          totals.discount,
           0,
-          { debit: totals.discount, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            debit: totals.discount,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -868,7 +1131,11 @@ class MetalTransactionService {
           true,
           totals.standerdPureWeight,
           0,
-          { debit: totals.standerdPureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            debit: totals.standerdPureWeight,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -892,18 +1159,18 @@ class MetalTransactionService {
           {
             debit: totals.purityDiffWeight > 0 ? 0 : totals.purityDiffWeight,
             goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
-            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            cashDebit: totals.pureWeightStd > 0 ? totals.pureWeightStd : 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
-
 
     // Gold Stock - DEBIT
 
@@ -924,7 +1191,7 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -965,11 +1232,11 @@ class MetalTransactionService {
           {
             debit: totals.pureWeight,
             goldDebit: totals.pureWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -993,16 +1260,17 @@ class MetalTransactionService {
           {
             debit: totals.purityDiffWeight < 0 ? 0 : totals.purityDiffWeight,
             goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
-            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+            cashDebit: totals.pureWeightStd > 0 ? totals.pureWeightStd : 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
 
     if (totals.totalAmount > 0) {
@@ -1020,11 +1288,11 @@ class MetalTransactionService {
           {
             debit: totals.totalAmount,
             goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1048,11 +1316,11 @@ class MetalTransactionService {
           {
             debit: totals.makingCharges,
             goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1075,9 +1343,9 @@ class MetalTransactionService {
           totals.otherChargesAmount,
           {
             goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            cashDebit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1101,9 +1369,9 @@ class MetalTransactionService {
           {
             debit: totals.vatAmount,
             goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            cashDebit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1127,11 +1395,11 @@ class MetalTransactionService {
           {
             debit: totals.premium,
             goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1154,11 +1422,11 @@ class MetalTransactionService {
           totals.discount,
           {
             goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1181,11 +1449,11 @@ class MetalTransactionService {
           totals.standerdPureWeight,
           {
             goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
             pureWeight: totals.standerdPureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1193,7 +1461,6 @@ class MetalTransactionService {
         )
       );
     }
-
 
     if (totals.grossWeight > 0) {
       entries.push(
@@ -1209,11 +1476,11 @@ class MetalTransactionService {
           totals.grossWeight,
           {
             goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.pureWeightStd,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1249,13 +1516,14 @@ class MetalTransactionService {
           party._id,
           false,
           totals.pureWeight,
-          0, {
-          debit: totals.pureWeight,
-          grossWeight: totals.grossWeight,
-          pureWeight: totals.pureWeight,
-          purity: totals.purity,
-          goldBidValue: totals.goldBidValue
-        },
+          0,
+          {
+            debit: totals.pureWeight,
+            grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purity,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -1280,7 +1548,7 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1309,12 +1577,13 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
 
     if (totals.otherChargesAmount > 0) {
@@ -1333,7 +1602,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1358,7 +1627,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1443,7 +1712,7 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1486,7 +1755,7 @@ class MetalTransactionService {
             goldDebit: totals.pureWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1512,7 +1781,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1538,7 +1807,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1564,7 +1833,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1590,7 +1859,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1616,7 +1885,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1641,7 +1910,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1666,7 +1935,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1695,12 +1964,13 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
 
     if (totals.grossWeight > 0) {
@@ -1721,7 +1991,7 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1760,7 +2030,7 @@ class MetalTransactionService {
           {
             debit: totals.pureWeight,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1789,12 +2059,13 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
 
     if (totals.makingCharges > 0) {
@@ -1812,7 +2083,7 @@ class MetalTransactionService {
           {
             debit: totals.makingCharges,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1838,7 +2109,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1864,7 +2135,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1888,7 +2159,7 @@ class MetalTransactionService {
           {
             debit: totals.premium,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1911,7 +2182,7 @@ class MetalTransactionService {
           totals.discount,
           {
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1934,7 +2205,7 @@ class MetalTransactionService {
           totals.standerdPureWeight,
           {
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1959,7 +2230,7 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -1995,7 +2266,10 @@ class MetalTransactionService {
           false,
           totals.pureWeight,
           totals.pureWeight,
-          { grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -2023,12 +2297,13 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
 
     if (totals.makingCharges > 0) {
@@ -2043,7 +2318,10 @@ class MetalTransactionService {
           false,
           totals.makingCharges,
           totals.makingCharges,
-          { grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -2067,7 +2345,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2092,7 +2370,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2113,7 +2391,10 @@ class MetalTransactionService {
           false,
           totals.premium,
           totals.premium,
-          { grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -2133,7 +2414,11 @@ class MetalTransactionService {
           false,
           totals.discount,
           0,
-          { debit: totals.discount, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            debit: totals.discount,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -2153,7 +2438,11 @@ class MetalTransactionService {
           true,
           totals.standerdPureWeight,
           0,
-          { debit: totals.standerdPureWeight, grossWeight: totals.grossWeight, goldBidValue: totals.goldBidValue },
+          {
+            debit: totals.standerdPureWeight,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.goldBidValue,
+          },
           voucherDate,
           voucherNumber,
           adminId
@@ -2178,7 +2467,7 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2221,7 +2510,7 @@ class MetalTransactionService {
             goldCredit: totals.pureWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2250,12 +2539,13 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
           adminId
-        ));
+        )
+      );
     }
 
     if (totals.totalAmount > 0) {
@@ -2274,7 +2564,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2299,7 +2589,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2323,7 +2613,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2348,7 +2638,7 @@ class MetalTransactionService {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2373,7 +2663,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2399,7 +2689,7 @@ class MetalTransactionService {
             goldCredit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2426,7 +2716,7 @@ class MetalTransactionService {
             cashDebit: totals.goldValue,
             purity: totals.purity,
             grossWeight: totals.grossWeight,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2454,7 +2744,7 @@ class MetalTransactionService {
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
-            goldBidValue: totals.goldBidValue
+            goldBidValue: totals.goldBidValue,
           },
           voucherDate,
           voucherNumber,
@@ -2469,7 +2759,6 @@ class MetalTransactionService {
   static calculateTotals(stockItems, totalAmountSession) {
     console.log(stockItems);
 
-
     const totals = stockItems.reduce(
       (acc, item) => {
         const makingChargesAmount =
@@ -2483,7 +2772,8 @@ class MetalTransactionService {
         const purity = item.purity || 0;
         const grossWeight = item.grossWeight || 0;
         const premium = premiumDiscountAmount > 0 ? premiumDiscountAmount : 0;
-        const discount = premiumDiscountAmount < 0 ? Math.abs(premiumDiscountAmount) : 0;
+        const discount =
+          premiumDiscountAmount < 0 ? Math.abs(premiumDiscountAmount) : 0;
         const purityDiffWeight = item.purityDiffWeight || 0;
         const standerdPureWeight = item.standerdPureWeight || 0;
 
@@ -2500,7 +2790,8 @@ class MetalTransactionService {
           purity: acc.purity + purity,
           purityDiffWeight: acc.purityDiffWeight + purityDiffWeight,
           standerdPureWeight: acc.standerdPureWeight + standerdPureWeight,
-          goldBidValue: acc.goldBidValue || item.metalRateRequirements?.rate || 0, // Take the first valid goldBidValue
+          goldBidValue:
+            acc.goldBidValue || item.metalRateRequirements?.rate || 0, // Take the first valid goldBidValue
         };
       },
       {
@@ -2515,7 +2806,7 @@ class MetalTransactionService {
         otherChargesAmount: 0,
         goldBidValue: 0,
         purityDiffWeight: 0,
-        standerdPureWeight: 0
+        standerdPureWeight: 0,
       }
     );
 
@@ -2523,7 +2814,7 @@ class MetalTransactionService {
     return totals;
   }
 
-  static createRegistryEntry(
+ static createRegistryEntry(
     baseId,
     metalTransactionId,
     suffix,
@@ -2576,9 +2867,10 @@ class MetalTransactionService {
       purity,
     };
   }
-///
+  ///
   static async updateAccountBalances(party, metalTransaction, session) {
-    const { transactionType, fixed, unfix, stockItems, totalAmountSession } = metalTransaction;
+    const { transactionType, fixed, unfix, stockItems, totalAmountSession } =
+      metalTransaction;
     const totals = this.calculateTotals(stockItems, totalAmountSession);
     const mode = this.getTransactionMode(fixed, unfix);
     const balanceChanges = this.calculateBalanceChanges(
@@ -2597,7 +2889,6 @@ class MetalTransactionService {
   }
 
   static buildUpdateOperations(balanceChanges) {
-
     const incObj = {};
     const setObj = {};
 
@@ -2664,7 +2955,7 @@ class MetalTransactionService {
           cashBalance: -totals.totalAmount,
           premiumBalance: 0,
           discountBalance: 0,
-          otherCharges: 0
+          otherCharges: 0,
         },
       },
       purchaseReturn: {
@@ -2682,7 +2973,7 @@ class MetalTransactionService {
           cashBalance: -totals.totalAmount,
           premiumBalance: 0,
           discountBalance: 0,
-          otherCharges: 0
+          otherCharges: 0,
         },
       },
       saleReturn: {
@@ -2700,7 +2991,7 @@ class MetalTransactionService {
           cashBalance: totals.totalAmount,
           premiumBalance: 0,
           discountBalance: 0,
-          otherCharges: 0
+          otherCharges: 0,
         },
       },
     };
@@ -2720,7 +3011,7 @@ class MetalTransactionService {
   static generateTransactionId() {
     const timestamp = Date.now();
     const currentYear = new Date().getFullYear();
-    const randomNum = Math.floor(Math.random() * 900) + 100;
+    const randomNum = Math.floor(Math.random() * 900);
     return `TXN${currentYear}${randomNum}`;
   }
 
@@ -2769,7 +3060,7 @@ class MetalTransactionService {
       "INTERNAL_SERVER_ERROR"
     );
   }
-////
+  ////
   static validateTransactionData(transactionData, adminId) {
     const required = [
       "partyCode",
@@ -2861,7 +3152,11 @@ class MetalTransactionService {
           "INVALID_GROSS_WEIGHT"
         );
       }
-      if (typeof item.purity !== "number" || item.purity <= 0 || item.purity > 1) {
+      if (
+        typeof item.purity !== "number" ||
+        item.purity <= 0 ||
+        item.purity > 1
+      ) {
         throw createAppError(
           `Invalid purity for stock item at index ${index}`,
           400,
@@ -2958,7 +3253,6 @@ class MetalTransactionService {
     return true;
   }
 
-
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Get all metal transactions with pagination and filters
   static async getAllMetalTransactions(page = 1, limit = 50, filters = {}) {
@@ -3012,7 +3306,6 @@ class MetalTransactionService {
       .populate("itemCurrency", "code symbol")
       .populate("baseCurrency", "code symbol")
       .populate("stockItems.stockCode", "code description specifications")
-      .populate("stockItems.metalRate", "metalType rate effectiveDate")
       .populate("createdBy", "name email")
       .populate("updatedBy", "name email");
 
@@ -3356,13 +3649,17 @@ class MetalTransactionService {
     try {
       // Start transaction
       await session.startTransaction();
-      console.log(`[UPDATE_TRANSACTION] Starting update for transaction ${transactionId}`);
+      console.log(
+        `[UPDATE_TRANSACTION] Starting update for transaction ${transactionId}`
+      );
 
       // Validate inputs
       this.validateUpdateInputs(transactionId, updateData, adminId);
 
       // Fetch the existing transaction
-      transaction = await MetalTransaction.findById(transactionId).session(session);
+      transaction = await MetalTransaction.findById(transactionId).session(
+        session
+      );
       if (!transaction || !transaction.isActive) {
         throw createAppError(
           "Metal transaction not found or inactive",
@@ -3395,7 +3692,9 @@ class MetalTransactionService {
 
       // Recalculate session totals if necessary
       if (updateData?.stockItems || updateData?.totalAmountSession) {
-        console.log(`[UPDATE_TRANSACTION] Recalculating session totals for transaction ${transactionId}`);
+        console.log(
+          `[UPDATE_TRANSACTION] Recalculating session totals for transaction ${transactionId}`
+        );
         transaction.calculateSessionTotals();
       }
 
@@ -3416,22 +3715,33 @@ class MetalTransactionService {
         updateData
       );
       // Commit transaction
-      console.log(`[UPDATE_TRANSACTION] Committing transaction for ${transactionId}`);
+      console.log(
+        `[UPDATE_TRANSACTION] Committing transaction for ${transactionId}`
+      );
       await session.commitTransaction();
 
       // Fetch and return final transaction
-      const finalTransaction = await this.getMetalTransactionById(transactionId);
-      console.log(`[UPDATE_TRANSACTION] Update completed successfully for transaction ${transactionId}`);
+      const finalTransaction = await this.getMetalTransactionById(
+        transactionId
+      );
+      console.log(
+        `[UPDATE_TRANSACTION] Update completed successfully for transaction ${transactionId}`
+      );
       return finalTransaction;
     } catch (error) {
-      console.error(`[UPDATE_TRANSACTION_ERROR] Error updating transaction ${transactionId}:`, {
-        message: error.message,
-        code: error.code,
-        stack: error.stack,
-        transactionId,
-        adminId,
-        updateData: updateData ? JSON.stringify(updateData, null, 2) : 'undefined',
-      });
+      console.error(
+        `[UPDATE_TRANSACTION_ERROR] Error updating transaction ${transactionId}:`,
+        {
+          message: error.message,
+          code: error.code,
+          stack: error.stack,
+          transactionId,
+          adminId,
+          updateData: updateData
+            ? JSON.stringify(updateData, null, 2)
+            : "undefined",
+        }
+      );
 
       await session.abortTransaction();
       throw this.handleError(
@@ -3447,35 +3757,61 @@ class MetalTransactionService {
         )
       );
     } finally {
-      console.log(`[UPDATE_TRANSACTION] Ending session for transaction ${transactionId}`);
+      console.log(
+        `[UPDATE_TRANSACTION] Ending session for transaction ${transactionId}`
+      );
       await session.endSession();
     }
   }
   // Helper methods for updateMetalTransaction
   static validateUpdateInputs(transactionId, updateData, adminId) {
-    console.log(`[VALIDATE_INPUTS] Validating inputs for transaction ${transactionId}`, {
-      transactionId,
-      adminId,
-      updateData: updateData ? JSON.stringify(updateData, null, 2) : 'undefined',
-    });
+    console.log(
+      `[VALIDATE_INPUTS] Validating inputs for transaction ${transactionId}`,
+      {
+        transactionId,
+        adminId,
+        updateData: updateData
+          ? JSON.stringify(updateData, null, 2)
+          : "undefined",
+      }
+    );
 
     if (!mongoose.isValidObjectId(transactionId)) {
-      throw createAppError("Invalid transaction ID", 400, "INVALID_TRANSACTION_ID");
+      throw createAppError(
+        "Invalid transaction ID",
+        400,
+        "INVALID_TRANSACTION_ID"
+      );
     }
     if (!mongoose.isValidObjectId(adminId)) {
       throw createAppError("Invalid admin ID", 400, "INVALID_ADMIN_ID");
     }
-    if (!updateData || typeof updateData !== 'object') {
-      throw createAppError("Update data must be a valid object", 400, "INVALID_UPDATE_DATA");
+    if (!updateData || typeof updateData !== "object") {
+      throw createAppError(
+        "Update data must be a valid object",
+        400,
+        "INVALID_UPDATE_DATA"
+      );
     }
     if (Object.keys(updateData).length === 0) {
       throw createAppError("No update data provided", 400, "NO_UPDATE_DATA");
     }
-    if (updateData.partyCode && !mongoose.isValidObjectId(updateData.partyCode)) {
+    if (
+      updateData.partyCode &&
+      !mongoose.isValidObjectId(updateData.partyCode)
+    ) {
       throw createAppError("Invalid party code", 400, "INVALID_PARTY_CODE");
     }
-    if (updateData.stockItems && (!Array.isArray(updateData.stockItems) || updateData.stockItems.length === 0)) {
-      throw createAppError("Stock items must be a non-empty array", 400, "INVALID_STOCK_ITEMS");
+    if (
+      updateData.stockItems &&
+      (!Array.isArray(updateData.stockItems) ||
+        updateData.stockItems.length === 0)
+    ) {
+      throw createAppError(
+        "Stock items must be a non-empty array",
+        400,
+        "INVALID_STOCK_ITEMS"
+      );
     }
   }
 
@@ -3501,24 +3837,24 @@ class MetalTransactionService {
       }
       console.log(
         `[UPDATE_TRANSACTION] Party changed from ${oldParty.customerName} (${oldParty.accountCode}) ` +
-        `to ${newParty.customerName} (${newParty.accountCode})`
+          `to ${newParty.customerName} (${newParty.accountCode})`
       );
     }
 
     return [oldParty, newParty];
   }
-////
+  ////
   static applyTransactionUpdates(transaction, updateData) {
     // Update only allowed fields
     const allowedFields = [
-      'partyCode',
-      'stockItems',
-      'totalAmountSession',
-      'voucherDate',
-      'voucherNumber',
-      'transactionType',
-      'fixed',
-      'unfix'
+      "partyCode",
+      "stockItems",
+      "totalAmountSession",
+      "voucherDate",
+      "voucherNumber",
+      "transactionType",
+      "fixed",
+      "unfix",
     ];
 
     for (const [key, value] of Object.entries(updateData)) {
@@ -3548,19 +3884,32 @@ class MetalTransactionService {
     }
 
     // Delete old registry entries and stocks
-    console.log(`[UPDATE_TRANSACTION] Deleting old registry entries and stocks for transaction ${transaction._id}`);
+    console.log(
+      `[UPDATE_TRANSACTION] Deleting old registry entries and stocks for transaction ${transaction._id}`
+    );
     await Promise.all([
       this.deleteRegistryEntry(transaction, session),
       this.deleteStocks(transaction.voucherNumber, session),
     ]);
 
-
     // minus the old blancees fist , take it from the metaltransaction itself
-    this.updateTradeDebtorsBalances(oldParty._id, originalData, session, false, true);
+    this.updateTradeDebtorsBalances(
+      oldParty._id,
+      originalData,
+      session,
+      false,
+      true
+    );
 
     // Create new registry entries
-    console.log(`[UPDATE_TRANSACTION] Creating new registry entries for transaction ${transaction._id}`);
-    const newRegistryEntries = this.buildRegistryEntries(transaction, newParty, adminId);
+    console.log(
+      `[UPDATE_TRANSACTION] Creating new registry entries for transaction ${transaction._id}`
+    );
+    const newRegistryEntries = this.buildRegistryEntries(
+      transaction,
+      newParty,
+      adminId
+    );
     let party = newParty;
     if (isPartyChanged) {
       party = newParty;
@@ -3571,27 +3920,52 @@ class MetalTransactionService {
     // minus the old balances
     this.updateAccountBalances(party, transaction, session);
     if (newRegistryEntries.length > 0) {
-      await Registry.insertMany(newRegistryEntries, { session, ordered: false });
-      console.log(`[UPDATE_TRANSACTION] Inserted ${newRegistryEntries.length} new registry entries`);
+      await Registry.insertMany(newRegistryEntries, {
+        session,
+        ordered: false,
+      });
+      console.log(
+        `[UPDATE_TRANSACTION] Inserted ${newRegistryEntries.length} new registry entries`
+      );
     }
 
     // Update inventory based on transaction type
     switch (transaction.transactionType) {
       case "purchase":
       case "saleReturn":
-        await InventoryService.updateInventory(transaction, false, adminId, session);
+        await InventoryService.updateInventory(
+          transaction,
+          false,
+          adminId,
+          session
+        );
         break;
       case "sale":
       case "purchaseReturn":
-        await InventoryService.updateInventory(transaction, true, adminId, session);
+        await InventoryService.updateInventory(
+          transaction,
+          true,
+          adminId,
+          session
+        );
         break;
       default:
-        throw createAppError("Invalid transaction type", 400, "INVALID_TRANSACTION_TYPE");
+        throw createAppError(
+          "Invalid transaction type",
+          400,
+          "INVALID_TRANSACTION_TYPE"
+        );
     }
 
     // Reverse old party balances if necessary
-    if (isPartyChanged || updateData.stockItems || updateData.totalAmountSession) {
-      console.log(`[UPDATE_TRANSACTION] Reversing balances for old party ${oldParty._id}`);
+    if (
+      isPartyChanged ||
+      updateData.stockItems ||
+      updateData.totalAmountSession
+    ) {
+      console.log(
+        `[UPDATE_TRANSACTION] Reversing balances for old party ${oldParty._id}`
+      );
       // await this.validatePartyBalances(oldParty, {
       //   ...transaction.toObject(),
       //   ...originalData,
@@ -3605,17 +3979,22 @@ class MetalTransactionService {
       // );
 
       // Apply new party balances
-      console.log(`[UPDATE_TRANSACTION] Applying balances for new party ${newParty._id}`);
+      console.log(
+        `[UPDATE_TRANSACTION] Applying balances for new party ${newParty._id}`
+      );
       // await this.updateTradeDebtorsBalances(newParty._id, transaction, session, true);
     } else {
-      console.log(`[UPDATE_TRANSACTION] No balance-affecting fields updated for transaction ${transaction._id}`);
+      console.log(
+        `[UPDATE_TRANSACTION] No balance-affecting fields updated for transaction ${transaction._id}`
+      );
     }
   }
 
   static async updateReverseAccountBalances(party, originalData, session) {
     try {
       // MINUS THE OLD BALANCES
-      const { transactionType, fixed, unfix, stockItems, totalAmountSession } = originalData;
+      const { transactionType, fixed, unfix, stockItems, totalAmountSession } =
+        originalData;
       const totals = this.calculateTotals(stockItems, totalAmountSession);
       const mode = this.getTransactionMode(fixed, unfix);
       const balanceChanges = this.calculateBalanceChanges(
@@ -3623,7 +4002,10 @@ class MetalTransactionService {
         mode,
         totals
       );
-      console.log(`[BALANCE_UPDATE] Reversing balances for party: ${party._id}`, { balanceChanges });
+      console.log(
+        `[BALANCE_UPDATE] Reversing balances for party: ${party._id}`,
+        { balanceChanges }
+      );
 
       party.balances.goldBalance.totalGrams -= balanceChanges.goldBalance;
       party.balances.goldBalance.totalValue -= balanceChanges.goldValue;
@@ -3634,9 +4016,11 @@ class MetalTransactionService {
       party.balances.cashBalance.lastUpdated = new Date();
 
       await party.save({ session });
-
     } catch (error) {
-      console.error(`[BALANCE_UPDATE_ERROR] Failed to reverse balances for party: ${party._id}`, error);
+      console.error(
+        `[BALANCE_UPDATE_ERROR] Failed to reverse balances for party: ${party._id}`,
+        error
+      );
       throw createAppError(
         `Failed to reverse balances: ${error.message}`,
         500,
@@ -3647,7 +4031,9 @@ class MetalTransactionService {
 
   static async deleteStocks(voucherCode, session = null) {
     try {
-      console.log(`[CLEANUP] Deleting inventory logs for voucher: ${voucherCode}`);
+      console.log(
+        `[CLEANUP] Deleting inventory logs for voucher: ${voucherCode}`
+      );
       const query = InventoryLog.deleteMany({ voucherCode });
 
       // Apply session if provided
@@ -3656,10 +4042,15 @@ class MetalTransactionService {
       }
 
       const result = await query;
-      console.log(`[CLEANUP] Deleted ${result.deletedCount} inventory logs for voucher: ${voucherCode}`);
+      console.log(
+        `[CLEANUP] Deleted ${result.deletedCount} inventory logs for voucher: ${voucherCode}`
+      );
       return result;
     } catch (error) {
-      console.error(`[CLEANUP_ERROR] Failed to delete inventory logs for voucher: ${voucherCode}`, error);
+      console.error(
+        `[CLEANUP_ERROR] Failed to delete inventory logs for voucher: ${voucherCode}`,
+        error
+      );
       throw createAppError(
         `Failed to delete inventory logs: ${error.message}`,
         500,
@@ -4153,8 +4544,9 @@ class MetalTransactionService {
     session
   ) {
     const registryEntries = [];
-    const transactionId = `TXN-${new Date().getFullYear()}-${Math.floor(Math.random() * 900) + 100
-      }`;
+    const transactionId = `TXN-${new Date().getFullYear()}-${
+      Math.floor(Math.random() * 900) + 100
+    }`;
 
     // Calculate totals for charges
     let totalMakingCharges = 0;
@@ -4184,12 +4576,13 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "gold",
-          description: `${isPurchaseReturn
-            ? "Purchase Return"
-            : isSaleReturn
+          description: `${
+            isPurchaseReturn
+              ? "Purchase Return"
+              : isSaleReturn
               ? "Sale Return"
               : transaction.transactionType
-            } - ${stockItem.description || "Metal Item"}`,
+          } - ${stockItem.description || "Metal Item"}`,
           paryty: transaction.partyCode,
           value: pureWeight,
           debit: isSale || isPurchaseReturn ? pureWeight : 0,
@@ -4205,12 +4598,13 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "stock_balance",
-          description: `${isPurchaseReturn
-            ? "Purchase Return"
-            : isSaleReturn
+          description: `${
+            isPurchaseReturn
+              ? "Purchase Return"
+              : isSaleReturn
               ? "Sale Return"
               : transaction.transactionType
-            } Stock Balance - ${stockItem.description || "Metal Item"}`,
+          } Stock Balance - ${stockItem.description || "Metal Item"}`,
           paryty: transaction.partyCode,
           value: pureWeight,
           debit: isSale || isPurchaseReturn ? pureWeight : 0,
@@ -4224,27 +4618,27 @@ class MetalTransactionService {
 
     // Making Charges Entry
     if (totalMakingCharges > 0) {
-
       registryEntries.push(
         new Registry({
           transactionId: transactionId,
           type: "MAKING_CHARGES",
-          description: `${transaction.transactionType === "purchaseReturn"
-            ? "Purchase Return"
-            : transaction.transactionType === "saleReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
+              ? "Purchase Return"
+              : transaction.transactionType === "saleReturn"
               ? "Sale Return"
               : transaction.transactionType
-            } - Making Charges`,
+          } - Making Charges`,
           paryty: transaction.partyCode,
           value: totalMakingCharges,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalMakingCharges
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalMakingCharges
               : 0,
           transactionDate: new Date(),
@@ -4259,22 +4653,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "OTHER_CHARGES",
-          description: `${transaction.transactionType === "purchaseReturn"
-            ? "Purchase Return"
-            : transaction.transactionType === "saleReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
+              ? "Purchase Return"
+              : transaction.transactionType === "saleReturn"
               ? "Sale Return"
               : transaction.transactionType
-            } - Other Charges`,
+          } - Other Charges`,
           paryty: transaction.partyCode,
           value: totalOtherCharges,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalOtherCharges
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalOtherCharges
               : 0,
           transactionDate: new Date(),
@@ -4289,22 +4684,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "VAT_AMOUNT",
-          description: `${transaction.transactionType === "purchaseReturn"
-            ? "Purchase Return"
-            : transaction.transactionType === "saleReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
+              ? "Purchase Return"
+              : transaction.transactionType === "saleReturn"
               ? "Sale Return"
               : transaction.transactionType
-            } - VAT Amount`,
+          } - VAT Amount`,
           paryty: transaction.partyCode,
           value: totalVatAmount,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalVatAmount
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalVatAmount
               : 0,
           transactionDate: new Date(),
@@ -4314,29 +4710,29 @@ class MetalTransactionService {
       );
     }
 
-
     // Premium Entry
     if (totalPremiumAmount > 0) {
       registryEntries.push(
         new Registry({
           transactionId: transactionId,
           type: "premium",
-          description: `${transaction.transactionType === "purchaseReturn"
-            ? "Purchase Return"
-            : transaction.transactionType === "saleReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
+              ? "Purchase Return"
+              : transaction.transactionType === "saleReturn"
               ? "Sale Return"
               : transaction.transactionType
-            } - Premium Amount`,
+          } - Premium Amount`,
           paryty: transaction.partyCode,
           value: totalPremiumAmount,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalPremiumAmount
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalPremiumAmount
               : 0,
           transactionDate: new Date(),
@@ -4351,22 +4747,23 @@ class MetalTransactionService {
       new Registry({
         transactionId: transactionId,
         type: "party_gold_balance",
-        description: `${transaction.transactionType === "purchaseReturn"
-          ? "Purchase Return"
-          : transaction.transactionType === "saleReturn"
+        description: `${
+          transaction.transactionType === "purchaseReturn"
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
             ? "Sale Return"
             : transaction.transactionType
-          } - Party Gold Balance`,
+        } - Party Gold Balance`,
         paryty: transaction.partyCode,
         value: totalPureWeight,
         debit:
           transaction.transactionType === "purchase" ||
-            transaction.transactionType === "saleReturn"
+          transaction.transactionType === "saleReturn"
             ? totalPureWeight
             : 0,
         credit:
           transaction.transactionType === "sale" ||
-            transaction.transactionType === "purchaseReturn"
+          transaction.transactionType === "purchaseReturn"
             ? totalPureWeight
             : 0,
         transactionDate: new Date(),
@@ -4382,22 +4779,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "party_cash_balance",
-          description: `${transaction.transactionType === "purchaseReturn"
-            ? "Purchase Return"
-            : transaction.transactionType === "saleReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
+              ? "Purchase Return"
+              : transaction.transactionType === "saleReturn"
               ? "Sale Return"
               : transaction.transactionType
-            } - Party Cash Balance`,
+          } - Party Cash Balance`,
           paryty: transaction.partyCode,
           value: totalAmountAED,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalAmountAED
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalAmountAED
               : 0,
           transactionDate: new Date(),
