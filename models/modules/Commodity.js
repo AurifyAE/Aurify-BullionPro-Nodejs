@@ -45,6 +45,10 @@ const CommoditySchema = new mongoose.Schema(
       type: Number,
       default: null,
     },
+    lotPiece: {
+      type: Number,
+      default: null,
+    },
     rateType: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MetalRateMaster",
