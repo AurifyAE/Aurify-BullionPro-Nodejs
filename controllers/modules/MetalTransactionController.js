@@ -108,12 +108,16 @@ export const createMetalTransaction = async (req, res, next) => {
         pureWeightStd: toNumber(pureWeightStd),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
         purityDifference: toNumber(purityDifference) ?toNumber(purityDifference) : 0 ,
-        purityDifferenceAmount : fix ? toNumber(item.purityDifference) * toNumber(grossWeight)  : 0,
         weightInOz: toNumber(weightInOz),
         metalRate: metalRate?.type || null,
+        passPurityDiff: Boolean(item.passPurityDiff),
+        vatOnMaking: Boolean(item.vatOnMaking),
+        excludeVAT: Boolean(item.excludeVAT),
         metalRateRequirements: {
           amount: toNumber(metalRate?.rate),
           rateInGram: toNumber(metalRate?.rateInGram),
+          currentBidValue: toNumber(metalRate?.currentBidValue),
+          bidValue: toNumber(metalRate?.bidValue),
         },
         metalAmount: toNumber(itemTotal?.baseAmount),
         makingUnit: {

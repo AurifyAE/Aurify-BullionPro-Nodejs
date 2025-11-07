@@ -61,6 +61,18 @@ const StockItemSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Pieces cannot be negative"],
     },
+    passPurityDiff: {
+      type: Boolean,
+      default: true,
+    },
+    excludeVAT: {
+      type: Boolean,
+      default: false,
+    },
+    vatOnMaking: {
+      type: Boolean,
+      default: false,
+    },
     grossWeight: {
       type: Number,
       default: 0,
@@ -92,16 +104,12 @@ const StockItemSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    purityDifferenceAmount: {
-      type: Number,
-      default: 0,
-    },
-
     weightInOz: {
       type: Number,
       required: [true, "Weight in Oz is required"],
       min: [0, "Weight in Oz cannot be negative"],
     },
+
     cashDebit: {
       type: Number,
       default: 0,
@@ -135,12 +143,22 @@ const StockItemSchema = new mongoose.Schema(
         default: 0,
         min: [0, "Rate cannot be negative"],
       },
+      currentBidValue: {
+        type: Number,
+        default: 2500,
+        min: [0, "Rate cannot be negative"],
+      },
+      bidValue: {
+        type: Number,
+        default: 2500,
+        min: [0, "Rate cannot be negative"],
+      },
     },
 
     makingUnit: {
       unit: {
         type: String,
-        default: null
+        default: null,
       },
       makingRate: {
         type: Number,
