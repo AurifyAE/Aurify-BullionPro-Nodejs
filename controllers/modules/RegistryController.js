@@ -1,5 +1,7 @@
 import { createAppError } from "../../utils/errorHandler.js";
 import RegistryService from "../../services/modules/RegistryService.js";
+import Account from "../../models/modules/AccountType.js";
+import Registry from "../../models/modules/Registry.js";
 
 // Create new registry entry
 export const createRegistry = async (req, res, next) => {
@@ -432,5 +434,170 @@ export const getPremiumOrDiscountRegistries = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+
+export const getStatementByParty = async (req, res) => {
+  try {
+    const { partyId } = req.params;
+    const {
+      page = 1,
+      limit = 5000000,
+      startDate,
+      endDate,
+      foreignCurrency,
+      localCurrency,
+      metalOnly,
+    } = req.query;
+
+    if (!partyId) {
+      return res.status(400).json({ success: false, message: "Party ID is required" });
+    }
+
+    const account = await Account.findById(partyId).populate("acDefinition.currencies.currency");
+    if (!account) {
+      return res.status(404).json({ success: false, message: "Party not found" });
+    }
+
+    // Build filter
+    const filter = {
+      party: partyId,
+      isActive: true,
+      type: {
+        $in: [
+          "PARTY_GOLD_BALANCE",
+          "PARTY_CASH_BALANCE",
+          "PARTY_MAKING_CHARGES",
+          "PARTY_PREMIUM",
+          "PARTY_DISCOUNT",
+          "PARTY_VAT_AMOUNT",
+          "OTHER-CHARGE",
+          "MAKING_CHARGES",
+          "VAT_AMOUNT",
+        ],
+      },
+    };
+
+    // Date range filter
+    if (startDate || endDate) {
+      filter.transactionDate = {};
+      if (startDate) filter.transactionDate.$gte = new Date(startDate);
+      if (endDate) filter.transactionDate.$lte = new Date(endDate);
+    }
+
+    const skip = (page - 1) * limit;
+
+    // Fetch transactions
+    const registries = await Registry.find(filter)
+      .populate("createdBy", "name email")
+      .populate("party", "customerName accountCode")
+      .sort({ transactionDate: 1, createdAt: 1 }) // Chronological for running balance
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const totalItems = await Registry.countDocuments(filter);
+
+    // Calculate opening balance (before start date)
+    const openingFilter = {
+      party: partyId,
+      isActive: true,
+      type: { $in: filter.type.$in },
+    };
+
+    if (startDate) {
+      openingFilter.transactionDate = { $lt: new Date(startDate) };
+    }
+
+    const openingTxns = await Registry.find(openingFilter)
+      .sort({ transactionDate: 1, createdAt: 1 });
+
+    let openingCash = 0;
+    let openingGold = 0;
+
+    openingTxns.forEach(t => {
+      if (t.type === "PARTY_GOLD_BALANCE") {
+        openingGold += (t.goldCredit || t.credit || 0) - (t.goldDebit || t.debit || 0);
+      } else {
+        openingCash += (t.credit || 0) - (t.debit || 0);
+      }
+    });
+
+    // Process running balance
+    let runningCash = openingCash;
+    let runningGold = openingGold;
+
+    const processedData = registries.map(t => {
+      let cashDebit = 0, cashCredit = 0;
+      let goldDebit = 0, goldCredit = 0;
+
+      if (t.type === "PARTY_GOLD_BALANCE") {
+        goldCredit = t.goldCredit || t.credit || 0;
+        goldDebit = t.goldDebit || t.debit || 0;
+        runningGold += goldCredit - goldDebit;
+      } else {
+        cashCredit = t.credit || 0;
+        cashDebit = t.debit || 0;
+        runningCash += cashCredit - cashDebit;
+      }
+
+      return {
+        ...t.toObject(),
+        _id: t._id,
+        docDate: t.transactionDate.toLocaleDateString("en-GB"),
+        formattedDate: t.formattedDate,
+        cashDebit,
+        cashCredit,
+        goldDebit,
+        goldCredit,
+        cashBalance: runningCash,
+        goldBalance: runningGold,
+      };
+    });
+
+    // Apply metal-only filter on processed data
+    let finalData = processedData;
+    if (metalOnly === "true") {
+      finalData = processedData.filter(t => t.goldDebit > 0 || t.goldCredit > 0);
+    }
+
+    // Currency conversion logic (frontend will use this rate)
+    const currencies = account.acDefinition?.currencies || [];
+    const defaultCur = currencies.find(c => c.isDefault) || currencies[0];
+    const foreignCur = currencies.find(c => (c.currency?.currencyCode || c.currencyCode) === foreignCurrency) || defaultCur;
+    const localCur = currencies.find(c => (c.currency?.currencyCode || c.currencyCode) === localCurrency) || defaultCur;
+
+    const conversionRate = foreignCur && localCur
+      ? (foreignCur.currency?.conversionRate || foreignCur.conversionRate || 1) /
+        (localCur.convertRate || 1)
+      : 1;
+
+    res.status(200).json({
+      success: true,
+      message: "Statement fetched successfully",
+      data: finalData,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: parseInt(page),
+        hasNext: parseInt(page) * limit < totalItems,
+        hasPrev: page > 1,
+      },
+      summary: {
+        opening: { cash: openingCash, gold: openingGold },
+        closing: {
+          cash: runningCash,
+          gold: runningGold,
+        },
+      },
+      currency: {
+        foreign: foreignCurrency || "USD",
+        local: localCurrency || "AED",
+        rate: conversionRate.toFixed(6),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getStatementByParty:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };

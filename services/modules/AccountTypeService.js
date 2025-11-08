@@ -493,16 +493,11 @@ static getFilesToDelete(tradeDebtor, updateData) {
       const tradeDebtor = await AccountType.findById(id).populate([
         {
           path: "acDefinition.currencies.currency",
-          select: "currencyCode description symbol",
+          select: "currencyCode description conversionRate symbol",
         },
         {
           path: "balances.cashBalance.currency",
-   
-          select: "currencyCode description symbol",
-        },
-        {
-          path: "balances.cashBalance.currency",
-          select: "code name symbol",
+          select: "currencyCode description conversionRate symbol",
         },
         { path: "acDefinition.branches.branch", select: "code name" },
         { path: "createdBy", select: "name email" },

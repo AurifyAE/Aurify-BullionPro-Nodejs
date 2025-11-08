@@ -8,6 +8,11 @@ const FixingPriceSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    transactionType: {
+      type: String,
+      required: [true, "Transaction type is required"],
+      index: true,
+    },
     transactionFix: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "TransactionFixing",
@@ -20,6 +25,11 @@ const FixingPriceSchema = new mongoose.Schema(
       min: [0, "Rate cannot be negative"],
     },
     bidValue: {
+      type: Number,
+      default: null,
+      min: [0, "Bid value cannot be negative"],
+    },
+    currentBidValue: {
       type: Number,
       default: null,
       min: [0, "Bid value cannot be negative"],

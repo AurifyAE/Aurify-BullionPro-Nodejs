@@ -16,6 +16,7 @@ import {
   getMakingChargesRegistries,
   getRegistriesByPartyId,
   getPremiumOrDiscountRegistries,
+  getStatementByParty,
 } from "../../controllers/modules/RegistryController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import {
@@ -57,7 +58,7 @@ router.get("/get-by-party/:partyId", getRegistriesByPartyId);
 
 // Get balance for cost center
 router.get("/balance/:costCenter", getRegistryBalance);
-
+router.get("/statement/:partyId", getStatementByParty);
 // Get registries by type
 router.get(
   "/type/:type",
