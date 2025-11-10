@@ -109,7 +109,14 @@ const StockItemSchema = new mongoose.Schema(
       required: [true, "Weight in Oz is required"],
       min: [0, "Weight in Oz cannot be negative"],
     },
-
+    FXGain: {
+      type: Number,
+      default: 0,
+    },
+    FXLoss: {
+      type: Number,
+      default: 0,
+    },
     cashDebit: {
       type: Number,
       default: 0,

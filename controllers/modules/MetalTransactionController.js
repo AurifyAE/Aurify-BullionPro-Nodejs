@@ -97,6 +97,8 @@ export const createMetalTransaction = async (req, res, next) => {
         vat,
         itemTotal,
         remarks,
+        FXGain,
+        FXLoss
       } = item;
 
       return {
@@ -120,6 +122,8 @@ export const createMetalTransaction = async (req, res, next) => {
           bidValue: toNumber(metalRate?.bidValue),
         },
         metalAmount: toNumber(itemTotal?.baseAmount),
+        FXGain: toNumber(FXGain),
+        FXLoss: toNumber(FXLoss),
         makingUnit: {
           unit: makingUnit?.unit || "percentage",
           makingRate: toNumber(makingUnit?.makingRate),
@@ -255,29 +259,29 @@ export const updateMetalTransaction = async (req, res, next) => {
     if (!req.admin?.id)
       throw createAppError("Unauthorized", 401, "UNAUTHORIZED");
 
-    const {
+     const {
       transactionType,
-      hedge,
+      fix,
+      unfix,
       partyCode,
       partyCurrency,
       itemCurrency,
-      partyCurrencyRate,
+      partyCurrencyRate = 1,
       voucherType,
       voucherDate,
-      voucherNumber,
+      voucherNumber,  
       supplierInvoiceNo,
       supplierDate,
       metalRateUnit,
       stockItems = [],
       otherCharges = [],
-      netAmount = 0,
-      rounded = 0,
+      totalSummary,
       totalAmount = 0,
       enteredBy,
       salesman,
       status = "draft",
       notes,
-    } = body;
+    } = req.body;
 
     // Required fields
     const required = ["transactionType", "partyCode", "stockItems"];
@@ -289,82 +293,121 @@ export const updateMetalTransaction = async (req, res, next) => {
       throw createAppError("stockItems must be non-empty array", 400);
     }
 
-    const mappedStockItems = stockItems.map((item) => ({
-      stockCode: trim(item.stockCode),
-      description: trim(item.description) || "",
-      grossWeight: toNumber(item.grossWeight),
-      purityStd: toNumber(item.purityStd, 0.999),
-      purity: toNumber(item.purity),
-      pureWeightStd: toNumber(item.pureWeightStd),
-      pureWeight: toNumber(item.pureWeight),
-      purityDifference: toNumber(item.purityDifference),
-      weightInOz: toNumber(item.weightInOz),
-      metalRate:metalRateUnit?.rateType || null,
-      metalRateRequirements: {
-        rate: toNumber(item.metalRate?.rate),
-        rateInGram: toNumber(item.metalRate?.rateInGram),
-      },
-      metalAmount: toNumber(item.itemTotal?.baseAmount),
-      makingUnit: {
-        unit: item.makingUnit?.unit || "percentage",
-        makingRate: toNumber(item.makingUnit?.makingRate),
-        makingAmount: toNumber(item.makingUnit?.makingAmount),
-      },
-      premiumDiscount: {
-        rate: toNumber(item["premium-discount"]?.rate),
-        amount: toNumber(item["premium-discount"]?.amount),
-      },
-      vat: {
-        rate: toNumber(item.vat?.rate),
-        amount: toNumber(item.vat?.amount),
-      },
-      itemTotal: {
-        baseAmount: toNumber(item.itemTotal?.baseAmount),
-        makingChargesTotal: toNumber(item.itemTotal?.makingChargesTotal),
-        premiumTotal: toNumber(item.itemTotal?.premiumTotal),
-        subTotal: toNumber(item.itemTotal?.subTotal),
-        vatAmount: toNumber(item.itemTotal?.vatAmount),
-        itemTotalAmount: toNumber(item.itemTotal?.itemTotalAmount),
-      },
-      remarks: trim(item.remarks) || "",
-    }));
+    // === MAP STOCK ITEMS ===
+    const mappedStockItems = stockItems.map((item) => {
+      if (!item.stockCode)
+        throw createAppError("stockCode required in stockItems", 400);
 
-    const mappedOtherCharges = (otherCharges || []).map((c) => ({
-      code: trim(c.code),
-      description: trim(c.description) || "",
-      percentage: toNumber(c.percentage),
-      debit: {
-        account: trim(c.debit?.account),
-        baseCurrency: toNumber(c.debit?.baseCurrency),
-        foreignCurrency: toNumber(c.debit?.foreignCurrency),
-        currency: trim(c.debit?.currency),
-      },
-      credit: {
-        account: trim(c.credit?.account),
-        baseCurrency: toNumber(c.credit?.baseCurrency),
-        foreignCurrency: toNumber(c.credit?.foreignCurrency),
-        currency: trim(c.credit?.currency),
-      },
-      vatDetails: c.vatDetails
-        ? {
-            vatNo: trim(c.vatDetails.vatNo) || "",
-            invoiceNo: trim(c.vatDetails.invoiceNo),
-            invoiceDate: toDate(c.vatDetails.invoiceDate),
-            vatRate: toNumber(c.vatDetails.vatRate),
-            vatAmount: toNumber(c.vatDetails.vatAmount),
-          }
-        : null,
-    }));
+      const {
+        stockCode,
+        description,
+        grossWeight,
+        purityStd,
+        purity,
+        pureWeightStd,
+        pureWeight,
+        purityDifference,
+        weightInOz,
+        metalRate,
+        makingUnit,
+        premiumDiscount,
+        vat,
+        itemTotal,
+        remarks,
+      } = item;
 
+      return {
+        stockCode: trim(stockCode),
+        description: trim(description) || "",
+        grossWeight: toNumber(grossWeight),
+        purityStd: toNumber(purityStd, 0.999),
+        purity: toNumber(purity),
+        pureWeightStd: toNumber(pureWeightStd),
+        pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
+        purityDifference: toNumber(purityDifference) ?toNumber(purityDifference) : 0 ,
+        weightInOz: toNumber(weightInOz),
+        metalRate: metalRate?.type || null,
+        passPurityDiff: Boolean(item.passPurityDiff),
+        vatOnMaking: Boolean(item.vatOnMaking),
+        excludeVAT: Boolean(item.excludeVAT),
+        metalRateRequirements: {
+          amount: toNumber(metalRate?.rate),
+          rateInGram: toNumber(metalRate?.rateInGram),
+          currentBidValue: toNumber(metalRate?.currentBidValue),
+          bidValue: toNumber(metalRate?.bidValue),
+        },
+        metalAmount: toNumber(itemTotal?.baseAmount),
+        makingUnit: {
+          unit: makingUnit?.unit || "percentage",
+          makingRate: toNumber(makingUnit?.makingRate),
+          makingAmount: toNumber(makingUnit?.makingAmount),
+        },
+        premiumDiscount: {
+          rate: toNumber(premiumDiscount?.rate),
+          amount: toNumber(premiumDiscount?.amount),
+        },
+        vat: {
+          percentage: toNumber(vat?.rate),
+          amount: toNumber(vat?.amount),
+        },
+        itemTotal: {
+          baseAmount: toNumber(itemTotal?.baseAmount),
+          makingChargesTotal: toNumber(itemTotal?.makingChargesTotal),
+          premiumTotal: toNumber(itemTotal?.premiumTotal),
+          subTotal: toNumber(itemTotal?.subTotal),
+          vatAmount: toNumber(itemTotal?.vatAmount),
+          itemTotalAmount: toNumber(itemTotal?.itemTotalAmount),
+        },
+        remarks: trim(remarks) || "",
+      };
+    });
+
+    // === MAP OTHER CHARGES ===
+    const mappedOtherCharges = otherCharges.map((charge) => {
+      if (!charge.code || !charge.debit || !charge.credit) {
+        throw createAppError("Invalid otherCharges structure", 400);
+      }
+      return {
+        code: trim(charge.code),
+        description: trim(charge.description) || "",
+        percentage: toNumber(charge.percentage),
+        debit: {
+          account: trim(charge.debit.account),
+          baseCurrency: toNumber(charge.debit.baseCurrency),
+          foreignCurrency: toNumber(charge.debit.foreignCurrency),
+          currency: trim(charge.debit.currency),
+        },
+        credit: {
+          account: trim(charge.credit.account),
+          baseCurrency: toNumber(charge.credit.baseCurrency),
+          foreignCurrency: toNumber(charge.credit.foreignCurrency),
+          currency: trim(charge.credit.currency),
+        },
+        vatDetails: charge.vatDetails
+          ? {
+              vatNo: trim(charge.vatDetails.vatNo) || "",
+              invoiceNo: trim(charge.vatDetails.invoiceNo),
+              invoiceDate: toDate(charge.vatDetails.invoiceDate),
+              vatRate: toNumber(charge.vatDetails.vatRate),
+              vatAmount: toNumber(charge.vatDetails.vatAmount),
+            }
+          : null,
+          remarks: trim(charge.remarks) || "",
+      };
+    });
+
+    
+    // === FINAL TRANSACTION DATA ===
     const transactionData = {
       transactionType,
-      hedge: Boolean(hedge),
+      fixed: Boolean(fix),
+      unfix: Boolean(unfix),
       partyCode: trim(partyCode),
       partyCurrency: trim(partyCurrency),
       itemCurrency: trim(itemCurrency),
       partyCurrencyRate: toNumber(partyCurrencyRate, 1),
       voucherType,
-      voucherDate: toDate(voucherDate),
+      voucherDate: toDate(voucherDate) || new Date(),
       voucherNumber: trim(voucherNumber),
       supplierInvoiceNo: trim(supplierInvoiceNo),
       supplierDate: toDate(supplierDate),
@@ -374,18 +417,25 @@ export const updateMetalTransaction = async (req, res, next) => {
             rate: toNumber(metalRateUnit.rate),
             rateInGram: toNumber(metalRateUnit.rateInGram),
           }
-        : undefined,
+        : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,
-      netAmount: toNumber(netAmount),
-      rounded: toNumber(rounded),
-      totalAmount: toNumber(totalAmount),
+      totalSummary : {
+        itemSubTotal: toNumber(totalSummary?.itemSubTotal) || 0,
+        itemTotalVat: toNumber(totalSummary?.itemTotalVat) || 0,
+        itemTotalAmount: toNumber(totalSummary?.itemTotalAmount) || 0,
+        totalOtherCharges: toNumber(totalSummary?.totalOtherCharges) || 0,
+        totalOtherChargesVat: toNumber(totalSummary?.totalOtherChargesVat) || 0,
+        netAmount: toNumber(totalSummary?.netAmount) || 0,
+        rounded: toNumber(totalSummary?.rounded) || 0,
+        totalAmount: toNumber(totalSummary?.totalAmount) || 0
+      },
       enteredBy: trim(enteredBy),
       salesman: trim(salesman),
       status,
       notes: trim(notes),
     };
-console.log(transactionData)
+
     const updated = await MetalTransactionService.updateMetalTransaction(
       id,
       transactionData,

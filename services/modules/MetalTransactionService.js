@@ -58,7 +58,7 @@ class MetalTransactionService {
       createdBy: adminId,
     });
 
-    // if (!transactionData.totalAmountSession?.totalAmountAED) {
+    // if (!transactionData.totalSummary?.totalAmountAED) {
     //   transaction.calculateSessionTotals();
     // }
 
@@ -210,6 +210,7 @@ class MetalTransactionService {
       const itemTotals = this.calculateTotals([item], totalSummary);
       console.log("object");
       console.log(itemTotals);
+
       switch (transactionType) {
         case "purchase":
           console.log("---");
@@ -577,6 +578,65 @@ class MetalTransactionService {
       );
     }
 
+    // === 💱 FX GAIN / LOSS ENTRIES ===
+    if (totals.FXGain > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "010", // next code in your sequence
+          "FX_EXCHANGE",
+          `Foreign Exchange Gain - Purchase from ${partyName}`,
+          party._id,
+          false, // Gain is credit
+          totals.FXGain,
+          totals.FXGain, // credit
+          {
+            debit: 0,
+            credit: totals.FXGain,
+            cashCredit: totals.FXGain,
+            goldDebit: totals.pureWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.bidValue,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    if (totals.FXLoss > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "011",
+          "FX_EXCHANGE",
+          `Foreign Exchange Loss - Purchase from ${partyName}`,
+          party._id,
+          true, // Loss is debit
+          totals.FXLoss,
+          0, // no credit
+          {
+            debit: totals.FXLoss,
+            credit: 0,
+            cashDebit: totals.FXLoss,
+            goldDebit: totals.pureWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.bidValue,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
     if (Array.isArray(otherCharges) && otherCharges.length > 0) {
       otherCharges.forEach((charge) => {
         const { description, debit, credit, vatDetails } = charge;
@@ -596,8 +656,8 @@ class MetalTransactionService {
               debit.baseCurrency,
               0, // credit
               {
-                 debit :debit.baseCurrency, // value
-                 cashDebit: debit.baseCurrency,
+                debit: debit.baseCurrency, // value
+                cashDebit: debit.baseCurrency,
                 cashCredit: 0,
               },
               voucherDate,
@@ -622,7 +682,7 @@ class MetalTransactionService {
               credit.baseCurrency, // value
               credit.baseCurrency, // credit
               {
-                debit :0,
+                debit: 0,
                 cashDebit: 0,
                 cashCredit: credit.baseCurrency,
               },
@@ -654,7 +714,7 @@ class MetalTransactionService {
                 vatDetails.vatAmount,
                 0,
                 {
-                  debit :vatDetails.vatAmount,
+                  debit: vatDetails.vatAmount,
                   cashDebit: vatDetails.vatAmount,
                   cashCredit: 0,
                 },
@@ -680,7 +740,7 @@ class MetalTransactionService {
                 vatDetails.vatAmount,
                 vatDetails.vatAmount,
                 {
-                  debit:0,
+                  debit: 0,
                   cashDebit: 0,
                   cashCredit: vatDetails.vatAmount,
                 },
@@ -888,35 +948,39 @@ class MetalTransactionService {
       );
     }
 
-    if (totals.purityDifference != 0) {
-      // if purity difference -negative then debit else credit
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "006",
-          "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${totals.purityDifference}`,
-          party._id,
-          true,
-          totals.purityDifference,
-          totals.purityDifference > 0 ? totals.purityDifference : 0, // credit
-          {
-            debit: totals.purityDifference > 0 ? 0 : totals.purityDifference,
-            goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
-            cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
-            grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
-            purity: totals.purity,
-            goldBidValue: totals.bidValue,
-          },
-          voucherDate,
-          voucherNumber,
-          adminId
-        )
-      );
-    }
+ if (totals.purityDifference !== 0) {
+  const isDebit = totals.purityDifference < 0; // negative = debit, positive = credit
+  const absDiff = Math.abs(totals.purityDifference);
+
+  entries.push(
+    this.createRegistryEntry(
+      transactionType,
+      baseTransactionId,
+      metalTransactionId,
+      "006",
+      "PURITY_DIFFERENCE",
+      `Purity difference - Purchase from ${partyName} (${totals.purityDifference > 0 ? "Gain" : "Loss"} ${totals.purityDifference})`,
+      party._id,
+      isDebit, // ✅ true if debit (loss), false if credit (gain)
+      absDiff, // ✅ value always positive
+      !isDebit ? absDiff : 0, // ✅ credit only if positive
+      {
+        debit: isDebit ? absDiff : 0, // ✅ debit side if loss
+        credit: !isDebit ? absDiff : 0, // ✅ credit side if gain
+        goldDebit: totals.grossWeight > 0 ? totals.grossWeight : 0,
+        cashDebit: totals.goldValue > 0 ? totals.goldValue : 0,
+        grossWeight: totals.grossWeight,
+        pureWeight: totals.pureWeight,
+        purity: totals.purity,
+        goldBidValue: totals.bidValue,
+      },
+      voucherDate,
+      voucherNumber,
+      adminId
+    )
+  );
+}
+
 
     if (totals.grossWeight > 0) {
       entries.push(
@@ -1063,7 +1127,7 @@ class MetalTransactionService {
     // ======================
     // 3) OTHER CHARGES (debit/credit + VAT on those)
     // ======================
-      if (Array.isArray(otherCharges) && otherCharges.length > 0) {
+    if (Array.isArray(otherCharges) && otherCharges.length > 0) {
       otherCharges.forEach((charge) => {
         const { description, debit, credit, vatDetails } = charge;
 
@@ -1082,7 +1146,7 @@ class MetalTransactionService {
               debit.baseCurrency,
               0, // credit
               {
-                 debit :debit.baseCurrency, // value
+                debit: debit.baseCurrency, // value
                 cashDebit: debit.baseCurrency,
                 cashCredit: 0,
               },
@@ -1108,7 +1172,7 @@ class MetalTransactionService {
               credit.baseCurrency, // value
               credit.baseCurrency, // credit
               {
-                debit :0,
+                debit: 0,
                 cashDebit: 0,
                 cashCredit: credit.baseCurrency,
               },
@@ -1140,7 +1204,7 @@ class MetalTransactionService {
                 vatDetails.vatAmount,
                 0,
                 {
-                  debit :vatDetails.vatAmount,
+                  debit: vatDetails.vatAmount,
                   cashDebit: vatDetails.vatAmount,
                   cashCredit: 0,
                 },
@@ -3057,6 +3121,8 @@ class MetalTransactionService {
           passPurityDiff,
           excludeVAT: item.excludeVAT || false,
           vatOnMaking: item.vatOnMaking || false,
+          FXGain: item.FXGain || 0,
+          FXLoss: item.FXLoss || 0,
         };
       },
       {
@@ -3139,201 +3205,183 @@ class MetalTransactionService {
     };
   }
 
-static async updateAccountBalances(party, metalTransaction, session) {
-  const {
-    transactionType,
-    fixed,
-    unfix,
-    stockItems,
-    otherCharges,
-    totalSummary,
-    partyCurrency,
-  } = metalTransaction;
+  static async ensureCashRow(accountId, currencyId, session) {
+    const currencyObjId = new mongoose.Types.ObjectId(currencyId);
+    const exists = await Account.findOne(
+      { _id: accountId, "balances.cashBalance.currency": currencyObjId },
+      { _id: 1 }
+    ).session(session);
 
-  // 1️⃣ Calculate totals and mode
-  const totals = this.calculateTotals(stockItems, totalSummary);
-  const mode = this.getTransactionMode(fixed, unfix);
-  const balanceChanges = this.calculateBalanceChanges(
-    transactionType,
-    mode,
-    totals,
-    partyCurrency
-  );
-console.log(balanceChanges)
-console.log(otherCharges)
-
-  const currencyId = partyCurrency?.toString?.() || null;
-
-  // 2️⃣ Ensure target currency exists
-  let currencyBalance = party.balances?.cashBalance?.find(
-    (cb) => cb.currency?.toString() === currencyId
-  );
-
-  if (!currencyBalance && currencyId) {
-    console.log(`🟡 Adding new currency balance for ${party.customerName} [${currencyId}]`);
-    await Account.updateOne(
-      { _id: party._id },
-      {
-        $push: {
-          "balances.cashBalance": {
-            currency: currencyId,
-            amount: 0,
-            isDefault: false,
-            lastUpdated: new Date(),
+    if (!exists) {
+      await Account.updateOne(
+        { _id: accountId },
+        {
+          $push: {
+            "balances.cashBalance": {
+              currency: currencyObjId,
+              amount: 0,
+              isDefault: false,
+              lastUpdated: new Date(),
+            },
           },
+          $set: { "balances.lastBalanceUpdate": new Date() },
+        },
+        { session }
+      );
+    }
+  }
+
+  /** 🔹 Increment a currency balance safely with arrayFilters */
+  static async incCash(accountId, currencyId, delta, session) {
+    const currencyObjId = new mongoose.Types.ObjectId(currencyId);
+    await Account.updateOne(
+      { _id: accountId },
+      {
+        $inc: { "balances.cashBalance.$[cb].amount": Number(delta.toFixed(2)) },
+        $set: {
+          "balances.cashBalance.$[cb].lastUpdated": new Date(),
+          "balances.lastBalanceUpdate": new Date(),
+        },
+      },
+      { session, arrayFilters: [{ "cb.currency": currencyObjId }] }
+    );
+  }
+
+  /** 🔹 Increment gold balances safely */
+  static async incGold(accountId, gramsDelta, valueDelta, session) {
+    await Account.updateOne(
+      { _id: accountId },
+      {
+        $inc: {
+          "balances.goldBalance.totalGrams": gramsDelta,
+          "balances.goldBalance.totalValue": valueDelta,
+        },
+        $set: {
+          "balances.goldBalance.lastUpdated": new Date(),
+          "balances.lastBalanceUpdate": new Date(),
         },
       },
       { session }
     );
   }
 
-  // 3️⃣ Prepare balance update
-  const incObj = {};
-  const setObj = { "balances.lastBalanceUpdate": new Date() };
-  const logs = [];
+  /** 🔹 Main balance updater (create/update) */
+  static async updateAccountBalances(party, metalTransaction, session) {
+    const {
+      transactionType,
+      fixed,
+      unfix,
+      stockItems,
+      otherCharges,
+      totalSummary,
+      partyCurrency,
+    } = metalTransaction;
 
-  // 🏆 GOLD update
-  if (balanceChanges.goldBalance !== 0) {
-    const sign = balanceChanges.goldBalance > 0 ? "+" : "-";
-    incObj["balances.goldBalance.totalGrams"] = balanceChanges.goldBalance;
-    incObj["balances.goldBalance.totalValue"] = balanceChanges.goldValue;
-    setObj["balances.goldBalance.lastUpdated"] = new Date();
-    logs.push(
-      `🏆 GOLD UPDATE → ${sign}${Math.abs(balanceChanges.goldBalance).toFixed(3)}g (${sign}${Math.abs(balanceChanges.goldValue).toFixed(2)} value)`
+    const logs = [];
+    const currencyId = partyCurrency?.toString?.() || null;
+    const currencyObjId = currencyId
+      ? new mongoose.Types.ObjectId(currencyId)
+      : null;
+
+    // 1️⃣ Calculate totals and mode
+    const totals = this.calculateTotals(stockItems, totalSummary);
+    const mode = this.getTransactionMode(fixed, unfix);
+    const ch = this.calculateBalanceChanges(
+      transactionType,
+      mode,
+      totals,
+      partyCurrency
     );
-  }
 
-  // 💰 CASH update
-  const netCashChange =
-    (balanceChanges.cashBalance || 0) +
-    (balanceChanges.premiumBalance || 0) +
-    (balanceChanges.discountBalance || 0) +
-    (balanceChanges.vatAmount || 0);
+    // 2️⃣ Update GOLD balance
+    if (ch.goldBalance !== 0 || ch.goldValue !== 0) {
+      await this.incGold(party._id, ch.goldBalance, ch.goldValue, session);
+      const s = ch.goldBalance > 0 ? "+" : "-";
+      logs.push(
+        `🏆 GOLD ${s}${Math.abs(ch.goldBalance).toFixed(3)}g (${s}${Math.abs(
+          ch.goldValue
+        ).toFixed(2)})`
+      );
+    }
 
-  if (currencyId && !isNaN(netCashChange) && netCashChange !== 0) {
-    const sign = netCashChange > 0 ? "+" : "-";
-    incObj["balances.cashBalance.$[cb].amount"] = parseFloat(netCashChange.toFixed(2));
-    setObj["balances.cashBalance.$[cb].lastUpdated"] = new Date();
-    logs.push(`💰 CASH UPDATE [${currencyId}] → ${sign}${Math.abs(netCashChange).toFixed(2)}`);
-  }
+    // 3️⃣ Update CASH balance safely (per currency)
+    const netCash =
+      (ch.cashBalance || 0) +
+      (ch.premiumBalance || 0) +
+      (ch.otherCharges || 0) +
+      (ch.discountBalance || 0);
 
-  const updateOps = {};
-  if (Object.keys(incObj).length > 0) updateOps.$inc = incObj;
-  if (Object.keys(setObj).length > 0) updateOps.$set = setObj;
-  if (currencyId) updateOps.arrayFilters = [{ "cb.currency": partyCurrency }];
-  if (updateOps.$set?.["balances.cashBalance.$[cb].isDefault"]) delete updateOps.$set["balances.cashBalance.$[cb].isDefault"];
+    if (currencyObjId && !isNaN(netCash) && netCash !== 0) {
+      await this.ensureCashRow(party._id, currencyId, session);
+      await this.incCash(party._id, currencyId, netCash, session);
+      const s = netCash > 0 ? "+" : "-";
+      logs.push(
+        `💰 CASH [${currencyId}] ${s}${Math.abs(netCash).toFixed(2)} for ${
+          party.customerName
+        }`
+      );
+    }
 
-  if (Object.keys(updateOps).length > 0) {
-    await Account.findByIdAndUpdate(party._id, updateOps, {
-      session,
-      new: true,
-      arrayFilters: updateOps.arrayFilters || [],
-    });
-    logs.push(`✅ Updated balances for ${party.customerName} (Currency: ${partyCurrency})`);
-  }
+    // 4️⃣ Other charges (debit, credit, VAT)
+    if (Array.isArray(otherCharges) && otherCharges.length > 0) {
+      for (const oc of otherCharges) {
+        const { debit, credit, vatDetails } = oc;
 
-  // 4️⃣ Process Other Charges + VAT
-  if (Array.isArray(otherCharges) && otherCharges.length > 0) {
-    for (const charge of otherCharges) {
-      const { debit, credit, vatDetails } = charge;
-
-      // ----- 🔴 DEBIT handling -----
-      if (debit?.account && debit?.baseCurrency > 0) {
-        await Account.updateOne(
-          { _id: debit.account },
-          {
-            $inc: { "balances.cashBalance.$[cb].amount": -debit.baseCurrency },
-            $set: {
-              "balances.cashBalance.$[cb].lastUpdated": new Date(),
-              "balances.lastBalanceUpdate": new Date(),
-            },
-          },
-          {
-            session,
-            arrayFilters: [{ "cb.currency": debit.currency || partyCurrency }],
-          }
-        );
-        logs.push(
-          `🔴 DEBITED ${debit.baseCurrency.toFixed(2)} (${debit.currency || partyCurrency}) → Account ${debit.account}`
-        );
-      }
-
-      // ----- 🟢 CREDIT handling -----
-      if (credit?.account && credit?.baseCurrency > 0) {
-        await Account.updateOne(
-          { _id: credit.account },
-          {
-            $inc: { "balances.cashBalance.$[cb].amount": credit.baseCurrency },
-            $set: {
-              "balances.cashBalance.$[cb].lastUpdated": new Date(),
-              "balances.lastBalanceUpdate": new Date(),
-            },
-          },
-          {
-            session,
-            arrayFilters: [{ "cb.currency": credit.currency || partyCurrency }],
-          }
-        );
-        logs.push(
-          `🟢 CREDITED ${credit.baseCurrency.toFixed(2)} (${credit.currency || partyCurrency}) → Account ${credit.account}`
-        );
-      }
-
-      // ----- 💸 VAT Handling -----
-      if (vatDetails?.vatAmount > 0) {
-        const vatAmount = vatDetails.vatAmount;
-        const vatRate = vatDetails.vatRate || 0;
-
-        // VAT Debit
-        if (debit?.account) {
-          await Account.updateOne(
-            { _id: debit.account },
-            {
-              $inc: { "balances.cashBalance.$[cb].amount": -vatAmount },
-              $set: {
-                "balances.cashBalance.$[cb].lastUpdated": new Date(),
-                "balances.lastBalanceUpdate": new Date(),
-              },
-            },
-            {
-              session,
-              arrayFilters: [{ "cb.currency": debit.currency || partyCurrency }],
-            }
-          );
+        // 🟢 Debit
+        if (debit?.account && debit?.baseCurrency > 0) {
+          const cur = debit.currency?.toString?.() || currencyId;
+          await this.ensureCashRow(debit.account, cur, session);
+          await this.incCash(debit.account, cur, -debit.baseCurrency, session);
           logs.push(
-            `💸 VAT DEBIT ${vatAmount.toFixed(2)} (${vatRate}%) → Account ${debit.account}`
+            `🟢 DEBIT ${debit.baseCurrency.toFixed(2)} (${cur}) → ${
+              debit.account
+            }`
           );
         }
 
-        // VAT Credit
-        if (credit?.account) {
-          await Account.updateOne(
-            { _id: credit.account },
-            {
-              $inc: { "balances.cashBalance.$[cb].amount": vatAmount },
-              $set: {
-                "balances.cashBalance.$[cb].lastUpdated": new Date(),
-                "balances.lastBalanceUpdate": new Date(),
-              },
-            },
-            {
-              session,
-              arrayFilters: [{ "cb.currency": credit.currency || partyCurrency }],
-            }
-          );
+        // 🔴 Credit
+        if (credit?.account && credit?.baseCurrency > 0) {
+          const cur = credit.currency?.toString?.() || currencyId;
+          await this.ensureCashRow(credit.account, cur, session);
+          await this.incCash(credit.account, cur, credit.baseCurrency, session);
           logs.push(
-            `💸 VAT CREDIT ${vatAmount.toFixed(2)} (${vatRate}%) → Account ${credit.account}`
+            `🔴 CREDIT ${credit.baseCurrency.toFixed(2)} (${cur}) → ${
+              credit.account
+            }`
           );
+        }
+
+        // 💸 VAT
+        if (vatDetails?.vatAmount > 0) {
+          const vat = vatDetails.vatAmount;
+          const rate = vatDetails.vatRate || 0;
+          if (debit?.account) {
+            const cur = debit.currency?.toString?.() || currencyId;
+            await this.ensureCashRow(debit.account, cur, session);
+            await this.incCash(debit.account, cur, -vat, session);
+            logs.push(
+              `💸 VAT DEBIT ${vat.toFixed(2)} (${rate}%) → ${debit.account}`
+            );
+          }
+          if (credit?.account) {
+            const cur = credit.currency?.toString?.() || currencyId;
+            await this.ensureCashRow(credit.account, cur, session);
+            await this.incCash(credit.account, cur, vat, session);
+            logs.push(
+              `💸 VAT CREDIT ${vat.toFixed(2)} (${rate}%) → ${credit.account}`
+            );
+          }
         }
       }
     }
-  }
 
-  // 5️⃣ Log Summary
-  console.log(`\n===== 💎 BALANCE UPDATE LOG for ${party.customerName} =====`);
-  logs.forEach((msg) => console.log(msg));
-  console.log("=========================================================\n");
-}
+    // 5️⃣ Log Summary
+    console.log(
+      `\n===== 💎 BALANCE UPDATE LOG for ${party.customerName} =====`
+    );
+    logs.forEach((l) => console.log(l));
+    console.log("=========================================================\n");
+  }
 
   static buildUpdateOperations(balanceChanges) {
     const {
@@ -3393,7 +3441,7 @@ console.log(otherCharges)
           cashBalance: totals.makingCharges,
           premiumBalance: totals.premium,
           discountBalance: -totals.discount,
-          vatAmount:totals.vatAmount,
+          vatAmount: totals.vatAmount,
           otherCharges: 0,
         },
         fix: {
@@ -3468,7 +3516,7 @@ console.log(otherCharges)
       otherCharges: 0,
       premiumBalance: 0,
       discountBalance: 0,
-      vatAmount:0,
+      vatAmount: 0,
     };
 
     return { ...changes, currency: partyCurrency }; // ✅ include currency id
@@ -4009,7 +4057,7 @@ console.log(otherCharges)
           status: 1,
           isFixed: 1,
           stockItems: 1,
-          totalAmountSession: 1,
+          totalSummary: 1,
           createdAt: 1,
           updatedAt: 1,
 
@@ -4135,9 +4183,6 @@ console.log(otherCharges)
     try {
       // Start transaction
       await session.startTransaction();
-      console.log(
-        `[UPDATE_TRANSACTION] Starting update for transaction ${transactionId}`
-      );
 
       // Validate inputs
       this.validateUpdateInputs(transactionId, updateData, adminId);
@@ -4153,7 +4198,6 @@ console.log(otherCharges)
           "TRANSACTION_NOT_FOUND"
         );
       }
-
       // Store original transaction data for reversal
       const originalData = {
         ...transaction.toObject(),
@@ -4175,14 +4219,6 @@ console.log(otherCharges)
 
       // Apply updates to transaction
       this.applyTransactionUpdates(transaction, updateData);
-
-      // Recalculate session totals if necessary
-      if (updateData?.stockItems || updateData?.totalAmountSession) {
-        console.log(
-          `[UPDATE_TRANSACTION] Recalculating session totals for transaction ${transactionId}`
-        );
-        transaction.calculateSessionTotals();
-      }
 
       // Save updated transaction
       transaction.updatedBy = adminId;
@@ -4251,17 +4287,6 @@ console.log(otherCharges)
   }
   // Helper methods for updateMetalTransaction
   static validateUpdateInputs(transactionId, updateData, adminId) {
-    console.log(
-      `[VALIDATE_INPUTS] Validating inputs for transaction ${transactionId}`,
-      {
-        transactionId,
-        adminId,
-        updateData: updateData
-          ? JSON.stringify(updateData, null, 2)
-          : "undefined",
-      }
-    );
-
     if (!mongoose.isValidObjectId(transactionId)) {
       throw createAppError(
         "Invalid transaction ID",
@@ -4335,7 +4360,8 @@ console.log(otherCharges)
     const allowedFields = [
       "partyCode",
       "stockItems",
-      "totalAmountSession",
+      "otherCharges",
+      "totalSummary",
       "voucherDate",
       "voucherNumber",
       "transactionType",
@@ -4350,6 +4376,7 @@ console.log(otherCharges)
     }
   }
 
+  /** 🔹 Hooked inside your handleRegistryAndBalances() */
   static async handleRegistryAndBalances(
     transaction,
     originalData,
@@ -4368,53 +4395,36 @@ console.log(otherCharges)
       );
     }
 
-    // Delete old registry entries and stocks
-    console.log(
-      `[UPDATE_TRANSACTION] Deleting old registry entries and stocks for transaction ${transaction._id}`
-    );
     await Promise.all([
       this.deleteRegistryEntry(transaction, session),
       this.deleteStocks(transaction.voucherNumber, session),
     ]);
 
-    // minus the old blancees fist , take it from the metaltransaction itself
-    this.updateTradeDebtorsBalances(
+    // reverse old balances first
+    await this.updateTradeDebtorsBalances(
       oldParty._id,
       originalData,
       session,
-      false,
       true
     );
 
-    // Create new registry entries
-    console.log(
-      `[UPDATE_TRANSACTION] Creating new registry entries for transaction ${transaction._id}`
-    );
+    // reinsert registry
     const newRegistryEntries = this.buildRegistryEntries(
       transaction,
       newParty,
       adminId
     );
-    let party = newParty;
-    if (isPartyChanged) {
-      party = newParty;
-    } else {
-      party = oldParty;
-    }
-
-    // minus the old balances
-    this.updateAccountBalances(party, transaction, session);
     if (newRegistryEntries.length > 0) {
       await Registry.insertMany(newRegistryEntries, {
         session,
         ordered: false,
       });
-      console.log(
-        `[UPDATE_TRANSACTION] Inserted ${newRegistryEntries.length} new registry entries`
-      );
     }
 
-    // Update inventory based on transaction type
+    // apply new balances
+    await this.updateAccountBalances(newParty, transaction, session);
+
+    // inventory update
     switch (transaction.transactionType) {
       case "purchase":
       case "saleReturn":
@@ -4441,45 +4451,14 @@ console.log(otherCharges)
           "INVALID_TRANSACTION_TYPE"
         );
     }
-
-    // Reverse old party balances if necessary
-    if (
-      isPartyChanged ||
-      updateData.stockItems ||
-      updateData.totalAmountSession
-    ) {
-      console.log(
-        `[UPDATE_TRANSACTION] Reversing balances for old party ${oldParty._id}`
-      );
-      // await this.validatePartyBalances(oldParty, {
-      //   ...transaction.toObject(),
-      //   ...originalData,
-      // }, true);
-      // await this.updateTradeDebtorsBalances(
-      //   oldParty._id,
-      //   { ...transaction.toObject(), ...originalData },
-      //   session,
-      //   false,
-      //   true
-      // );
-
-      // Apply new party balances
-      console.log(
-        `[UPDATE_TRANSACTION] Applying balances for new party ${newParty._id}`
-      );
-      // await this.updateTradeDebtorsBalances(newParty._id, transaction, session, true);
-    } else {
-      console.log(
-        `[UPDATE_TRANSACTION] No balance-affecting fields updated for transaction ${transaction._id}`
-      );
-    }
   }
+
   static async updateReverseAccountBalances(party, originalData, session) {
     try {
       // MINUS THE OLD BALANCES
-      const { transactionType, fixed, unfix, stockItems, totalAmountSession } =
+      const { transactionType, fixed, unfix, stockItems, totalSummary } =
         originalData;
-      const totals = this.calculateTotals(stockItems, totalAmountSession);
+      const totals = this.calculateTotals(stockItems, totalSummary);
       const mode = this.getTransactionMode(fixed, unfix);
       const balanceChanges = this.calculateBalanceChanges(
         transactionType,
@@ -4545,8 +4524,8 @@ console.log(otherCharges)
 
   // [NEW] Validate party balances before reversal
   static async validatePartyBalances(party, transaction, isReversal = false) {
-    const { transactionType, stockItems, totalAmountSession } = transaction;
-    const totals = this.calculateTotals(stockItems, totalAmountSession);
+    const { transactionType, stockItems, totalSummary } = transaction;
+    const totals = this.calculateTotals(stockItems, totalSummary);
     const mode = this.getTransactionMode(transaction.fixed, transaction.unfix);
 
     const balanceChanges = this.calculateBalanceChanges(
@@ -4781,7 +4760,7 @@ console.log(otherCharges)
   // Update session totals
   static async updateSessionTotals(
     transactionId,
-    totalAmountSession,
+    totalSummary,
     vatPercentage = 0,
     adminId
   ) {
@@ -4800,19 +4779,19 @@ console.log(otherCharges)
         );
       }
 
-      if (totalAmountSession) {
-        transaction.totalAmountSession = {
-          ...transaction.totalAmountSession,
-          ...totalAmountSession,
+      if (totalSummary) {
+        transaction.totalSummary = {
+          ...transaction.totalSummary,
+          ...totalSummary,
         };
       }
 
       if (vatPercentage > 0) {
-        const netAmount = transaction.totalAmountSession.netAmountAED || 0;
+        const netAmount = transaction.totalSummary.netAmountAED || 0;
         const vatAmount = (netAmount * vatPercentage) / 100;
-        transaction.totalAmountSession.vatAmount = vatAmount;
-        transaction.totalAmountSession.vatPercentage = vatPercentage;
-        transaction.totalAmountSession.totalAmountAED = netAmount + vatAmount;
+        transaction.totalSummary.vatAmount = vatAmount;
+        transaction.totalSummary.vatPercentage = vatPercentage;
+        transaction.totalSummary.totalAmountAED = netAmount + vatAmount;
       }
 
       transaction.updatedBy = adminId;
@@ -4851,11 +4830,11 @@ console.log(otherCharges)
 
       transaction.calculateSessionTotals();
       if (vatPercentage > 0) {
-        const netAmount = transaction.totalAmountSession.netAmountAED || 0;
+        const netAmount = transaction.totalSummary.netAmountAED || 0;
         const vatAmount = (netAmount * vatPercentage) / 100;
-        transaction.totalAmountSession.vatAmount = vatAmount;
-        transaction.totalAmountSession.vatPercentage = vatPercentage;
-        transaction.totalAmountSession.totalAmountAED = netAmount + vatAmount;
+        transaction.totalSummary.vatAmount = vatAmount;
+        transaction.totalSummary.vatPercentage = vatPercentage;
+        transaction.totalSummary.totalAmountAED = netAmount + vatAmount;
       }
 
       transaction.updatedBy = adminId;
@@ -4891,11 +4870,11 @@ console.log(otherCharges)
         $group: {
           _id: null,
           totalTransactions: { $sum: 1 },
-          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
-          totalNetAmount: { $sum: "$totalAmountSession.netAmountAED" },
-          totalVatAmount: { $sum: "$totalAmountSession.vatAmount" },
+          totalAmount: { $sum: "$totalSummary.totalAmountAED" },
+          totalNetAmount: { $sum: "$totalSummary.netAmountAED" },
+          totalVatAmount: { $sum: "$totalSummary.vatAmount" },
           averageTransactionAmount: {
-            $avg: "$totalAmountSession.totalAmountAED",
+            $avg: "$totalSummary.totalAmountAED",
           },
           purchaseCount: {
             $sum: { $cond: [{ $eq: ["$transactionType", "purchase"] }, 1, 0] },
@@ -4907,7 +4886,7 @@ console.log(otherCharges)
             $sum: {
               $cond: [
                 { $eq: ["$transactionType", "purchase"] },
-                "$totalAmountSession.totalAmountAED",
+                "$totalSummary.totalAmountAED",
                 0,
               ],
             },
@@ -4916,7 +4895,7 @@ console.log(otherCharges)
             $sum: {
               $cond: [
                 { $eq: ["$transactionType", "sale"] },
-                "$totalAmountSession.totalAmountAED",
+                "$totalSummary.totalAmountAED",
                 0,
               ],
             },
@@ -4931,7 +4910,7 @@ console.log(otherCharges)
         $group: {
           _id: "$status",
           count: { $sum: 1 },
-          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
+          totalAmount: { $sum: "$totalSummary.totalAmountAED" },
         },
       },
     ]);
@@ -4976,8 +4955,8 @@ console.log(otherCharges)
       {
         $group: {
           _id: "$transactionType",
-          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
-          totalNetAmount: { $sum: "$totalAmountSession.netAmountAED" },
+          totalAmount: { $sum: "$totalSummary.totalAmountAED" },
+          totalNetAmount: { $sum: "$totalSummary.netAmountAED" },
           transactionCount: { $sum: 1 },
           totalWeight: { $sum: { $sum: "$stockItems.weightInOz" } },
           averageRate: {
@@ -5257,7 +5236,7 @@ console.log(otherCharges)
     );
 
     // Party Cash Balance Entry
-    const totalAmountAED = transaction.totalAmountSession?.totalAmountAED || 0;
+    const totalAmountAED = transaction.totalSummary?.totalAmountAED || 0;
     if (totalAmountAED > 0) {
       registryEntries.push(
         new Registry({
@@ -5325,125 +5304,55 @@ console.log(otherCharges)
     }
   }
 
+  /** 🔹 Used for reversal updates (undoing old balances) */
   static async updateTradeDebtorsBalances(
     partyId,
     transaction,
     session,
-    isUpdate = false,
     isReversal = false
   ) {
     const party = await Account.findById(partyId).session(session);
-    if (!party) {
-      throw createAppError("Party not found", 404, "PARTY_NOT_FOUND");
-    }
+    if (!party) throw createAppError("Party not found", 404, "PARTY_NOT_FOUND");
 
-    // Calculate balance changes using the provided transaction
-    const { transactionType, stockItems, totalAmountSession, fixed, unfix } =
-      transaction;
-    const totals = this.calculateTotals(stockItems, totalAmountSession);
+    const {
+      transactionType,
+      stockItems,
+      totalSummary,
+      fixed,
+      unfix,
+      partyCurrency,
+    } = transaction;
+    const totals = this.calculateTotals(stockItems, totalSummary);
     const mode = this.getTransactionMode(fixed, unfix);
-    const balanceChanges = this.calculateBalanceChanges(
+    const ch = this.calculateBalanceChanges(
       transactionType,
       mode,
-      totals
+      totals,
+      partyCurrency
     );
+    const sign = isReversal ? -1 : 1;
 
-    // Log balance update details
-    console.log(
-      `Updating balances for party ${party.customerName} (${party.accountCode})`,
-      {
-        transactionType,
-        isReversal,
-        isUpdate,
-        transactionId: transaction._id,
-        balanceChanges,
-      }
-    );
-
-    // Initialize update operations
-    const updateOps = { $set: {}, $inc: {} };
-
-    // Handle Gold Balance Updates
-    if (balanceChanges.goldBalance !== 0 || balanceChanges.goldValue !== 0) {
-      if (isReversal) {
-        // Reverse gold balance changes
-        updateOps.$inc["balances.goldBalance.totalGrams"] =
-          -balanceChanges.goldBalance;
-        updateOps.$inc["balances.goldBalance.totalValue"] =
-          -balanceChanges.goldValue;
-      } else {
-        // Apply gold balance changes
-        updateOps.$inc["balances.goldBalance.totalGrams"] =
-          balanceChanges.goldBalance;
-        updateOps.$inc["balances.goldBalance.totalValue"] =
-          balanceChanges.goldValue;
-      }
-      updateOps.$set["balances.goldBalance.lastUpdated"] = new Date();
+    // GOLD
+    if (ch.goldBalance !== 0 || ch.goldValue !== 0) {
+      await this.incGold(
+        partyId,
+        sign * (ch.goldBalance || 0),
+        sign * (ch.goldValue || 0),
+        session
+      );
     }
 
-    // Handle Cash Balance Updates (including making charges, premium, and discount)
-    const netCashChange =
-      balanceChanges.cashBalance +
-      balanceChanges.premiumBalance +
-      balanceChanges.discountBalance;
-    if (netCashChange !== 0) {
-      if (isReversal) {
-        // Reverse cash balance changes
-        updateOps.$inc["balances.cashBalance.amount"] = -netCashChange;
-      } else {
-        // Apply cash balance changes
-        updateOps.$inc["balances.cashBalance.amount"] = netCashChange;
-      }
-      updateOps.$set["balances.cashBalance.lastUpdated"] = new Date();
+    // CASH
+    const netCash =
+      (ch.cashBalance || 0) +
+      (ch.premiumBalance || 0) +
+      (ch.otherCharges || 0) +
+      (ch.discountBalance || 0);
+
+    if (partyCurrency && netCash !== 0) {
+      await this.ensureCashRow(partyId, partyCurrency, session);
+      await this.incCash(partyId, partyCurrency, sign * netCash, session);
     }
-
-    // Update last transaction date and balance summary
-    updateOps.$set["balances.lastTransactionDate"] = new Date();
-    updateOps.$set["balances.summary"] = {
-      totalOutstanding:
-        (party.balances.cashBalance.amount || 0) +
-        (updateOps.$inc["balances.cashBalance.amount"] || 0),
-      goldHoldings:
-        (party.balances.goldBalance.totalGrams || 0) +
-        (updateOps.$inc["balances.goldBalance.totalGrams"] || 0),
-      lastUpdated: new Date(),
-    };
-
-    // Log balance before and after
-    console.log(`Before balance update:`, {
-      goldBalance: party.balances.goldBalance,
-      cashBalance: party.balances.cashBalance,
-    });
-
-    // Apply updates
-    if (
-      Object.keys(updateOps.$inc).length > 0 ||
-      Object.keys(updateOps.$set).length > 0
-    ) {
-      await Account.findByIdAndUpdate(partyId, updateOps, {
-        session,
-        new: true,
-      });
-    }
-
-    console.log(`After balance update:`, {
-      goldBalance: {
-        totalGrams:
-          (party.balances.goldBalance.totalGrams || 0) +
-          (updateOps.$inc["balances.goldBalance.totalGrams"] || 0),
-        totalValue:
-          (party.balances.goldBalance.totalValue || 0) +
-          (updateOps.$inc["balances.goldBalance.totalValue"] || 0),
-      },
-      cashBalance: {
-        amount:
-          (party.balances.cashBalance.amount || 0) +
-          (updateOps.$inc["balances.cashBalance.amount"] || 0),
-      },
-      summary: updateOps.$set["balances.summary"],
-    });
-
-    await party.save({ session });
   }
 
   // Get party balance summary
@@ -5504,9 +5413,9 @@ console.log(otherCharges)
             transactionType: "$transactionType",
           },
           transactionCount: { $sum: 1 },
-          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
-          totalNetAmount: { $sum: "$totalAmountSession.netAmountAED" },
-          totalVatAmount: { $sum: "$totalAmountSession.vatAmount" },
+          totalAmount: { $sum: "$totalSummary.totalAmountAED" },
+          totalNetAmount: { $sum: "$totalSummary.netAmountAED" },
+          totalVatAmount: { $sum: "$totalSummary.vatAmount" },
           totalWeight: { $sum: { $sum: "$stockItems.weightInOz" } },
           totalPureWeight: { $sum: { $sum: "$stockItems.pureWeight" } },
         },
@@ -5545,11 +5454,11 @@ console.log(otherCharges)
         $group: {
           _id: "$partyCode",
           transactionCount: { $sum: 1 },
-          totalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
+          totalAmount: { $sum: "$totalSummary.totalAmountAED" },
           totalWeight: { $sum: { $sum: "$stockItems.weightInOz" } },
           totalPureWeight: { $sum: { $sum: "$stockItems.pureWeight" } },
           averageTransactionAmount: {
-            $avg: "$totalAmountSession.totalAmountAED",
+            $avg: "$totalSummary.totalAmountAED",
           },
           lastTransactionDate: { $max: "$voucherDate" },
         },

@@ -17,6 +17,7 @@ import {
   getRegistriesByPartyId,
   getPremiumOrDiscountRegistries,
   getStatementByParty,
+  getRegistryAuditTrailById,
 } from "../../controllers/modules/RegistryController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import {
@@ -109,5 +110,10 @@ router.delete(
   validateObjectId("id"),
   permanentDeleteRegistry
 );
+
+
+//AuditTrail
+router.get("/transaction/:metalTransactionId", getRegistryAuditTrailById);
+
 
 export default router;
