@@ -2,141 +2,239 @@ import InventoryService from "../../services/modules/inventoryService.js";
 import MetalTransactionService from "../../services/modules/MetalTransactionService.js";
 import { createAppError } from "../../utils/errorHandler.js";
 
+// Utility functions
+const trim = (val) => (typeof val === "string" ? val.trim() : val);
+const toNumber = (val, fallback = 0) => {
+  const num = parseFloat(val);
+  return isNaN(num) ? fallback : num;
+};
+const toDate = (val) => (val ? new Date(val) : null);
+
+// ======================== CREATE METAL TRANSACTION ========================
 export const createMetalTransaction = async (req, res, next) => {
-  console.log(JSON.stringify(req.body, null, 2));
+  // console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
   try {
     const {
       transactionType,
-      voucherType,
-      voucherDate,
-      voucherNumber,
-      partyCode,
       fix,
       unfix,
+      partyCode,
       partyCurrency,
       itemCurrency,
-      baseCurrency,
-      stockItems,
-      totalAmountSession,
-      status,
+      partyCurrencyRate = 1,
+      voucherType,
+      voucherDate,
+      voucherNumber,  
+      supplierInvoiceNo,
+      supplierDate,
+      metalRateUnit,
+      stockItems = [],
+      otherCharges = [],
+      totalSummary,
+      totalAmount = 0,
+      enteredBy,
+      salesman,
+      status = "draft",
       notes,
-      voucher
     } = req.body;
 
+    // === VALIDATION ===
     if (
       !transactionType ||
       !partyCode ||
       !partyCurrency ||
-      !stockItems ||
       !Array.isArray(stockItems) ||
       stockItems.length === 0
     ) {
       throw createAppError(
-        "Required fields missing: transactionType, partyCode, partyCurrency, stockItems",
+        "Required: transactionType, partyCode, partyCurrency, stockItems",
         400,
         "REQUIRED_FIELDS_MISSING"
       );
     }
 
-    if (!["purchase", "sale", "purchaseReturn", "saleReturn"].includes(transactionType)) {
+    if (
+      !["purchase", "sale", "purchaseReturn", "saleReturn"].includes(
+        transactionType
+      )
+    ) {
       throw createAppError(
-        "Invalid transaction type. Must be 'purchase' or 'sale'",
+        "Invalid transactionType. Allowed: purchase, sale, purchaseReturn, saleReturn",
         400,
         "INVALID_TRANSACTION_TYPE"
       );
     }
 
+    if (
+      ![
+        "METAL_PURCHASE",
+        "METAL_SALE",
+        "METAL_PURCHASE_RETURN",
+        "METAL_SALE_RETURN",
+      ].includes(voucherType)
+    ) {
+      throw createAppError("Invalid voucherType", 400, "INVALID_VOUCHER_TYPE");
+    }
 
-    // Boolean logic for fix and unfix flags - ensure mutual exclusivity
-    const isFixTransaction = fix === true || fix === "true";
-    const isUnfixTransaction = unfix === true || unfix === "true";
+    // === MAP STOCK ITEMS ===
+    const mappedStockItems = stockItems.map((item) => {
+      if (!item.stockCode)
+        throw createAppError("stockCode required in stockItems", 400);
 
-    const transactionData = {
-      transactionType,
-      fixed: isFixTransaction ? true : false,
-      unfix: isUnfixTransaction ? true : false,
-      voucherType: voucherType,
-      voucherDate: voucherDate ? new Date(voucherDate) : new Date(),
-      voucherNumber: voucherNumber,
-      partyCode: partyCode.trim(),
-      partyCurrency: partyCurrency.trim(),
-      itemCurrency: itemCurrency?.trim(),
-      baseCurrency: baseCurrency?.trim(),
-      stockItems: stockItems.map((item) => ({
-        stockCode: item.stockCode.trim(),
-        description: item.description?.trim(),
-        pieces: Number(item.pieces || 0),
-        grossWeight: Number(item.grossWeight || 0),
-        purity: Number(item.purity),
-        standerdPurity: Number(item.standerdPurity),
-        purityDiffWeight: Number(item.purityDiffWeight || 0),
-        pureWeight: Number(item.pureWeight || 0),
-        purityWeight: Number(item.pureWeight),
-        standerdPureWeight: Number(item.standerdPurity * item.grossWeight),
-        weightInOz: Number(item.weightInOz),
-        metalRate: item.metalRate.trim(),
+      const {
+        stockCode,
+        description,
+        grossWeight,
+        purityStd,
+        purity,
+        pureWeightStd,
+        pureWeight,
+        purityDifference,
+        weightInOz,
+        metalRate,
+        makingUnit,
+        premiumDiscount,
+        vat,
+        itemTotal,
+        remarks,
+        FXGain,
+        FXLoss
+      } = item;
+
+      return {
+        stockCode: trim(stockCode),
+        description: trim(description) || "",
+        grossWeight: toNumber(grossWeight),
+        purityStd: toNumber(purityStd, 0.999),
+        purity: toNumber(purity),
+        pureWeightStd: toNumber(pureWeightStd),
+        pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
+        purityDifference: toNumber(purityDifference) ?toNumber(purityDifference) : 0 ,
+        weightInOz: toNumber(weightInOz),
+        metalRate: metalRate?.type || null,
+        passPurityDiff: Boolean(item.passPurityDiff),
+        vatOnMaking: Boolean(item.vatOnMaking),
+        excludeVAT: Boolean(item.excludeVAT),
         metalRateRequirements: {
-          amount: Number(item.metalRateRequirements?.amount || 0),
-          rate: Number(item.metalRateRequirements?.rate || 0),
+          amount: toNumber(metalRate?.rate),
+          rateInGram: toNumber(metalRate?.rateInGram),
+          currentBidValue: toNumber(metalRate?.currentBidValue),
+          bidValue: toNumber(metalRate?.bidValue),
         },
-        makingCharges: {
-          amount: Number(item.makingCharges?.amount || 0),
-          rate: Number(item.makingCharges?.rate || 0),
+        metalAmount: toNumber(itemTotal?.baseAmount),
+        FXGain: toNumber(FXGain),
+        FXLoss: toNumber(FXLoss),
+        makingUnit: {
+          unit: makingUnit?.unit || "percentage",
+          makingRate: toNumber(makingUnit?.makingRate),
+          makingAmount: toNumber(makingUnit?.makingAmount),
         },
-        otherCharges: {
-          amount: Number(item.otherCharges?.amount || 0),
-          description: item.otherCharges?.description || "",
-          rate: Number(item.otherCharges?.percentage || 0),
+        premiumDiscount: {
+          rate: toNumber(premiumDiscount?.rate),
+          amount: toNumber(premiumDiscount?.amount),
         },
         vat: {
-          percentage: Number(item.vat?.vatPercentage || 0),
-          amount: Number(item.vat?.vatAmount || 0),
-        },
-        premium: {
-          amount: Number(item.premium?.amount || 0),
-          rate: Number(item.premium?.rate || 0),
+          percentage: toNumber(vat?.rate),
+          amount: toNumber(vat?.amount),
         },
         itemTotal: {
-          baseAmount: Number(item.itemTotal?.baseAmount || 0),
-          makingChargesTotal: Number(item.itemTotal?.makingChargesTotal || 0),
-          premiumTotal: Number(item.itemTotal?.premiumTotal || 0),
-          subTotal: Number(item.itemTotal?.subTotal || 0),
-          vatAmount: Number(item.itemTotal?.vatAmount || 0),
-          itemTotalAmount: Number(item.itemTotal?.itemTotalAmount || 0),
+          baseAmount: toNumber(itemTotal?.baseAmount),
+          makingChargesTotal: toNumber(itemTotal?.makingChargesTotal),
+          premiumTotal: toNumber(itemTotal?.premiumTotal),
+          subTotal: toNumber(itemTotal?.subTotal),
+          vatAmount: toNumber(itemTotal?.vatAmount),
+          itemTotalAmount: toNumber(itemTotal?.itemTotalAmount),
         },
-        itemNotes: item.itemNotes?.trim(),
-        itemStatus: item.itemStatus || "active",
-      })),
-      totalAmountSession: {
-        totalAmountAED: Number(totalAmountSession?.totalAmountAED || 0),
-        netAmountAED: Number(totalAmountSession?.netAmountAED || 0),
-        vatAmount: Number(totalAmountSession?.vatAmount || 0),
-        vatPercentage: Number(totalAmountSession?.vatPercentage || 0),
+        remarks: trim(remarks) || "",
+      };
+    });
+
+    // === MAP OTHER CHARGES ===
+    const mappedOtherCharges = otherCharges.map((charge) => {
+      if (!charge.code || !charge.debit || !charge.credit) {
+        throw createAppError("Invalid otherCharges structure", 400);
+      }
+      return {
+        code: trim(charge.code),
+        description: trim(charge.description) || "",
+        percentage: toNumber(charge.percentage),
+        debit: {
+          account: trim(charge.debit.account),
+          baseCurrency: toNumber(charge.debit.baseCurrency),
+          foreignCurrency: toNumber(charge.debit.foreignCurrency),
+          currency: trim(charge.debit.currency),
+        },
+        credit: {
+          account: trim(charge.credit.account),
+          baseCurrency: toNumber(charge.credit.baseCurrency),
+          foreignCurrency: toNumber(charge.credit.foreignCurrency),
+          currency: trim(charge.credit.currency),
+        },
+        vatDetails: charge.vatDetails
+          ? {
+              vatNo: trim(charge.vatDetails.vatNo) || "",
+              invoiceNo: trim(charge.vatDetails.invoiceNo),
+              invoiceDate: toDate(charge.vatDetails.invoiceDate),
+              vatRate: toNumber(charge.vatDetails.vatRate),
+              vatAmount: toNumber(charge.vatDetails.vatAmount),
+            }
+          : null,
+          remarks: trim(charge.remarks) || "",
+      };
+    });
+
+    
+    // === FINAL TRANSACTION DATA ===
+    const transactionData = {
+      transactionType,
+      fixed: Boolean(fix),
+      unfix: Boolean(unfix),
+      partyCode: trim(partyCode),
+      partyCurrency: trim(partyCurrency),
+      itemCurrency: trim(itemCurrency),
+      partyCurrencyRate: toNumber(partyCurrencyRate, 1),
+      voucherType,
+      voucherDate: toDate(voucherDate) || new Date(),
+      voucherNumber: trim(voucherNumber),
+      supplierInvoiceNo: trim(supplierInvoiceNo),
+      supplierDate: toDate(supplierDate),
+      metalRateUnit: metalRateUnit
+        ? {
+            rateType: trim(metalRateUnit.rateType),
+            rate: toNumber(metalRateUnit.rate),
+            rateInGram: toNumber(metalRateUnit.rateInGram),
+          }
+        : null,
+      stockItems: mappedStockItems,
+      otherCharges: mappedOtherCharges,
+      totalSummary : {
+        itemSubTotal: toNumber(totalSummary?.itemSubTotal) || 0,
+        itemTotalVat: toNumber(totalSummary?.itemTotalVat) || 0,
+        itemTotalAmount: toNumber(totalSummary?.itemTotalAmount) || 0,
+        totalOtherCharges: toNumber(totalSummary?.totalOtherCharges) || 0,
+        totalOtherChargesVat: toNumber(totalSummary?.totalOtherChargesVat) || 0,
+        netAmount: toNumber(totalSummary?.netAmount) || 0,
+        rounded: toNumber(totalSummary?.rounded) || 0,
+        totalAmount: toNumber(totalSummary?.totalAmount) || 0
       },
-      status: status || "draft",
-      notes: notes?.trim(),
-      voucherType: voucherType,
-      voucherNumber: voucherNumber
-
+      enteredBy: trim(enteredBy),
+      salesman: trim(salesman),
+      status,
+      notes: trim(notes),
     };
-    const metalTransaction = await MetalTransactionService.createMetalTransaction(
-      transactionData,
-      req.admin.id
-    );
 
-    switch (metalTransaction.transactionType) {
-      case "purchase":
-      case "saleReturn":
-        await InventoryService.updateInventory(metalTransaction, false);
-        break;
+    // === CREATE IN SERVICE ===
+    const metalTransaction =
+      await MetalTransactionService.createMetalTransaction(
+        transactionData,
+        req.admin.id
+      );
 
-      case "sale":
-      case "purchaseReturn":
-        await InventoryService.updateInventory(metalTransaction, true);
-        break;
-
-      default:
-        throw new Error("Invalid transaction type");
+    // === INVENTORY UPDATE ===
+    if (["purchase", "saleReturn"].includes(transactionType)) {
+      await InventoryService.updateInventory(metalTransaction, false); // add
+    } else if (["sale", "purchaseReturn"].includes(transactionType)) {
+      await InventoryService.updateInventory(metalTransaction, true); // deduct
     }
 
     res.status(201).json({
@@ -145,9 +243,217 @@ export const createMetalTransaction = async (req, res, next) => {
       data: metalTransaction,
     });
   } catch (error) {
+    console.error("CREATE ERROR:", error);
     next(error);
   }
 };
+
+// ======================== UPDATE METAL TRANSACTION ========================
+export const updateMetalTransaction = async (req, res, next) => {
+  let id;
+  try {
+    id = req.params?.id;
+    const body = req.body || {};
+
+    if (!id) throw createAppError("Transaction ID required", 400, "MISSING_ID");
+    if (!req.admin?.id)
+      throw createAppError("Unauthorized", 401, "UNAUTHORIZED");
+
+     const {
+      transactionType,
+      fix,
+      unfix,
+      partyCode,
+      partyCurrency,
+      itemCurrency,
+      partyCurrencyRate = 1,
+      voucherType,
+      voucherDate,
+      voucherNumber,  
+      supplierInvoiceNo,
+      supplierDate,
+      metalRateUnit,
+      stockItems = [],
+      otherCharges = [],
+      totalSummary,
+      totalAmount = 0,
+      enteredBy,
+      salesman,
+      status = "draft",
+      notes,
+    } = req.body;
+
+    // Required fields
+    const required = ["transactionType", "partyCode", "stockItems"];
+    const missing = required.filter((f) => !body[f]);
+    if (missing.length)
+      throw createAppError(`Missing: ${missing.join(", ")}`, 400);
+
+    if (!Array.isArray(stockItems) || stockItems.length === 0) {
+      throw createAppError("stockItems must be non-empty array", 400);
+    }
+
+    // === MAP STOCK ITEMS ===
+    const mappedStockItems = stockItems.map((item) => {
+      if (!item.stockCode)
+        throw createAppError("stockCode required in stockItems", 400);
+
+      const {
+        stockCode,
+        description,
+        grossWeight,
+        purityStd,
+        purity,
+        pureWeightStd,
+        pureWeight,
+        purityDifference,
+        weightInOz,
+        metalRate,
+        makingUnit,
+        premiumDiscount,
+        vat,
+        itemTotal,
+        remarks,
+      } = item;
+
+      return {
+        stockCode: trim(stockCode),
+        description: trim(description) || "",
+        grossWeight: toNumber(grossWeight),
+        purityStd: toNumber(purityStd, 0.999),
+        purity: toNumber(purity),
+        pureWeightStd: toNumber(pureWeightStd),
+        pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
+        purityDifference: toNumber(purityDifference) ?toNumber(purityDifference) : 0 ,
+        weightInOz: toNumber(weightInOz),
+        metalRate: metalRate?.type || null,
+        passPurityDiff: Boolean(item.passPurityDiff),
+        vatOnMaking: Boolean(item.vatOnMaking),
+        excludeVAT: Boolean(item.excludeVAT),
+        metalRateRequirements: {
+          amount: toNumber(metalRate?.rate),
+          rateInGram: toNumber(metalRate?.rateInGram),
+          currentBidValue: toNumber(metalRate?.currentBidValue),
+          bidValue: toNumber(metalRate?.bidValue),
+        },
+        metalAmount: toNumber(itemTotal?.baseAmount),
+        makingUnit: {
+          unit: makingUnit?.unit || "percentage",
+          makingRate: toNumber(makingUnit?.makingRate),
+          makingAmount: toNumber(makingUnit?.makingAmount),
+        },
+        premiumDiscount: {
+          rate: toNumber(premiumDiscount?.rate),
+          amount: toNumber(premiumDiscount?.amount),
+        },
+        vat: {
+          percentage: toNumber(vat?.rate),
+          amount: toNumber(vat?.amount),
+        },
+        itemTotal: {
+          baseAmount: toNumber(itemTotal?.baseAmount),
+          makingChargesTotal: toNumber(itemTotal?.makingChargesTotal),
+          premiumTotal: toNumber(itemTotal?.premiumTotal),
+          subTotal: toNumber(itemTotal?.subTotal),
+          vatAmount: toNumber(itemTotal?.vatAmount),
+          itemTotalAmount: toNumber(itemTotal?.itemTotalAmount),
+        },
+        remarks: trim(remarks) || "",
+      };
+    });
+
+    // === MAP OTHER CHARGES ===
+    const mappedOtherCharges = otherCharges.map((charge) => {
+      if (!charge.code || !charge.debit || !charge.credit) {
+        throw createAppError("Invalid otherCharges structure", 400);
+      }
+      return {
+        code: trim(charge.code),
+        description: trim(charge.description) || "",
+        percentage: toNumber(charge.percentage),
+        debit: {
+          account: trim(charge.debit.account),
+          baseCurrency: toNumber(charge.debit.baseCurrency),
+          foreignCurrency: toNumber(charge.debit.foreignCurrency),
+          currency: trim(charge.debit.currency),
+        },
+        credit: {
+          account: trim(charge.credit.account),
+          baseCurrency: toNumber(charge.credit.baseCurrency),
+          foreignCurrency: toNumber(charge.credit.foreignCurrency),
+          currency: trim(charge.credit.currency),
+        },
+        vatDetails: charge.vatDetails
+          ? {
+              vatNo: trim(charge.vatDetails.vatNo) || "",
+              invoiceNo: trim(charge.vatDetails.invoiceNo),
+              invoiceDate: toDate(charge.vatDetails.invoiceDate),
+              vatRate: toNumber(charge.vatDetails.vatRate),
+              vatAmount: toNumber(charge.vatDetails.vatAmount),
+            }
+          : null,
+          remarks: trim(charge.remarks) || "",
+      };
+    });
+
+    
+    // === FINAL TRANSACTION DATA ===
+    const transactionData = {
+      transactionType,
+      fixed: Boolean(fix),
+      unfix: Boolean(unfix),
+      partyCode: trim(partyCode),
+      partyCurrency: trim(partyCurrency),
+      itemCurrency: trim(itemCurrency),
+      partyCurrencyRate: toNumber(partyCurrencyRate, 1),
+      voucherType,
+      voucherDate: toDate(voucherDate) || new Date(),
+      voucherNumber: trim(voucherNumber),
+      supplierInvoiceNo: trim(supplierInvoiceNo),
+      supplierDate: toDate(supplierDate),
+      metalRateUnit: metalRateUnit
+        ? {
+            rateType: trim(metalRateUnit.rateType),
+            rate: toNumber(metalRateUnit.rate),
+            rateInGram: toNumber(metalRateUnit.rateInGram),
+          }
+        : null,
+      stockItems: mappedStockItems,
+      otherCharges: mappedOtherCharges,
+      totalSummary : {
+        itemSubTotal: toNumber(totalSummary?.itemSubTotal) || 0,
+        itemTotalVat: toNumber(totalSummary?.itemTotalVat) || 0,
+        itemTotalAmount: toNumber(totalSummary?.itemTotalAmount) || 0,
+        totalOtherCharges: toNumber(totalSummary?.totalOtherCharges) || 0,
+        totalOtherChargesVat: toNumber(totalSummary?.totalOtherChargesVat) || 0,
+        netAmount: toNumber(totalSummary?.netAmount) || 0,
+        rounded: toNumber(totalSummary?.rounded) || 0,
+        totalAmount: toNumber(totalSummary?.totalAmount) || 0
+      },
+      enteredBy: trim(enteredBy),
+      salesman: trim(salesman),
+      status,
+      notes: trim(notes),
+    };
+
+    const updated = await MetalTransactionService.updateMetalTransaction(
+      id,
+      transactionData,
+      req.admin.id
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Transaction updated",
+      data: updated,
+    });
+  } catch (error) {
+    console.error(`UPDATE ERROR [ID: ${id}]:`, error);
+    next(error);
+  }
+};
+
+// ======================== OTHER ENDPOINTS (UNCHANGED LOGIC) ========================
 
 export const getAllMetalTransactions = async (req, res, next) => {
   try {
@@ -160,25 +466,30 @@ export const getAllMetalTransactions = async (req, res, next) => {
       startDate,
       endDate,
       stockCode,
+      voucherType,
     } = req.query;
 
     const filters = {};
     if (transactionType) filters.transactionType = transactionType;
     if (partyCode) filters.partyCode = partyCode;
     if (status) filters.status = status;
-    if (startDate) filters.startDate = startDate;
-    if (endDate) filters.endDate = endDate;
-    if (stockCode) filters.stockCode = stockCode;
+    if (voucherType) filters.voucherType = voucherType;
+    if (stockCode) filters["stockItems.stockCode"] = stockCode;
+    if (startDate || endDate) {
+      filters.voucherDate = {};
+      if (startDate) filters.voucherDate.$gte = new Date(startDate);
+      if (endDate) filters.voucherDate.$lte = new Date(endDate);
+    }
 
     const result = await MetalTransactionService.getAllMetalTransactions(
-      parseInt(page),
-      parseInt(limit),
+      parseInt(page, 10),
+      parseInt(limit, 10),
       filters
     );
 
     res.status(200).json({
       success: true,
-      message: "Metal transactions retrieved successfully",
+      message: "Transactions retrieved",
       data: result.transactions,
       pagination: result.pagination,
     });
@@ -190,186 +501,15 @@ export const getAllMetalTransactions = async (req, res, next) => {
 export const getMetalTransactionById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
+    if (!id) throw createAppError("ID required", 400);
 
-    const metalTransaction =
-      await MetalTransactionService.getMetalTransactionById(id);
-
-    res.status(200).json({
-      success: true,
-      message: "Metal transaction retrieved successfully",
-      data: metalTransaction,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-
-export const updateMetalTransaction = async (req, res, next) => {
-  let id; // Declare id outside the try block to ensure it’s in scope for catch
-  try {
-    id = req.params?.id; // Safely extract id with fallback
-    const updateData = req.body || {}; // Fallback to empty object if req.body is undefined
-
-    // Validate basic inputs
-    if (!id) {
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
-    }
-    if (!req.admin?.id) {
-      throw createAppError(
-        "Admin ID is required",
-        401,
-        "MISSING_ADMIN_ID"
-      );
-    }
-    if (!updateData || typeof updateData !== "object") {
-      throw createAppError(
-        "Invalid update data provided",
-        400,
-        "INVALID_UPDATE_DATA"
-      );
-    }
-
-    // Destructure fields with fallbacks
-    const {
-      transactionType = null,
-      voucherType = null,
-      voucherDate = null,
-      voucherNumber = null,
-      partyCode = null,
-      fix = false,
-      unfix = false,
-      partyCurrency = null,
-      itemCurrency = null,
-      baseCurrency = null,
-      stockItems = [],
-      totalAmountSession = {},
-      status = "draft",
-      notes = null,
-    } = updateData;
-
-    // Validate required fields
-    const requiredFields = ["transactionType", "partyCode", "stockItems"];
-    const missingFields = requiredFields.filter((field) => !updateData[field]);
-    if (missingFields.length > 0) {
-      throw createAppError(
-        `Missing required fields: ${missingFields.join(", ")}`,
-        400,
-        "MISSING_REQUIRED_FIELDS"
-      );
-    }
-
-    // Validate stockItems
-    if (!Array.isArray(stockItems) || stockItems.length === 0) {
-      throw createAppError(
-        "Stock items must be a non-empty array",
-        400,
-        "INVALID_STOCK_ITEMS"
-      );
-    }
-
-    // Construct transactionData
-    const transactionData = {
-      transactionType,
-      fixed: fix === true || fix === "true",
-      unfix: unfix === true || unfix === "true",
-      voucherType,
-      voucherDate: voucherDate ? new Date(voucherDate) : new Date(),
-      voucherNumber,
-      partyCode: partyCode?.trim?.() || partyCode,
-      partyCurrency: partyCurrency?.trim?.() || partyCurrency,
-      itemCurrency: itemCurrency?.trim?.() || itemCurrency,
-      baseCurrency: baseCurrency?.trim?.() || baseCurrency,
-      stockItems: stockItems.map((item) => ({
-        stockCode: item.stockCode?.trim?.() || item.stockCode,
-        description: item.description?.trim?.() || item.description,
-        pieces: Number(item.pieces || 0),
-        grossWeight: Number(item.grossWeight || 0),
-        purity: Number(item.purity || 0),
-        pureWeight: Number(item.pureWeight || 0),
-        purityWeight: Number(item.purityWeight || 0),
-        weightInOz: Number(item.weightInOz || 0),
-        metalRate: item.metalRate?.trim?.() || item.metalRate,
-        metalRateRequirements: {
-          amount: Number(item.metalRateRequirements?.amount || 0),
-          rate: Number(item.metalRateRequirements?.rate || 0),
-        },
-        makingCharges: {
-          amount: Number(item.makingCharges?.amount || 0),
-          rate: Number(item.makingCharges?.rate || 0),
-        },
-        otherCharges: {
-          amount: Number(item.otherCharges?.amount || 0),
-          description: item.otherCharges?.description || "",
-          rate: Number(item.otherCharges?.percentage || 0),
-        },
-        vat: {
-          percentage: Number(item.vat?.vatPercentage || 0),
-          amount: Number(item.vat?.vatAmount || 0),
-        },
-        premium: {
-          amount: Number(item.premium?.amount || 0),
-          rate: Number(item.premium?.rate || 0),
-        },
-        itemTotal: {
-          baseAmount: Number(item.itemTotal?.baseAmount || 0),
-          makingChargesTotal: Number(item.itemTotal?.makingChargesTotal || 0),
-          premiumTotal: Number(item.itemTotal?.premiumTotal || 0),
-          subTotal: Number(item.itemTotal?.subTotal || 0),
-          vatAmount: Number(item.itemTotal?.vatAmount || 0),
-          itemTotalAmount: Number(item.itemTotal?.itemTotalAmount || 0),
-        },
-        itemNotes: item.itemNotes?.trim?.() || item.itemNotes,
-        itemStatus: item.itemStatus || "active",
-      })),
-      totalAmountSession: {
-        totalAmountAED: Number(totalAmountSession?.totalAmountAED || 0),
-        netAmountAED: Number(totalAmountSession?.netAmountAED || 0),
-        vatAmount: Number(totalAmountSession?.vatAmount || 0),
-        vatPercentage: Number(totalAmountSession?.vatPercentage || 0),
-      },
-      status,
-      notes: notes?.trim?.() || notes,
-    };
-
-    // Log the constructed transactionData for debugging
-    console.log(`[UPDATE_TRANSACTION_CONTROLLER] Constructed transactionData for ID ${id}:`, {
-      transactionId: id,
-      adminId: req.admin.id,
-      transactionData: JSON.stringify(transactionData, null, 2),
-    });
-
-    // Call the service method
-    const updatedTransaction = await MetalTransactionService.updateMetalTransaction(
-      id,
-      transactionData,
-      req.admin.id
+    const transaction = await MetalTransactionService.getMetalTransactionById(
+      id
     );
-
-    // Send success response
-    res.status(200).json({
-      success: true,
-      message: "Metal transaction updated successfully",
-      data: updatedTransaction,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Found", data: transaction });
   } catch (error) {
-    console.error(`[UPDATE_TRANSACTION_CONTROLLER_ERROR] Failed to update transaction ${id || "unknown"}:`, {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      transactionId: id || "unknown",
-      adminId: req.admin?.id || "unknown",
-    });
     next(error);
   }
 };
@@ -377,22 +517,13 @@ export const updateMetalTransaction = async (req, res, next) => {
 export const deleteMetalTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
+    if (!id) throw createAppError("ID required", 400);
 
     const result = await MetalTransactionService.deleteMetalTransaction(
       id,
       req.admin.id
     );
-
-    res.status(200).json({
-      success: true,
-      message: result.message,
-    });
+    res.status(200).json({ success: true, message: result.message });
   } catch (error) {
     next(error);
   }
@@ -402,21 +533,17 @@ export const getMetalTransactionsByParty = async (req, res, next) => {
   try {
     const { partyId } = req.params;
     const { limit = 50, transactionType } = req.query;
-
-    if (!partyId)
-      throw createAppError("Party ID is required", 400, "MISSING_PARTY_ID");
+    if (!partyId) throw createAppError("Party ID required", 400);
 
     const transactions = await MetalTransactionService.getTransactionsByParty(
       partyId,
-      parseInt(limit),
+      parseInt(limit, 10),
       transactionType
     );
 
-    res.status(200).json({
-      success: true,
-      message: "Metal transactions by party retrieved successfully",
-      data: transactions,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "By party", data: transactions });
   } catch (error) {
     next(error);
   }
@@ -425,22 +552,13 @@ export const getMetalTransactionsByParty = async (req, res, next) => {
 export const getTransactionStatistics = async (req, res, next) => {
   try {
     const { transactionType, partyCode, startDate, endDate } = req.query;
-
-    const filters = {};
-    if (transactionType) filters.transactionType = transactionType;
-    if (partyCode) filters.partyCode = partyCode;
-    if (startDate) filters.startDate = startDate;
-    if (endDate) filters.endDate = endDate;
+    const filters = { transactionType, partyCode, startDate, endDate };
+    Object.keys(filters).forEach((k) => !filters[k] && delete filters[k]);
 
     const stats = await MetalTransactionService.getTransactionStatistics(
       filters
     );
-
-    res.status(200).json({
-      success: true,
-      message: "Transaction statistics retrieved successfully",
-      data: stats,
-    });
+    res.status(200).json({ success: true, message: "Stats", data: stats });
   } catch (error) {
     next(error);
   }
@@ -450,28 +568,17 @@ export const updateTransactionStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+    if (!id || !status) throw createAppError("ID & status required", 400);
 
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
-    if (!status)
-      throw createAppError("Status is required", 400, "MISSING_STATUS");
+    const updated = await MetalTransactionService.updateMetalTransaction(
+      id,
+      { status },
+      req.admin.id
+    );
 
-    const updatedTransaction =
-      await MetalTransactionService.updateMetalTransaction(
-        id,
-        { status },
-        req.admin.id
-      );
-
-    res.status(200).json({
-      success: true,
-      message: "Transaction status updated successfully",
-      data: updatedTransaction,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Status updated", data: updated });
   } catch (error) {
     next(error);
   }
@@ -480,26 +587,17 @@ export const updateTransactionStatus = async (req, res, next) => {
 export const addStockItemToTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const stockItemData = req.body;
+    const stockItem = req.body;
+    if (!id) throw createAppError("ID required", 400);
 
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
-
-    const updatedTransaction = await MetalTransactionService.addStockItem(
+    const updated = await MetalTransactionService.addStockItem(
       id,
-      stockItemData,
+      stockItem,
       req.admin.id
     );
-
-    res.status(200).json({
-      success: true,
-      message: "Stock item added successfully",
-      data: updatedTransaction,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Item added", data: updated });
   } catch (error) {
     next(error);
   }
@@ -508,33 +606,18 @@ export const addStockItemToTransaction = async (req, res, next) => {
 export const updateStockItemInTransaction = async (req, res, next) => {
   try {
     const { id, stockItemId } = req.params;
-    const updateData = req.body;
+    const update = req.body;
+    if (!id || !stockItemId) throw createAppError("IDs required", 400);
 
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
-    if (!stockItemId)
-      throw createAppError(
-        "Stock Item ID is required",
-        400,
-        "MISSING_STOCK_ITEM_ID"
-      );
-
-    const updatedTransaction = await MetalTransactionService.updateStockItem(
+    const updated = await MetalTransactionService.updateStockItem(
       id,
       stockItemId,
-      updateData,
+      update,
       req.admin.id
     );
-
-    res.status(200).json({
-      success: true,
-      message: "Stock item updated successfully",
-      data: updatedTransaction,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Item updated", data: updated });
   } catch (error) {
     next(error);
   }
@@ -543,61 +626,16 @@ export const updateStockItemInTransaction = async (req, res, next) => {
 export const removeStockItemFromTransaction = async (req, res, next) => {
   try {
     const { id, stockItemId } = req.params;
+    if (!id || !stockItemId) throw createAppError("IDs required", 400);
 
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
-    if (!stockItemId)
-      throw createAppError(
-        "Stock Item ID is required",
-        400,
-        "MISSING_STOCK_ITEM_ID"
-      );
-
-    const updatedTransaction = await MetalTransactionService.removeStockItem(
+    const updated = await MetalTransactionService.removeStockItem(
       id,
       stockItemId,
       req.admin.id
     );
-
-    res.status(200).json({
-      success: true,
-      message: "Stock item removed successfully",
-      data: updatedTransaction,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateSessionTotals = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { totalAmountSession, vatPercentage } = req.body;
-
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
-
-    const updatedTransaction =
-      await MetalTransactionService.updateSessionTotals(
-        id,
-        totalAmountSession,
-        vatPercentage,
-        req.admin.id
-      );
-
-    res.status(200).json({
-      success: true,
-      message: "Session totals updated successfully",
-      data: updatedTransaction,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Item removed", data: updated });
   } catch (error) {
     next(error);
   }
@@ -606,27 +644,19 @@ export const updateSessionTotals = async (req, res, next) => {
 export const calculateSessionTotals = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { vatPercentage = 0 } = req.body;
+    const { vatPercentage = 5 } = req.body;
+    if (!id) throw createAppError("ID required", 400);
 
-    if (!id)
-      throw createAppError(
-        "Transaction ID is required",
-        400,
-        "MISSING_TRANSACTION_ID"
-      );
-
-    const updatedTransaction =
+    const updated =
       await MetalTransactionService.calculateAndUpdateSessionTotals(
         id,
-        vatPercentage,
+        toNumber(vatPercentage),
         req.admin.id
       );
 
-    res.status(200).json({
-      success: true,
-      message: "Session totals calculated and updated successfully",
-      data: updatedTransaction,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Totals calculated", data: updated });
   } catch (error) {
     next(error);
   }
@@ -635,22 +665,13 @@ export const calculateSessionTotals = async (req, res, next) => {
 export const getProfitLossAnalysis = async (req, res, next) => {
   try {
     const { startDate, endDate, partyCode, stockCode } = req.query;
-
-    const filters = {};
-    if (startDate) filters.startDate = startDate;
-    if (endDate) filters.endDate = endDate;
-    if (partyCode) filters.partyCode = partyCode;
-    if (stockCode) filters.stockCode = stockCode;
+    const filters = { startDate, endDate, partyCode, stockCode };
+    Object.keys(filters).forEach((k) => !filters[k] && delete filters[k]);
 
     const analysis = await MetalTransactionService.getProfitLossAnalysis(
       filters
     );
-
-    res.status(200).json({
-      success: true,
-      message: "Profit/Loss analysis retrieved successfully",
-      data: analysis,
-    });
+    res.status(200).json({ success: true, message: "P&L", data: analysis });
   } catch (error) {
     next(error);
   }
@@ -668,56 +689,38 @@ export const getUnfixedTransactions = async (req, res, next) => {
       endDate,
     } = req.query;
 
-    // Build filters object
-    const filters = {};
-    if (transactionType) filters.transactionType = transactionType;
-    if (partyCode) filters.partyCode = partyCode;
-    if (status) filters.status = status;
-    if (startDate) filters.startDate = startDate;
-    if (endDate) filters.endDate = endDate;
+    const filters = { transactionType, partyCode, status, startDate, endDate };
+    Object.keys(filters).forEach((k) => !filters[k] && delete filters[k]);
 
-    // Get unfixed transactions data (party data only)
     const result = await MetalTransactionService.getUnfixedTransactions(
-      parseInt(page),
-      parseInt(limit),
+      parseInt(page, 10),
+      parseInt(limit, 10),
       filters
     );
 
-    // Return response with only party data and required fields
     res.status(200).json({
       success: true,
-      message: "Unfixed transaction parties retrieved successfully",
+      message: "Unfixed parties",
       data: {
-        parties: result.parties.map((party) => ({
-          _id: party._id,
-          accountCode: party.accountCode,
-          customerName: party.customerName,
-          email: party.email,
-          phone: party.phone,
-          goldBalance: {
-            totalGrams: party.goldBalance.totalGrams,
-          },
-          cashBalance: party.cashBalance,
-          shortMargin: party.shortMargin,
+        parties: result.parties.map((p) => ({
+          _id: p._id,
+          accountCode: p.accountCode,
+          customerName: p.customerName,
+          email: p.email,
+          phone: p.phone,
+          goldBalance: p.goldBalance,
+          cashBalance: p.cashBalance,
+          shortMargin: p.shortMargin,
         })),
       },
       pagination: result.pagination,
       summary: result.summary,
-      filters: {
-        applied: filters,
-        available: {
-          transactionTypes: ["purchase", "sale"],
-          statuses: ["draft", "confirmed", "completed", "cancelled"],
-        },
-      },
     });
   } catch (error) {
-    console.error("Error in getUnfixedTransactions:", error);
     next(error);
   }
 };
 
-// Get unfixed transactions with detailed account information
 export const getUnfixedTransactionsWithAccounts = async (req, res, next) => {
   try {
     const {
@@ -730,25 +733,20 @@ export const getUnfixedTransactionsWithAccounts = async (req, res, next) => {
       endDate,
     } = req.query;
 
-    const filters = {};
-    if (transactionType) filters.transactionType = transactionType || null;
-    if (partyCode) filters.partyCode = partyCode;
-    if (status) filters.status = status;
-    if (startDate) filters.startDate = startDate;
-    if (endDate) filters.endDate = endDate;
-    if (req.user.id) filters.partyCode = req.user.id;
-    console.log(req.user.id)
+    const filters = { transactionType, partyCode, status, startDate, endDate };
+    if (req.user?.id) filters.partyCode = req.user.id;
+    Object.keys(filters).forEach((k) => !filters[k] && delete filters[k]);
+
     const result =
       await MetalTransactionService.getUnfixedTransactionsWithAccounts(
-        parseInt(page),
-        parseInt(limit),
+        parseInt(page, 10),
+        parseInt(limit, 10),
         filters
       );
 
     res.status(200).json({
       success: true,
-      message:
-        "Unfixed transactions with account details retrieved successfully",
+      message: "Unfixed with accounts",
       data: result.transactions,
       pagination: result.pagination,
     });

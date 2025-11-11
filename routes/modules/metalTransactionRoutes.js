@@ -12,7 +12,6 @@ import {
   addStockItemToTransaction,
   updateStockItemInTransaction,
   removeStockItemFromTransaction,
-  updateSessionTotals,
   calculateSessionTotals,
   getUnfixedTransactions,
   getUnfixedTransactionsWithAccounts,
@@ -112,7 +111,7 @@ router.delete(
 );
 
 // Session totals management
-router.put("/:id/session-totals", validateObjectId("id"), updateSessionTotals);
+// router.put("/:id/session-totals", validateObjectId("id"), updateSessionTotals);
 router.post(
   "/:id/calculate-session-totals",
   validateObjectId("id"),

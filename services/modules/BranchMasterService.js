@@ -93,6 +93,7 @@ class BranchMasterService {
   static async _populateBranch(id) {
     return await Branch.findById(id)
       .populate("currency", "code name symbol")
+      .populate("financialYear", "code startDate endDate")
       .populate("createdBy", "name email")
       .populate("updatedBy", "name email");
   }

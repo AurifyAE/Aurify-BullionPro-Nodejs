@@ -139,9 +139,9 @@ const MetalStockSchema = new mongoose.Schema(
     },
     passPurityDiff: {
       type: Boolean,
-      default:false
+      default:true
     },
-    exclusiveVAT:{
+    excludeVAT:{
       type: Boolean,
       default:false
     },

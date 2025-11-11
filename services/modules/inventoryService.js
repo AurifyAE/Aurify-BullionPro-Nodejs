@@ -20,21 +20,42 @@ class InventoryService {
               $sum: {
                 $switch: {
                   branches: [
-                    { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" }
+                    {
+                      case: { $eq: ["$transactionType", "sale"] },
+                      then: { $multiply: ["$grossWeight", -1] },
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "metalPayment"] },
+                      then: { $multiply: ["$grossWeight", -1] },
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "purchaseReturn"] },
+                      then: { $multiply: ["$grossWeight", -1] },
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "saleReturn"] },
+                      then: "$grossWeight",
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "purchase"] },
+                      then: "$grossWeight",
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "metalReceipt"] },
+                      then: "$grossWeight",
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "opening"] },
+                      then: "$grossWeight",
+                    },
                   ],
-                  default: 0
-                }
-              }
+                  default: 0,
+                },
+              },
             },
             pcs: { $first: "$pcs" },
-            code: { $first: "$code" }
-          }
+            code: { $first: "$code" },
+          },
         },
 
         // Lookup stock details from metalstocks
@@ -43,8 +64,8 @@ class InventoryService {
             from: "metalstocks",
             localField: "_id",
             foreignField: "_id",
-            as: "stock"
-          }
+            as: "stock",
+          },
         },
         { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
 
@@ -54,8 +75,8 @@ class InventoryService {
             from: "karatmasters",
             localField: "stock.karat",
             foreignField: "_id",
-            as: "karatInfo"
-          }
+            as: "karatInfo",
+          },
         },
         { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
 
@@ -65,10 +86,12 @@ class InventoryService {
             from: "divisionmasters",
             localField: "stock.metalType",
             foreignField: "_id",
-            as: "metalTypeInfo"
-          }
+            as: "metalTypeInfo",
+          },
         },
-        { $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true } },
+        {
+          $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true },
+        },
 
         // Final projection
         {
@@ -81,9 +104,9 @@ class InventoryService {
             StockName: "$stock.code",
             pcs: "$stock.pcs",
             purity: "$karatInfo.standardPurity",
-            metalType: "$metalTypeInfo.description"
-          }
-        }
+            metalType: "$metalTypeInfo.description",
+          },
+        },
       ]);
 
       return logs;
@@ -103,7 +126,9 @@ class InventoryService {
         if (!metalId) continue;
 
         const [inventory, metal] = await Promise.all([
-          Inventory.findOne({ metal: new mongoose.Types.ObjectId(metalId) }).session(session),
+          Inventory.findOne({
+            metal: new mongoose.Types.ObjectId(metalId),
+          }).session(session),
           MetalStock.findById(metalId).session(session),
         ]);
 
@@ -115,7 +140,9 @@ class InventoryService {
           );
         }
 
-        const isSale = transaction.transactionType === "sale" || transaction.transactionType === "metalPayment";
+        const isSale =
+          transaction.transactionType === "sale" ||
+          transaction.transactionType === "metalPayment";
         const factor = isSale ? 1 : -1; // Reverse the factor
         const pcsDelta = factor * (item.pieces || 0);
         const weightDelta = factor * (item.grossWeight || 0);
@@ -124,18 +151,24 @@ class InventoryService {
         inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
         await inventory.save({ session });
         // Inventory Log
-        await InventoryLog.create([{
-          code: metal.code,
-          stockCode: metal._id,
-          voucherCode: transaction.voucherNumber || item.voucherNumber || '',
-          voucherDate: transaction.voucherDate || item.voucherDate || '',
-          transactionType: transaction.transactionType,
-          pcs: item.pieces || 0,
-          grossWeight: item.grossWeight || 0,
-          pureWeight: (item.grossWeight * item.purity) / 100,
-          action: isSale ? "remove" : "add",
-          createdAt: new Date(),
-        }], { session });
+        await InventoryLog.create(
+          [
+            {
+              code: metal.code,
+              stockCode: metal._id,
+              voucherCode:
+                transaction.voucherNumber || item.voucherNumber || "",
+              voucherDate: transaction.voucherDate || item.voucherDate || "",
+              transactionType: transaction.transactionType,
+              pcs: item.pieces || 0,
+              grossWeight: item.grossWeight || 0,
+              pureWeight: (item.grossWeight * item.purity) / 100,
+              action: isSale ? "remove" : "add",
+              createdAt: new Date(),
+            },
+          ],
+          { session }
+        );
       }
     } catch (error) {
       if (error.name === "AppError") throw error;
@@ -149,7 +182,7 @@ class InventoryService {
   static async fetchInvLogs() {
     try {
       const logs = await InventoryLog.find().sort({ createdAt: -1 });
-      return logs
+      return logs;
     } catch (error) {
       throw createAppError(
         "Failed to fetch inventory Logs",
@@ -165,8 +198,8 @@ class InventoryService {
         // 🎯 Step 1: Match only logs for that stockId
         {
           $match: {
-            stockCode: new mongoose.Types.ObjectId(inventoryId) // or just stockId if it's already ObjectId
-          }
+            stockCode: new mongoose.Types.ObjectId(inventoryId), // or just stockId if it's already ObjectId
+          },
         },
 
         // 📌 Step 2: Sort (optional but helpful)
@@ -180,19 +213,34 @@ class InventoryService {
               $sum: {
                 $switch: {
                   branches: [
-                    { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" }
+                    {
+                      case: { $eq: ["$transactionType", "sale"] },
+                      then: { $multiply: ["$grossWeight", -1] },
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "purchaseReturn"] },
+                      then: { $multiply: ["$grossWeight", -1] },
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "saleReturn"] },
+                      then: "$grossWeight",
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "purchase"] },
+                      then: "$grossWeight",
+                    },
+                    {
+                      case: { $eq: ["$transactionType", "opening"] },
+                      then: "$grossWeight",
+                    },
                   ],
-                  default: 0
-                }
-              }
+                  default: 0,
+                },
+              },
             },
             pcs: { $sum: "$pcs" },
-            code: { $first: "$code" }
-          }
+            code: { $first: "$code" },
+          },
         },
 
         // 📌 Step 4: Lookup metal stock
@@ -201,8 +249,8 @@ class InventoryService {
             from: "metalstocks",
             localField: "_id",
             foreignField: "_id",
-            as: "stock"
-          }
+            as: "stock",
+          },
         },
         { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
 
@@ -212,8 +260,8 @@ class InventoryService {
             from: "karatmasters",
             localField: "stock.karat",
             foreignField: "_id",
-            as: "karatInfo"
-          }
+            as: "karatInfo",
+          },
         },
         { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
 
@@ -223,10 +271,12 @@ class InventoryService {
             from: "divisionmasters",
             localField: "stock.metalType",
             foreignField: "_id",
-            as: "metalTypeInfo"
-          }
+            as: "metalTypeInfo",
+          },
         },
-        { $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true } },
+        {
+          $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true },
+        },
 
         // 📌 Step 7: Final Projection
         {
@@ -241,14 +291,12 @@ class InventoryService {
             purity: "$karatInfo.standardPurity",
             karatDescription: "$karatInfo.description",
             karatCode: "$karatInfo.karatCode",
-            metalType: "$metalTypeInfo.description"
-          }
-        }
+            metalType: "$metalTypeInfo.description",
+          },
+        },
       ]);
 
       return logs?.[0] || null;
-
-
     } catch (err) {
       throw createAppError(
         "Failed to fetch inventory",
@@ -281,17 +329,16 @@ class InventoryService {
         code: metal.code,
         pcs: metal.pcs,
         stockCode: metal._id,
-        voucherCode: metal.voucherCode || 'INITIAL',
+        voucherCode: metal.voucherCode || "INITIAL",
         voucherDate: metal.voucherDate || new Date(),
         grossWeight: 0,
-        action: 'add',
-        transactionType: 'initial',
+        action: "add",
+        transactionType: "initial",
         createdBy: createdBy,
-        note: 'Initial inventory record created',
+        note: "Initial inventory record created",
       });
 
       return savedInventory;
-
     } catch (error) {
       throw createAppError(
         "Error while saving to database",
@@ -300,7 +347,6 @@ class InventoryService {
       );
     }
   }
-
 
   static async updateInventoryByFrontendInput({
     metalId,
@@ -361,8 +407,9 @@ class InventoryService {
         }
         inventory.grossWeight += qty * metal.totalValue;
         inventory.pcsCount += qty;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
-          } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
+        description = `Inventory ${isAddition ? "added" : "removed"}: ${
+          metal.code
+        } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
         registryValue = Math.abs(qty) * (metal.pricePerPiece || 0);
       } else if (type === "grams") {
         if (qty < 0) {
@@ -375,8 +422,9 @@ class InventoryService {
         inventory.grossWeight += qty;
         inventory.pcsCount = inventory.grossWeight / inventory.pcsValue;
         inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
-          } - ${Math.abs(qty)} grams`;
+        description = `Inventory ${isAddition ? "added" : "removed"}: ${
+          metal.code
+        } - ${Math.abs(qty)} grams`;
         registryValue = Math.abs(qty) * (metal.pricePerGram || 0);
       } else {
         throw createAppError(
@@ -395,7 +443,6 @@ class InventoryService {
         pureWeight = value * savedInventory.purity;
       }
 
-
       const invLog = await InventoryLog.create({
         code: metal.code,
         transactionType: "opening",
@@ -409,7 +456,6 @@ class InventoryService {
         createdBy: adminId,
         note: `Inventory ${isAddition ? "added" : "removed"} by admin.`,
       });
-
 
       await this.createRegistryEntry({
         transactionId: await Registry.generateTransactionId(),
@@ -438,71 +484,103 @@ class InventoryService {
     }
   }
 
-  static async updateInventory(transaction, isSale, admin) {
-    try {
-      const updated = [];
+static async updateInventory(transaction, isSale, admin, session = null) {
+  try {
+    const updated = [];
+    console.log("📦 [updateInventory] Starting inventory update...");
 
-      for (const item of transaction.stockItems || []) {
-        const metalId = item.stockCode?._id;
-        if (!metalId) continue;
+    for (const item of transaction.stockItems || []) {
+      const metalId = new mongoose.Types.ObjectId(item.stockCode?._id || item.stockCode);
+      if (!metalId) continue;
 
-        const [inventory, metal] = await Promise.all([
-          Inventory.findOne({ metal: new mongoose.Types.ObjectId(metalId) }),
-          MetalStock.findById(metalId),
-        ]);
+      console.log("🔍 Looking for MetalStock with ID:", metalId);
 
-        if (!inventory) {
-          throw createAppError(
-            `Inventory not found for metal: ${item.stockCode.code}`,
-            404,
-            "INVENTORY_NOT_FOUND"
-          );
-        }
+      // Load inventory + metal in parallel
+      const [inventory, metal] = await Promise.all([
+        Inventory.findOne({ metal: metalId }).session(session),
+        MetalStock.findById(metalId).session(session),
+      ]);
 
-        const factor = isSale ? -1 : 1;
-        const pcsDelta = factor * (item.pieces || 0);
-        const weightDelta = factor * (item.grossWeight || 0);
+      console.log("🔧 Inventory:", inventory ? "found ✅" : "missing ❌");
+      console.log("🔧 MetalStock:", metal ? metal.code : "null");
 
-        // Optional: stock validation
-        // if (inventory.pcsCount + pcsDelta < 0 || inventory.grossWeight + weightDelta < 0) {
-        //   throw createAppError(`Insufficient stock for metal: ${metal.code}`, 400, "INSUFFICIENT_STOCK");
-        // }
-
-        inventory.pcsCount += pcsDelta;
-        inventory.grossWeight += weightDelta;
-        // inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
-        inventory.pureWeight = (inventory.grossWeight * inventory.purity) 
-
-        await inventory.save();
-        updated.push(inventory);
-
-        // Inventory Log
-        await InventoryLog.create({
-          code: metal.code,
-          stockCode: metal._id,
-          voucherCode: transaction.voucherNumber || item.voucherNumber || '',
-          voucherDate: transaction.voucherDate || new Date(),
-          grossWeight: item.grossWeight || 0,
-          action: isSale ? "remove" : "add",
-          transactionType: transaction.transactionType || item.transactionType || (isSale ? "sale" : "purchase"),
-          createdBy: transaction.createdBy || admin || null,
-          pcs: !!item.pieces,  // whether it's piece-based
-          note: isSale
-            ? "Inventory reduced due to sale transaction"
-            : "Inventory increased due to purchase transaction"
-        });
+      if (!inventory) {
+        throw createAppError(
+          `Inventory not found for metal: ${item.stockCode?.code || metalId}`,
+          404,
+          "INVENTORY_NOT_FOUND"
+        );
       }
 
-      return updated;
-    } catch (error) {
-      if (error.name === "AppError") throw error;
-      throw createAppError(
-        error.message || "Failed to update inventory",
-        500,
-        "INVENTORY_UPDATE_FAILED"
+      if (!metal) {
+        console.warn(`⚠️ MetalStock not found for ID: ${metalId}`);
+        continue; // skip instead of crashing
+      }
+
+      // 🔹 Compute deltas
+      const factor = isSale ? -1 : 1;
+      const pcsDelta = factor * (item.pieces || 0);
+      const weightDelta = factor * (item.grossWeight || 0);
+
+      // Validate stock levels
+      if (inventory.pcsCount + pcsDelta < 0 || inventory.grossWeight + weightDelta < 0) {
+        throw createAppError(
+          `Insufficient stock for metal: ${metal.code}`,
+          400,
+          "INSUFFICIENT_STOCK"
+        );
+      }
+
+      // Apply deltas
+      inventory.pcsCount += pcsDelta;
+      inventory.grossWeight += weightDelta;
+      inventory.pureWeight = inventory.grossWeight * (inventory.purity || 1);
+
+      await inventory.save({ session });
+      updated.push(inventory);
+
+      // Log entry
+      await InventoryLog.create(
+        [
+          {
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
+            voucherDate: transaction.voucherDate || new Date(),
+            grossWeight: item.grossWeight || 0,
+            action: isSale ? "remove" : "add",
+            transactionType:
+              transaction.transactionType ||
+              item.transactionType ||
+              (isSale ? "sale" : "purchase"),
+            createdBy: transaction.createdBy || admin || null,
+            pcs: !!item.pieces,
+            note: isSale
+              ? "Inventory reduced due to sale transaction"
+              : "Inventory increased due to purchase transaction",
+          },
+        ],
+        { session }
       );
     }
+
+    console.log("✅ [updateInventory] Completed successfully");
+    return updated;
+  } catch (err) {
+    console.error("❌ [Inventory Update Error]", {
+      message: err?.message,
+      name: err?.name,
+      code: err?.code,
+      stack: err?.stack,
+    });
+
+    throw createAppError(
+      err?.message || "Failed to update inventory",
+      err?.statusCode || 500,
+      err?.code || "INVENTORY_UPDATE_FAILED"
+    );
   }
+}
 
 
   static async createRegistryEntry({

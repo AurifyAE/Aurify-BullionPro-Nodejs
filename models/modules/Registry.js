@@ -9,6 +9,10 @@ const RegistrySchema = new mongoose.Schema(
       uppercase: true,
 
     },
+    transactionType:{
+      type: String,
+      required: [true, "Transaction Type is required"], 
+    },
     metalTransactionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MetalTransaction",
