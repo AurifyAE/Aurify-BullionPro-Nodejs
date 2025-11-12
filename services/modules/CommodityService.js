@@ -13,6 +13,7 @@ export default class CommodityService {
         metalDecimal,
         lotEnabled,
         lotValue,
+        lotPiece,
         rateType,
         defaultRateType,
         standardPurity,
@@ -36,6 +37,7 @@ export default class CommodityService {
         metalDecimal: Number(metalDecimal) || 0,
         lotEnabled: !!lotEnabled,
         lotValue: lotEnabled ? Number(lotValue || 0) : null,
+        lotPiece: lotEnabled ? Number(lotPiece || 0) : null,
         rateType: lotEnabled ? rateType || null : null,
         defaultRateType,
         createdBy: adminId,
@@ -70,9 +72,9 @@ export default class CommodityService {
       const [items, total] = await Promise.all([
         Commodity.find(query)
           .populate("division", "branchName name code")
-          .populate("karatSelect", "name value")
-          .populate("rateType", "name")
-          .populate("defaultRateType", "name")
+          .populate("karatSelect", "karatCode standardPurity")
+          .populate("rateType", "rateType convFactGms ")
+          .populate("defaultRateType", "rateType convFactGms ")
           .sort({ createdAt: -1 })
           .skip(skip)
           .limit(limit),
@@ -129,8 +131,10 @@ export default class CommodityService {
       if (update.lotEnabled !== undefined) update.lotEnabled = !!update.lotEnabled;
       if (update.lotEnabled) {
         update.lotValue = update.lotValue != null ? Number(update.lotValue) : null;
+        update.lotPiece = update.lotPiece != null ? Number(update.lotPiece) : null;
       } else {
         update.lotValue = null;
+        update.lotPiece = null;
         update.rateType = null;
       }
 

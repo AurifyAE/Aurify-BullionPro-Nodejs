@@ -9,7 +9,6 @@ const FinancialYearSchema = new mongoose.Schema(
       uppercase: true,
       unique: true,
       maxlength: [20, "Code cannot exceed 20 characters"],
-      match: [/^[0-9]{4}-[0-9]{2}$/, "Code must be in format YYYY-YY (e.g., 2024-25)"],
     },
     startDate: {
       type: Date,
@@ -48,10 +47,7 @@ const FinancialYearSchema = new mongoose.Schema(
   }
 );
 
-// === INDEXES for performance ===
-FinancialYearSchema.index({ code: 1 });
-FinancialYearSchema.index({ startDate: 1, endDate: 1 });
-FinancialYearSchema.index({ status: 1 });
+
 
 // === PRE-SAVE VALIDATION ===
 FinancialYearSchema.pre("save", async function (next) {

@@ -486,7 +486,10 @@ static getFilesToDelete(tradeDebtor, updateData) {
     throw createAppError("Error fetching trade debtors", 500, "FETCH_ERROR");
   }
 }
-
+// {
+//   path: "balances.cashBalance.currency",
+//   select: "code name symbol",
+// },
 
   // Get trade debtor by ID
   static async getTradeDebtorById(id) {
@@ -494,11 +497,12 @@ static getFilesToDelete(tradeDebtor, updateData) {
       const tradeDebtor = await AccountType.findById(id).populate([
         {
           path: "acDefinition.currencies.currency",
-          select: "code name symbol",
+          select: "currencyCode description conversionRate symbol",
         },
         {
           path: "balances.cashBalance.currency",
           select: "currencyCode conversionRate description ",
+          select: "currencyCode description conversionRate symbol",
         },
         { path: "acDefinition.branches.branch", select: "code name" },
         { path: "createdBy", select: "name email" },
