@@ -454,6 +454,10 @@ static getFilesToDelete(tradeDebtor, updateData) {
             select: "currencyCode description",
           },
           {
+            path: "balances.cashBalance.currency",
+            select: "currencyCode conversionRate description",
+          },
+          {
             path:"accountType",
             select:"name prefix"
           },
@@ -494,7 +498,7 @@ static getFilesToDelete(tradeDebtor, updateData) {
         },
         {
           path: "balances.cashBalance.currency",
-          select: "code name symbol",
+          select: "currencyCode conversionRate description ",
         },
         { path: "acDefinition.branches.branch", select: "code name" },
         { path: "createdBy", select: "name email" },
