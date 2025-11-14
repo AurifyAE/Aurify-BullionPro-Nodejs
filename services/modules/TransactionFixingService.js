@@ -1,575 +1,596 @@
+// services/modules/TransactionFixingService.js
 import TransactionFixing from "../../models/modules/TransactionFixing.js";
 import Registry from "../../models/modules/Registry.js";
 import Account from "../../models/modules/AccountType.js";
+import FixingPrice from "../../models/modules/FixingPrice.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import mongoose from "mongoose";
 
+/* --------------------------------------------------------------
+   HELPER: Build 3 Registry Entries (CURRENCY + METAL)
+   -------------------------------------------------------------- */
+const buildRegistryEntries = ({
+  regId,
+  fixId,
+  account,
+  order,
+  type,
+  pureWeight,
+  totalValue,
+  bidValueOz,
+  currencyId,
+  adminId,
+  voucherNumber,
+  grossWeight,
+}) => {
+  const partyName = account.customerName || account.accountCode || "Unknown";
+  const cashBalance = account.balances.cashBalance.find(
+    (cb) => cb.currency?.toString() === currencyId
+  );
+  const currencyCode = cashBalance?.code || "UNKNOWN";
+  const fmt = (n, d = 2) =>
+    n.toLocaleString("en-AE", {
+      minimumFractionDigits: d,
+      maximumFractionDigits: d,
+    });
+  const fmtWeight = (n) => fmt(n, 3);
+  const fmtAed = (n) => `AED ${fmt(n, 2)}`;
+
+  const metalStr = `${fmtWeight(pureWeight)}g @ ${fmt(bidValueOz, 2)}oz`;
+  const cashStr = `${currencyCode} ${totalValue}`;
+  const isPurchase = type === "PURCHASE";
+  const transactionType =
+    type === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING";
+  return [
+    // 1. PARTY_GOLD_BALANCE
+    {
+      transactionId: regId,
+      transactionType,
+      fixingTransactionId: fixId,
+      type: "PARTY_GOLD_BALANCE",
+      description: `Gold: ${metalStr} – ${
+        isPurchase ? "Debited from" : "Credited to"
+      } ${partyName}`,
+      party: account._id,
+      isBullion: false,
+      goldBidValue: bidValueOz,
+      value: pureWeight,
+      grossWeight: grossWeight,
+      debit: isPurchase ? pureWeight : 0,
+      credit: isPurchase ? 0 : pureWeight,
+      goldCredit: isPurchase ? pureWeight : 0,
+      goldDebit: isPurchase ? 0 : pureWeight,
+      transactionDate: new Date(),
+      reference: voucherNumber,
+      createdBy: adminId,
+    },
+    // 2. PURCHASE-FIXING / SALES-FIXING
+    {
+      transactionId: regId,
+      transactionType,
+      fixingTransactionId: fixId,
+      type: isPurchase ? "purchase-fixing" : "sales-fixing",
+      description: `Fixing: ${metalStr} – ${
+        isPurchase ? "Purchase from" : "Sale to"
+      } ${partyName}`,
+      party: account._id,
+      isBullion: false,
+      goldBidValue: bidValueOz,
+      value: pureWeight,
+      grossWeight: grossWeight,
+      debit: isPurchase ? 0 : pureWeight,
+      credit: isPurchase ? pureWeight : 0,
+      goldCredit: isPurchase ? pureWeight : 0,
+      goldDebit: isPurchase ? 0 : pureWeight,
+      cashCredit: isPurchase ? 0 : totalValue,
+      cashDebit: isPurchase ? totalValue : 0,
+      transactionDate: new Date(),
+      reference: voucherNumber,
+      createdBy: adminId,
+    },
+    // 3. PARTY_CASH_BALANCE
+    {
+      transactionId: regId,
+      transactionType,
+      fixingTransactionId: fixId,
+      type: "PARTY_CASH_BALANCE",
+      description: `Cash: ${cashStr} – ${metalStr} – ${
+        isPurchase ? "Purchase from" : "Sale to"
+      } ${partyName}`,
+      party: account._id,
+      isBullion: false,
+      goldBidValue: bidValueOz,
+      value: totalValue,
+      grossWeight: grossWeight,
+      debit: isPurchase ? 0 : totalValue,
+      credit: isPurchase ? totalValue : 0,
+      cashDebit: isPurchase ? totalValue : 0,
+      cashCredit: isPurchase ? totalValue : 0,
+      transactionDate: new Date(),
+      reference: voucherNumber,
+      createdBy: adminId,
+    },
+  ];
+};
+
+/* --------------------------------------------------------------
+   HELPER: Generate Unique Transaction ID (ES-module safe)
+   -------------------------------------------------------------- */
+const generateUniqueTransactionId = async (prefix) => {
+  let id, exists;
+  do {
+    const rand = Math.floor(10000 + Math.random() * 90000);
+    id = `${prefix}${rand}`;
+    exists = await TransactionFixing.exists({ transactionId: id });
+  } while (exists);
+  return id;
+};
+
+/* --------------------------------------------------------------
+   NUMERIC HELPERS
+   -------------------------------------------------------------- */
+const toNumberOrThrow = (value, fieldName) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    throw createAppError(
+      `Invalid numeric value for ${fieldName}`,
+      400,
+      "INVALID_NUMBER"
+    );
+  }
+  return num;
+};
+
+const resolveOrderWeight = (order) => {
+  // Priority: pureWeight → quantityGm → grossWeight
+  if (order.pureWeight != null) {
+    return toNumberOrThrow(order.pureWeight, "pureWeight");
+  }
+  if (order.quantityGm != null) {
+    return toNumberOrThrow(order.quantityGm, "quantityGm");
+  }
+  if (order.grossWeight != null) {
+    return toNumberOrThrow(order.grossWeight, "grossWeight");
+  }
+  throw createAppError(
+    "Order is missing weight (pureWeight/quantityGm/grossWeight)",
+    400,
+    "MISSING_WEIGHT"
+  );
+};
+
+/* --------------------------------------------------------------
+   DELTA HELPERS (GOLD + CASH)
+   -------------------------------------------------------------- */
+const computeGoldDelta = (orders, type) => {
+  const sign = type === "PURCHASE" ? -1 : 1; // PURCHASE reduces gold, SALE increases
+  const totalWeight = orders.reduce(
+    (sum, order) => sum + resolveOrderWeight(order),
+    0
+  );
+  return sign * totalWeight;
+};
+
+const computeCashDeltas = (orders, type) => {
+  const sign = type === "PURCHASE" ? 1 : -1; // PURCHASE: +cash, SALE: -cash (per your original logic)
+  const deltas = {}; // { currencyId: amountDelta }
+
+  for (const order of orders) {
+    const cid = order.selectedCurrencyId?.toString();
+    if (!cid) {
+      throw createAppError(
+        "Order missing selectedCurrencyId",
+        400,
+        "MISSING_CURRENCY"
+      );
+    }
+    const amount = toNumberOrThrow(order.price, "price");
+    deltas[cid] = (deltas[cid] || 0) + sign * amount;
+  }
+
+  return deltas;
+};
+
+const applyCashDeltasToAccount = (account, cashDeltas) => {
+  if (!account.balances) account.balances = {};
+  if (!Array.isArray(account.balances.cashBalance)) {
+    account.balances.cashBalance = [];
+  }
+
+  for (const [cid, delta] of Object.entries(cashDeltas)) {
+    let bal = account.balances.cashBalance.find(
+      (cb) => cb.currency?.toString() === cid
+    );
+    if (!bal) {
+      bal = {
+        currency: cid,
+        amount: 0,
+        isDefault: false,
+        lastUpdated: new Date(),
+      };
+      account.balances.cashBalance.push(bal);
+    }
+    bal.amount = (bal.amount || 0) + delta;
+    bal.lastUpdated = new Date();
+  }
+};
+
+const ensureGoldBalanceObject = (account) => {
+  if (!account.balances) account.balances = {};
+  if (!account.balances.goldBalance) {
+    account.balances.goldBalance = {
+      totalGrams: 0,
+      totalValue: 0,
+      lastUpdated: new Date(),
+    };
+  }
+  if (!Number.isFinite(account.balances.goldBalance.totalGrams)) {
+    account.balances.goldBalance.totalGrams = 0;
+  }
+};
+
+/* --------------------------------------------------------------
+   EXPORTED SERVICE
+   -------------------------------------------------------------- */
 export const TransactionFixingService = {
-  // Create Transaction with Registry Integration
+  // -----------------------------------------------------------------
+  // CREATE
+  // -----------------------------------------------------------------
+
   createTransaction: async (transactionData, adminId) => {
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-      // ====== VALIDATE PARTY ======
-      if (!mongoose.Types.ObjectId.isValid(transactionData.partyId)) {
+      // ----- VALIDATIONS -----
+      if (!mongoose.Types.ObjectId.isValid(transactionData.partyId))
         throw createAppError("Invalid Party ID", 400, "INVALID_PARTY_ID");
-      }
 
-      // ====== VALIDATE VOUCHER DATE ======
-      if (transactionData.voucherDate) {
-        const voucherDate = new Date(transactionData.voucherDate);
-        if (isNaN(voucherDate.getTime())) {
-          throw createAppError("Invalid voucher date", 400, "INVALID_DATE");
-        }
-        transactionData.voucherDate = voucherDate;
-      }
+      const type = transactionData.type.toUpperCase();
+      if (!["PURCHASE", "SALE"].includes(type))
+        throw createAppError(
+          "Type must be 'PURCHASE' or 'SELL'",
+          400,
+          "INVALID_TYPE"
+        );
 
-      // ====== VALIDATE TRANSACTION TYPE ======
-      if (!["PURCHASE", "SELL"].includes(transactionData.type.toUpperCase())) {
-        throw createAppError("Type must be 'PURCHASE' or 'SELL'", 400, "INVALID_TYPE");
-      }
+      if (
+        !Array.isArray(transactionData.orders) ||
+        transactionData.orders.length === 0
+      )
+        throw createAppError("At least one order required", 400, "NO_ORDERS");
 
-      // ====== VALIDATE ORDERS ======
-      if (!Array.isArray(transactionData.orders) || transactionData.orders.length === 0) {
-        throw createAppError("At least one order is required", 400, "NO_ORDERS");
-      }
-
-      transactionData.orders.forEach((order, index) => {
-        if (!order.quantityGm || order.quantityGm <= 0) {
-          throw createAppError(`Order ${index + 1}: Quantity must be positive`, 400, "INVALID_QUANTITY");
-        }
-        if (!order.price || order.price <= 0) {
-          throw createAppError(`Order ${index + 1}: Price must be positive`, 400, "INVALID_PRICE");
-        }
-        if (!mongoose.Types.ObjectId.isValid(order.metalType)) {
-          throw createAppError(`Order ${index + 1}: Invalid metalType ID`, 400, "INVALID_METAL_TYPE");
-        }
-        if (!order.goldBidValue || order.goldBidValue <= 0) {
-          throw createAppError(`Order ${index + 1}: Gold bid value must be positive`, 400, "INVALID_GOLD_BID");
-        }
+      transactionData.orders.forEach((order, i) => {
+        if (!order.oneGramRate || order.oneGramRate <= 0)
+          throw createAppError(
+            `Order ${i + 1}: oneGramRate must be positive`,
+            400,
+            "INVALID_QUANTITY"
+          );
+        if (!order.price || Number(order.price) <= 0)
+          throw createAppError(
+            `Order ${i + 1}: Price must be positive`,
+            400,
+            "INVALID_PRICE"
+          );
+        if (!mongoose.Types.ObjectId.isValid(order.metalType))
+          throw createAppError(
+            `Order ${i + 1}: Invalid metalType ID`,
+            400,
+            "INVALID_METAL_TYPE"
+          );
+        if (!order.bidValue || Number(order.bidValue) <= 0)
+          throw createAppError(
+            `Order ${i + 1}: Gold bid value must be positive`,
+            400,
+            "INVALID_GOLD_BID"
+          );
+        if (!mongoose.Types.ObjectId.isValid(order.selectedCurrencyId))
+          throw createAppError(
+            `Order ${i + 1}: Invalid selectedCurrencyId`,
+            400,
+            "INVALID_CURRENCY"
+          );
+        // Ensure weight exists and is numeric (will throw if invalid)
+        resolveOrderWeight(order);
       });
 
-      // Function to generate unique transaction ID
-      const generateTransactionId = async function (type) {
-        const prefix = type.toUpperCase() === "PURCHASE" ? "PUR" : "SELL";
-        let isUnique = false;
-        let transactionId;
-
-        while (!isUnique) {
-          const randomNum = Math.floor(Math.random() * 90000) + 10000;
-          transactionId = `${prefix}${randomNum}`;
-          const existingTransaction = await mongoose
-            .model("TransactionFixing")
-            .findOne({ transactionId });
-          if (!existingTransaction) {
-            isUnique = true;
-          }
-        }
-
-        return transactionId;
-      };
-
-      // Generate the transaction ID
-      const transactionId = await generateTransactionId(transactionData.type);
-
-      // ====== VERIFY ACCOUNT EXISTS ======
-      const account = await Account.findById(transactionData.partyId).session(session);
-      if (!account) {
+      // ----- ACCOUNT & CURRENCY SETUP -----
+      const account = await Account.findById(transactionData.partyId).session(
+        session
+      );
+      if (!account)
         throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
-      }
- 
 
-      // ====== CREATE TRANSACTION DOCUMENT ======
+      // ensure every selected currency exists in cashBalance
+      if (!account.balances) account.balances = {};
+      if (!Array.isArray(account.balances.cashBalance))
+        account.balances.cashBalance = [];
+
+      for (const order of transactionData.orders) {
+        const cid = order.selectedCurrencyId.toString();
+        const exists = account.balances.cashBalance.some(
+          (cb) => cb.currency?.toString() === cid
+        );
+        if (!exists) {
+          account.balances.cashBalance.push({
+            currency: cid,
+            amount: 0,
+            isDefault: false,
+            lastUpdated: new Date(),
+          });
+        }
+      }
+
+      const prefix = type === "PURCHASE" ? "PUR" : "SEL";
+      const transactionId = await generateUniqueTransactionId(prefix);
+      transactionData.transactionId = transactionId;
+
+      // ----- SAVE TRANSACTION -----
       const transaction = new TransactionFixing({
         ...transactionData,
-        transactionId,
+        type,
         createdBy: adminId,
       });
-
       await transaction.save({ session });
 
-      // Initialize account balance updates
-      let totalGoldGramsChange = 0;
-      let totalCashBalanceChange = 0;
-
-      // Create registry entries for each order
+      // ----- BULK PREP -----
       const registryEntries = [];
+      const fixingPriceEntries = [];
 
-      for (const [index, order] of transactionData.orders.entries()) {
-        const registryTransactionId = await Registry.generateTransactionId();
-        const totalValue = order.price 
+      // GOLD & CASH DELTAS
+      const goldDelta = computeGoldDelta(transactionData.orders, type);
+      const cashDeltas = computeCashDeltas(transactionData.orders, type);
 
-        if (transactionData.type.toUpperCase() === "PURCHASE") {
-          // PARTY_GOLD_BALANCE - Debit (party gives gold to us)
-          const partyGoldBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}`,
-            fixingTransactionId: transaction._id,
-            type: "PARTY_GOLD_BALANCE",
-            description: `Purchase order ${index + 1} from ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
-            party: transactionData.partyId,
-            isBullion: false,
-            goldBidValue: order.goldBidValue,
-            value: order.quantityGm,
-            grossWeight: order.quantityGm,
-            debit: order.quantityGm,
-            goldCredit: order.quantityGm,
-            cashDebit: order.price,
-            credit: 0,
-            transactionDate: transactionData.transactionDate || new Date(),
-            reference: transaction.voucherNumber,
-            createdBy: adminId,
-          });
-        
-          // PURCHASE-FIXING
-          const partyGoldBalanceEntryFIX = new Registry({
-            transactionId: `${registryTransactionId}`,
-            fixingTransactionId: transaction._id,
-            type: "purchase-fixing",
-            description: `Purchase order ${index + 1} from ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
-            party: transactionData.partyId,
-            isBullion: false,
-            goldBidValue: order.goldBidValue,
-            value: order.quantityGm,
-            grossWeight: order.quantityGm,
-            debit: 0,
-            goldCredit: order.quantityGm,
-            cashDebit: order.price,
-            credit: order.quantityGm,
-            transactionDate: transactionData.transactionDate || new Date(),
-            reference: transaction.voucherNumber,
-            createdBy: adminId,
-          });
-        
-          // PARTY_CASH_BALANCE - Credit (we pay cash to party)
-          const partyCashBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}`,
-            fixingTransactionId: transaction._id,
-            type: "PARTY_CASH_BALANCE",
-            description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Purchase from ${account.customerName || account.accountCode}`,
-            party: transactionData.partyId,
-            isBullion: false,
-            goldBidValue: order.goldBidValue,
-            value: totalValue,
-            grossWeight: order.quantityGm,
-            debit: 0,
-            goldCredit: order.quantityGm,
-            cashDebit: order.price,
-            credit: totalValue,
-            transactionDate: transactionData.transactionDate || new Date(),
-            reference: transaction.voucherNumber,
-            createdBy: adminId,
-          });
-        
-          registryEntries.push(
-            partyGoldBalanceEntry,
-            partyGoldBalanceEntryFIX,
-            partyCashBalanceEntry
-          );
-        
-          // Update running totals for account balances
-          totalGoldGramsChange -= order.quantityGm;
-          totalCashBalanceChange += totalValue;
-        
-        } else if (transactionData.type.toUpperCase() === "SELL") {
-          // PARTY_GOLD_BALANCE - Credit (party receives gold from us)
-          const partyGoldBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}`,
-            fixingTransactionId: transaction._id,
-            type: "PARTY_GOLD_BALANCE",
-            description: `Sale order ${index + 1} to ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
-            party: transactionData.partyId,
-            isBullion: false,
-            goldBidValue: order.goldBidValue,
-            value: order.quantityGm,
-            grossWeight: order.quantityGm,
-            debit: 0,
-            goldCredit: order.quantityGm,
-            cashDebit: order.price,
-            credit: order.quantityGm,
-            transactionDate: transactionData.transactionDate || new Date(),
-            reference: transaction.voucherNumber,
-            createdBy: adminId,
-          });
-        
-          // SALES-FIXING
-          const partyGoldBalanceEntryFIX = new Registry({
-            transactionId: `${registryTransactionId}`,
-            fixingTransactionId: transaction._id,
-            type: "sales-fixing",
-            description: `Sale order ${index + 1} to ${account.customerName || account.accountCode}, fixed at bid value ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED`,
-            party: transactionData.partyId,
-            isBullion: false,
-            value: 0,
-            goldBidValue: order.goldBidValue,
-            grossWeight: order.quantityGm,
-            debit: order.quantityGm,
-            goldDebit: order.quantityGm,
-            cashCredit: order.price,
-            credit: 0,
-            transactionDate: transactionData.transactionDate || new Date(),
-            reference: transaction.voucherNumber,
-            createdBy: adminId,
-          });
-        
-          // PARTY_CASH_BALANCE - Debit (party pays cash to us)
-          const partyCashBalanceEntry = new Registry({
-            transactionId: `${registryTransactionId}`,
-            fixingTransactionId: transaction._id,
-            type: "PARTY_CASH_BALANCE",
-            description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Sale to ${account.customerName || account.accountCode}`,
-            party: transactionData.partyId,
-            value: totalValue,
-            goldBidValue: order.goldBidValue,
-            grossWeight: order.quantityGm,
-            debit: totalValue,
-            credit: 0,
-            goldDebit: order.quantityGm,
-            cashCredit: order.price,
-            transactionDate: transactionData.transactionDate || new Date(),
-            reference: transaction.voucherNumber,
-            createdBy: adminId,
-          });
-        
-          registryEntries.push(
-            partyGoldBalanceEntry,
-            partyGoldBalanceEntryFIX,
-            partyCashBalanceEntry
-          );
-        
-          // Update running totals for account balances
-          totalGoldGramsChange += order.quantityGm;
-          totalCashBalanceChange -= totalValue;
-        }
+      for (const order of transactionData.orders) {
+        const regId = await Registry.generateTransactionId();
+        const pureWeight = resolveOrderWeight(order);
+        const totalValue = toNumberOrThrow(order.price, "price");
+        const bidValueOz = toNumberOrThrow(order.bidValue, "bidValue");
+        const currencyId = order.selectedCurrencyId.toString();
+        const oneGramRate = toNumberOrThrow(order.oneGramRate, "oneGramRate");
+        const currentBidValue = toNumberOrThrow(
+          order.currentBidValue ?? order.bidValue,
+          "currentBidValue"
+        );
+        const voucherNumber = transaction.voucherNumber;
+        const grossWeight = order.grossWeight;
+        // FIXING PRICE
+        fixingPriceEntries.push({
+          transactionFix: transaction._id,
+          transactionType:
+            type === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING",
+          rateInGram: oneGramRate,
+          bidValue: bidValueOz,
+          currentBidValue,
+          entryBy: adminId,
+          metalRate: order.metalType,
+          status: "active",
+          fixedAt: new Date(),
+        });
+
+        // REGISTRY ENTRIES
+        const entries = buildRegistryEntries({
+          regId,
+          fixId: transaction._id,
+          account,
+          order,
+          type,
+          pureWeight,
+          totalValue,
+          bidValueOz,
+          currencyId,
+          adminId,
+          voucherNumber,
+          grossWeight,
+        });
+        registryEntries.push(...entries);
       }
 
-      // Save all registry entries
-      await Promise.all(registryEntries.map(entry => entry.save({ session })));
+      // ----- BULK SAVE -----
+      await Registry.insertMany(registryEntries, { session });
+      await FixingPrice.insertMany(fixingPriceEntries, { session });
 
-      // Update account balances
-      const currentGoldGrams = account.balances.goldBalance.totalGrams || 0;
-      const currentCashBalance = account.balances.cashBalance.amount || 0;
-
-      // Update gold balance
-      account.balances.goldBalance.totalGrams = currentGoldGrams + totalGoldGramsChange;
-      account.balances.goldBalance.totalValue = 0;
+      // ----- UPDATE ACCOUNT -----
+      ensureGoldBalanceObject(account);
+      account.balances.goldBalance.totalGrams =
+        (account.balances.goldBalance.totalGrams || 0) + goldDelta;
       account.balances.goldBalance.lastUpdated = new Date();
 
-      // Update cash balance
-      account.balances.cashBalance.amount = currentCashBalance + totalCashBalanceChange;
-      account.balances.cashBalance.lastUpdated = new Date();
+      applyCashDeltasToAccount(account, cashDeltas);
 
-      // Update overall balance tracking
       account.balances.lastBalanceUpdate = new Date();
-
-      // Save the updated account
       await account.save({ session });
 
-      // Commit the transaction
       await session.commitTransaction();
 
-      // Return the populated transaction
       return await TransactionFixing.findById(transaction._id)
         .populate("partyId", "name code customerName accountCode")
-        .populate("createdBy", "name email");
-    } catch (error) {
+        .populate("createdBy", "name email")
+        .populate("orders.metalType", "rateType")
+        .populate("orders.selectedCurrencyId", "code symbol")
+        .lean();
+    } catch (err) {
       await session.abortTransaction();
-      throw error;
+      throw err;
     } finally {
       session.endSession();
     }
   },
 
-  // Update Transaction with Registry and Account Balance Updates
+  // -----------------------------------------------------------------
+  // UPDATE (reverse → re-apply)
+  // -----------------------------------------------------------------
   updateTransaction: async (id, updateData, adminId) => {
-
     const session = await mongoose.startSession();
     session.startTransaction();
 
-
     try {
-      // Validate transaction ID
-      if (!mongoose.Types.ObjectId.isValid(id)) {
-        throw createAppError("Invalid Transaction ID", 400, "INVALID_ID");
-      }
-
-      // Fetch existing transaction
-      const transaction = await TransactionFixing.findById(id).session(session);
-      if (!transaction) {
+      const existing = await TransactionFixing.findById(id).session(session);
+      if (!existing)
         throw createAppError("Transaction not found", 404, "NOT_FOUND");
-      }
 
-      // Validate party ID if being updated
-      if (updateData.partyId && !mongoose.Types.ObjectId.isValid(updateData.partyId)) {
-        throw createAppError("Invalid Party ID", 400, "INVALID_PARTY_ID");
-      }
-
-      // Validate transaction type if being updated
-      if (updateData.type && !["PURCHASE", "SELL"].includes(updateData.type.toUpperCase())) {
-        throw createAppError("Type must be 'PURCHASE' or 'SELL'", 400, "INVALID_TYPE");
-      }
-
-      // Validate orders if provided
-      if (updateData.orders && (!Array.isArray(updateData.orders) || updateData.orders.length === 0)) {
-        throw createAppError("At least one order is required", 400, "NO_ORDERS");
-      }
-
-      if (updateData.orders) {
-
-        updateData.orders.forEach((order, index) => {
-
-          if (!order.quantityGm || order.quantityGm <= 0) {
-            throw createAppError(`Order ${index + 1}: Quantity must be positive`, 400, "INVALID_QUANTITY");
-          }
-          if (!order.price || order.price <= 0) {
-            throw createAppError(`Order ${index + 1}: Price must be positive`, 400, "INVALID_PRICE");
-          }
-          if (order.metalType && !mongoose.Types.ObjectId.isValid(order.metalType)) {
-            throw createAppError(`Order ${index + 1}: Invalid metalType ID`, 400, "INVALID_METAL_TYPE");
-          }
-          if (!order.goldBidValue || order.goldBidValue <= 0) {
-            throw createAppError(`Order ${index + 1}: Gold bid value must be positive`, 400, "INVALID_GOLD_BID");
-          }
-        });
-      }
-
-
-      // Validate voucher date if provided
-      if (updateData.voucherDate) {
-        const voucherDate = new Date(updateData.voucherDate);
-        if (isNaN(voucherDate.getTime())) {
-          throw createAppError("Invalid voucher date", 400, "INVALID_DATE");
-        }
-        updateData.voucherDate = voucherDate;
-      }
-
-
-      // Verify account exists
-      const account = await Account.findById(updateData.partyId || transaction.partyId).session(session);
-      if (!account) {
+      const account = await Account.findById(
+        updateData.partyId || existing.partyId
+      ).session(session);
+      if (!account)
         throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
+
+      ensureGoldBalanceObject(account);
+      if (!Array.isArray(account.balances.cashBalance)) {
+        account.balances.cashBalance = [];
       }
 
-      // If type or orders are updated, recalculate registry and account balances
-      let totalGoldGramsChange = 0;
-      let totalCashBalanceChange = 0;
+      // ----- REVERSE ORIGINAL -----
+      const origType = existing.type.toUpperCase();
+      const origOrders = existing.orders || [];
+
+      // THIS is the original effect that was applied when the transaction was created
+      const originalGoldDelta = computeGoldDelta(origOrders, origType);
+      const originalCashDeltas = computeCashDeltas(origOrders, origType);
+
+      // To reverse, we simply apply the negative of those deltas
+      account.balances.goldBalance.totalGrams =
+        (account.balances.goldBalance.totalGrams || 0) - originalGoldDelta;
+
+      const reversedCashDeltas = {};
+      for (const [cid, delta] of Object.entries(originalCashDeltas)) {
+        reversedCashDeltas[cid] = -delta;
+      }
+      applyCashDeltasToAccount(account, reversedCashDeltas);
+
+      // Remove existing registry & fixing price entries for this fixing
+      await Registry.deleteMany({ fixingTransactionId: existing._id }).session(
+        session
+      );
+      await FixingPrice.deleteMany({ transactionFix: existing._id }).session(
+        session
+      );
+
+      // ----- APPLY NEW -----
+      const newType = (updateData.type || existing.type).toUpperCase();
+      const newOrders =
+        updateData.orders && updateData.orders.length
+          ? updateData.orders
+          : existing.orders;
+
+      // Validate / normalize newOrders quickly
+      newOrders.forEach((order, i) => {
+        resolveOrderWeight(order); // will throw if missing / invalid
+        if (!order.price || Number(order.price) <= 0)
+          throw createAppError(
+            `Order ${i + 1}: Price must be positive`,
+            400,
+            "INVALID_PRICE"
+          );
+        if (!mongoose.Types.ObjectId.isValid(order.metalType))
+          throw createAppError(
+            `Order ${i + 1}: Invalid metalType ID`,
+            400,
+            "INVALID_METAL_TYPE"
+          );
+        if (!order.bidValue || Number(order.bidValue) <= 0)
+          throw createAppError(
+            `Order ${i + 1}: Gold bid value must be positive`,
+            400,
+            "INVALID_GOLD_BID"
+          );
+        if (!mongoose.Types.ObjectId.isValid(order.selectedCurrencyId))
+          throw createAppError(
+            `Order ${i + 1}: Invalid selectedCurrencyId`,
+            400,
+            "INVALID_CURRENCY"
+          );
+      });
+
       const registryEntries = [];
+      const fixingPriceEntries = [];
 
-      if (updateData.orders || updateData.type) {
-        // Reverse original transaction effects
-        const originalType = transaction.type;
-        const originalOrders = transaction.orders || [];
+      // New gold & cash deltas
+      const newGoldDelta = computeGoldDelta(newOrders, newType);
+      const newCashDeltas = computeCashDeltas(newOrders, newType);
 
-        // Calculate reversal for original transaction
-        for (const [index, order] of originalOrders.entries()) {
-          const totalValue = order.price * order.quantityGm;
-          if (originalType.toUpperCase() === "PURCHASE") {
-            totalGoldGramsChange += order.quantityGm; // Reverse debit
-            totalCashBalanceChange -= totalValue; // Reverse credit
-          } else if (originalType.toUpperCase() === "SELL") {
-            totalGoldGramsChange -= order.quantityGm; // Reverse credit
-            totalCashBalanceChange += totalValue; // Reverse debit
-          }
-        }
+      for (const order of newOrders) {
+        const regId = await Registry.generateTransactionId();
+        const pureWeight = resolveOrderWeight(order);
+        const totalValue = toNumberOrThrow(order.price, "price");
+        const bidValueOz = toNumberOrThrow(order.bidValue, "bidValue");
+        const currencyId = order.selectedCurrencyId.toString();
+        const currentBidValue = toNumberOrThrow(
+          order.currentBidValue ?? order.bidValue,
+          "currentBidValue"
+        );
+        const oneGramRate = toNumberOrThrow(order.oneGramRate, "oneGramRate");
+        const voucherNumber = existing.voucherNumber;
+        const grossWeight = order.grossWeight;
+        // FIXING PRICE
+        fixingPriceEntries.push({
+          transactionFix: existing._id,
+          transactionType:
+            newType === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING",
+          rateInGram: oneGramRate,
+          bidValue: bidValueOz,
+          currentBidValue,
+          entryBy: adminId,
+          metalRate: order.metalType,
+          status: "active",
+          fixedAt: new Date(),
+        });
 
-        // Delete existing registry entries for this transaction
-        await Registry.deleteMany({ fixingTransactionId: id }).session(session);
-
-        // Apply new transaction effects
-        const newType = updateData.type ? updateData.type.toUpperCase() : transaction.type;
-        const newOrders = updateData.orders || transaction.orders;
-
-        for (const [index, order] of newOrders.entries()) {
-          const registryTransactionId = await Registry.generateTransactionId();
-          const totalValue = order.price * order.quantityGm;
-
-          if (newType.toUpperCase() === "PURCHASE") {
-            // PARTY_GOLD_BALANCE - Debit (party gives gold to us)
-            const partyGoldBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}`,
-              fixingTransactionId: transaction._id,
-              type: "PARTY_GOLD_BALANCE",
-              description: `Party gold balance - Purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
-              party: updateData.partyId || transaction.partyId,
-              isBullion: false,
-              goldBidValue: order.goldBidValue,
-              value: order.quantityGm,
-              grossWeight: order.quantityGm,
-              debit: order.quantityGm,
-              goldCredit: order.quantityGm,
-              cashDebit: order.price,
-              credit: 0,
-              transactionDate: updateData.voucherDate || transaction.voucherDate || new Date(),
-              reference: updateData.voucherNumber || transaction.voucherNumber,
-              createdBy: adminId,
-            });
-
-            // PURCHASE-FIXING
-            const partyGoldBalanceEntryFIX = new Registry({
-              transactionId: `${registryTransactionId}`,
-              fixingTransactionId: transaction._id,
-              type: "purchase-fixing",
-              description: `Party gold balance - Purchase order ${index + 1} from ${account.customerName || account.accountCode}`,
-              party: updateData.partyId || transaction.partyId,
-              isBullion: false,
-              goldBidValue: order.goldBidValue,
-              value: order.quantityGm,
-              grossWeight: order.quantityGm,
-              debit: 0,
-              goldCredit: order.quantityGm,
-              cashDebit: order.price,
-              credit: order.quantityGm,
-              transactionDate: updateData.voucherDate || transaction.voucherDate || new Date(),
-              reference: updateData.voucherNumber || transaction.voucherNumber,
-              createdBy: adminId,
-            });
-
-            // PARTY_CASH_BALANCE - Credit (we pay cash to party)
-            const partyCashBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}`,
-              fixingTransactionId: transaction._id,
-              type: "PARTY_CASH_BALANCE",
-              description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Purchase from ${account.customerName || account.accountCode}`,
-              party: updateData.partyId || transaction.partyId,
-              isBullion: false,
-              goldBidValue: order.goldBidValue,
-              value: totalValue,
-              grossWeight: order.quantityGm,
-              debit: 0,
-              goldCredit: order.quantityGm,
-              cashDebit: order.price,
-              credit: totalValue,
-              transactionDate: updateData.voucherDate || transaction.voucherDate || new Date(),
-              reference: updateData.voucherNumber || transaction.voucherNumber,
-              createdBy: adminId,
-            });
-
-            registryEntries.push(
-              partyGoldBalanceEntry,
-              partyGoldBalanceEntryFIX,
-              partyCashBalanceEntry
-            );
-
-            totalGoldGramsChange -= order.quantityGm;
-            totalCashBalanceChange += totalValue;
-
-          } else if (newType.toUpperCase() === "SELL") {
-            // PARTY_GOLD_BALANCE - Credit (party receives gold from us)
-            const partyGoldBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}`,
-              fixingTransactionId: transaction._id,
-              type: "PARTY_GOLD_BALANCE",
-              description: `Party gold balance - Sale order ${index + 1} to ${account.customerName || account.accountCode}`,
-              party: updateData.partyId || transaction.partyId,
-              isBullion: false,
-              goldBidValue: order.goldBidValue,
-              value: order.quantityGm,
-              grossWeight: order.quantityGm,
-              debit: 0,
-              goldCredit: order.quantityGm,
-              cashDebit: order.price,
-              credit: order.quantityGm,
-              transactionDate: updateData.voucherDate || transaction.voucherDate || new Date(),
-              reference: updateData.voucherNumber || transaction.voucherNumber,
-              createdBy: adminId,
-            });
-
-            // SALES-FIXING
-            const partyGoldBalanceEntryFIX = new Registry({
-              transactionId: `${registryTransactionId}`,
-              fixingTransactionId: transaction._id,
-              type: "sales-fixing",
-              description: `Party gold balance - Sale order ${index + 1} to ${account.customerName || account.accountCode}`,
-              party: updateData.partyId || transaction.partyId,
-              isBullion: false,
-              value: 0,
-              goldBidValue: order.goldBidValue,
-              grossWeight: order.quantityGm,
-              debit: order.quantityGm,
-              goldDebit: order.quantityGm,
-              cashCredit: order.price,
-              credit: 0,
-              transactionDate: updateData.voucherDate || transaction.voucherDate || new Date(),
-              reference: updateData.voucherNumber || transaction.voucherNumber,
-              createdBy: adminId,
-            });
-
-            // PARTY_CASH_BALANCE - Debit (party pays cash to us)
-            const partyCashBalanceEntry = new Registry({
-              transactionId: `${registryTransactionId}`,
-              fixingTransactionId: transaction._id,
-              type: "PARTY_CASH_BALANCE",
-              description: `FIXING ENTRY OF ${order.quantityGm.toFixed(2)} GM @ ${Number(order.goldBidValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AED/GM – Sale to ${account.customerName || account.accountCode}`,
-              party: updateData.partyId || transaction.partyId,
-              value: totalValue,
-              goldBidValue: order.goldBidValue,
-              grossWeight: order.quantityGm,
-              debit: totalValue,
-              credit: 0,
-              goldDebit: order.quantityGm,
-              cashCredit: order.price,
-              transactionDate: updateData.voucherDate || transaction.voucherDate || new Date(),
-              reference: updateData.voucherNumber || transaction.voucherNumber,
-              createdBy: adminId,
-            });
-
-            registryEntries.push(
-              partyGoldBalanceEntry,
-              partyGoldBalanceEntryFIX,
-              partyCashBalanceEntry
-            );
-
-            totalGoldGramsChange += order.quantityGm;
-            totalCashBalanceChange -= totalValue;
-          }
-        }
-
-        // Save all new registry entries
-        await Promise.all(registryEntries.map(entry => entry.save({ session })));
-
-        // Update account balances
-        const currentGoldGrams = account.balances.goldBalance.totalGrams || 0;
-        const currentCashBalance = account.balances.cashBalance.amount || 0;
-
-        account.balances.goldBalance.totalGrams = currentGoldGrams + totalGoldGramsChange;
-        account.balances.goldBalance.totalValue = 0;
-        account.balances.goldBalance.lastUpdated = new Date();
-
-        account.balances.cashBalance.amount = currentCashBalance + totalCashBalanceChange;
-        account.balances.cashBalance.lastUpdated = new Date();
-
-        account.balances.lastBalanceUpdate = new Date();
-
-        await account.save({ session });
+        // REGISTRY ENTRIES
+        const entries = buildRegistryEntries({
+          regId,
+          fixId: existing._id,
+          account,
+          order,
+          type: newType,
+          pureWeight,
+          totalValue,
+          bidValueOz,
+          currencyId,
+          adminId,
+          voucherNumber,
+          grossWeight,
+        });
+        registryEntries.push(...entries);
       }
 
-      // Update the transaction
-      const updatedTransaction = await TransactionFixing.findByIdAndUpdate(
+      await Registry.insertMany(registryEntries, { session });
+      await FixingPrice.insertMany(fixingPriceEntries, { session });
+
+      // Apply new deltas
+      account.balances.goldBalance.totalGrams =
+        (account.balances.goldBalance.totalGrams || 0) + newGoldDelta;
+      account.balances.goldBalance.lastUpdated = new Date();
+
+      applyCashDeltasToAccount(account, newCashDeltas);
+
+      account.balances.lastBalanceUpdate = new Date();
+      await account.save({ session });
+
+      const updated = await TransactionFixing.findByIdAndUpdate(
         id,
-        {
-          ...updateData,
-          updatedBy: adminId,
-        },
-        { new: true, runValidators: true }
+        { ...updateData, type: newType, updatedBy: adminId },
+        { new: true, runValidators: true, session }
       )
         .populate("partyId", "name code customerName accountCode")
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email")
-        .session(session);
+        .populate("orders.selectedCurrencyId", "code symbol");
 
-      // Commit the transaction
       await session.commitTransaction();
-
-      return updatedTransaction;
-    } catch (error) {
+      return updated;
+    } catch (err) {
       await session.abortTransaction();
-      throw error;
+      throw err;
     } finally {
       session.endSession();
     }
   },
 
-  // Get all Transactions with pagination and filtering
+  // -----------------------------------------------------------------
+  // LIST (pagination + filters)
+  // -----------------------------------------------------------------
   getAllTransactions: async (
     page = 1,
     limit = 10,
@@ -581,37 +602,35 @@ export const TransactionFixingService = {
   ) => {
     try {
       const skip = (page - 1) * limit;
-
-      // Build filter query
       const filter = {};
+
       if (search) {
         filter.$or = [
           { transactionId: { $regex: search, $options: "i" } },
-          { metalType: { $regex: search, $options: "i" } },
-          { referenceNumber: { $regex: search, $options: "i" } },
+          { voucherNumber: { $regex: search, $options: "i" } },
           { notes: { $regex: search, $options: "i" } },
         ];
       }
-      if (status) {
-        filter.status = status;
-      }
-      if (type) {
-        filter.type = type;
-      }
-      if (metalType) {
-        filter.metalType = metalType.toUpperCase();
-      }
-      if (partyId && mongoose.Types.ObjectId.isValid(partyId)) {
+      if (status) filter.status = status;
+      if (type) filter.type = type;
+      if (partyId && mongoose.Types.ObjectId.isValid(partyId))
         filter.partyId = partyId;
+      if (metalType) {
+        // metalType lives inside orders → $elemMatch
+        filter["orders.metalType"] = mongoose.Types.ObjectId(metalType);
       }
 
       const transactions = await TransactionFixing.find(filter)
         .populate("partyId", "name code customerName accountCode")
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email")
+        .populate("orders.metalType")
+        .populate("orders.commodity")
+        .populate("orders.selectedCurrencyId")
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(parseInt(limit));
+        .limit(parseInt(limit))
+        .lean();
 
       const total = await TransactionFixing.countDocuments(filter);
 
@@ -624,237 +643,248 @@ export const TransactionFixingService = {
           itemsPerPage: parseInt(limit),
         },
       };
-    } catch (error) {
-      throw error;
+    } catch (err) {
+      throw createAppError("Failed to fetch transactions", 500, "FETCH_ERROR");
     }
   },
 
-  // Get Transaction by ID
+  // -----------------------------------------------------------------
+  // GET BY ID
+  // -----------------------------------------------------------------
   getTransactionById: async (id) => {
     try {
       const transaction = await TransactionFixing.findById(id)
         .populate("partyId", "name code customerName accountCode")
         .populate("createdBy", "name email")
-        .populate("updatedBy", "name email");
+        .populate("updatedBy", "name email")
+        .populate("orders.metalType")
+        .populate("orders.commodity")
+        .populate("orders.selectedCurrencyId")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean();
 
-      if (!transaction) {
+      if (!transaction)
         throw createAppError("Transaction not found", 404, "NOT_FOUND");
-      }
 
       return transaction;
-    } catch (error) {
-      if (error.name === "CastError") {
+    } catch (err) {
+      if (err.name === "CastError")
         throw createAppError("Invalid Transaction ID", 400, "INVALID_ID");
-      }
-      throw error;
+      throw err;
     }
   },
 
-  // Delete Transaction (Soft Delete)
+  // -----------------------------------------------------------------
+  // DELETE (full reverse)
+  // -----------------------------------------------------------------
   deleteTransaction: async (id, adminId) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-  try {
-    // Find the transaction
-    const transaction = await TransactionFixing.findById(id).session(session);
-    if (!transaction) {
-      throw createAppError("Transaction not found", 404, "NOT_FOUND");
-    }
+    try {
+      const transaction = await TransactionFixing.findById(id).session(session);
+      if (!transaction)
+        throw createAppError("Transaction not found", 404, "NOT_FOUND");
 
-    // Populate necessary fields if needed (for returning)
-    const populatedTransaction = await TransactionFixing.findById(id)
-      .populate("partyId", "name code customerName accountCode")
-      .populate("createdBy", "name email")
-      .populate("updatedBy", "name email");
+      const account = await Account.findById(transaction.partyId).session(
+        session
+      );
+      if (!account)
+        throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
 
-    // Find the account
-    const account = await Account.findById(transaction.partyId).session(session);
-    if (!account) {
-      throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
-    }
+      const type = transaction.type.toUpperCase();
+      const goldDelta =
+        type === "PURCHASE"
+          ? +transaction.orders.reduce((s, o) => s + Number(o.quantityGm), 0)
+          : -transaction.orders.reduce((s, o) => s + Number(o.quantityGm), 0);
 
-    // Initialize reverse balance updates
-    let totalGoldGramsChange = 0;
-    let totalCashBalanceChange = 0;
-
-    // Calculate reverse changes based on orders and type
-    for (const order of transaction.orders) {
-      const totalValue = order.price * order.quantityGm;
-
-      if (transaction.type.toUpperCase() === "PURCHASE") {
-        // Reverse PURCHASE: add back gold to party, subtract cash from party
-        totalGoldGramsChange += order.quantityGm;
-        totalCashBalanceChange -= totalValue;
-      } else if (transaction.type.toUpperCase() === "SELL") {
-        // Reverse SELL: subtract gold from party, add back cash to party
-        totalGoldGramsChange -= order.quantityGm;
-        totalCashBalanceChange += totalValue;
+      const cashDeltas = {};
+      for (const o of transaction.orders) {
+        const cid = o.selectedCurrencyId;
+        const delta = type === "PURCHASE" ? -Number(o.price) : +Number(o.price);
+        cashDeltas[cid] = (cashDeltas[cid] || 0) + delta;
       }
+
+      account.balances.goldBalance.totalGrams += goldDelta;
+      for (const [cid, delta] of Object.entries(cashDeltas)) {
+        const bal = account.balances.cashBalance.find(
+          (cb) => cb.currency?.toString() === cid
+        );
+        if (bal) bal.amount += delta;
+      }
+      account.balances.lastBalanceUpdate = new Date();
+      await account.save({ session });
+
+      await Registry.deleteMany({ fixingTransactionId: id }).session(session);
+      await FixingPrice.deleteMany({ transactionFix: id }).session(session);
+      await TransactionFixing.deleteOne({ _id: id }).session(session);
+
+      await session.commitTransaction();
+      return { success: true, message: "Transaction deleted" };
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
     }
+  },
 
-    // Update account balances (apply reverse changes)
-    const currentGoldGrams = account.balances.goldBalance.totalGrams || 0;
-    const currentCashBalance = account.balances.cashBalance.amount || 0;
-
-    // Update gold balance
-    account.balances.goldBalance.totalGrams = currentGoldGrams + totalGoldGramsChange;
-    account.balances.goldBalance.totalValue = 0; // Assuming this is reset or handled similarly
-    account.balances.goldBalance.lastUpdated = new Date();
-
-    // Update cash balance
-    account.balances.cashBalance.amount = currentCashBalance + totalCashBalanceChange;
-    account.balances.cashBalance.lastUpdated = new Date();
-
-    // Update overall balance tracking
-    account.balances.lastBalanceUpdate = new Date();
-
-    // Save the updated account
-    await account.save({ session });
-
-    // Delete all related registry entries
-    await Registry.deleteMany({ fixingTransactionId: transaction._id }).session(session);
-
-    // Delete the transaction
-    await TransactionFixing.deleteOne({ _id: transaction._id }).session(session);
-
-    // Commit the transaction
-    await session.commitTransaction();
-
-    // Return the populated transaction (before deletion)
-    return populatedTransaction;
-  } catch (error) {
-    await session.abortTransaction();
-    if (error.name === "CastError") {
-      throw createAppError("Invalid Transaction ID", 400, "INVALID_ID");
-    }
-    throw error;
-  } finally {
-    session.endSession();
-  }
-},
-
-  // Cancel Transaction
+  // -----------------------------------------------------------------
+  // CANCEL (soft)
+  // -----------------------------------------------------------------
   cancelTransaction: async (id, adminId) => {
     try {
       const transaction = await TransactionFixing.findById(id);
-      if (!transaction) {
+      if (!transaction)
         throw createAppError("Transaction not found", 404, "NOT_FOUND");
-      }
 
-      const cancelledTransaction = await TransactionFixing.findByIdAndUpdate(
+      const cancelled = await TransactionFixing.findByIdAndUpdate(
         id,
-        {
-          status: "cancelled",
-          updatedBy: adminId,
-        },
+        { status: "cancelled", updatedBy: adminId },
         { new: true }
       )
         .populate("partyId", "name code customerName accountCode")
         .populate("createdBy", "name email")
-        .populate("updatedBy", "name email");
+        .populate("updatedBy", "name email")
+        .populate("orders.selectedCurrencyId", "code symbol");
 
-      return cancelledTransaction;
-    } catch (error) {
-      if (error.name === "CastError") {
+      return cancelled;
+    } catch (err) {
+      if (err.name === "CastError")
         throw createAppError("Invalid Transaction ID", 400, "INVALID_ID");
-      }
-      throw error;
+      throw err;
     }
   },
 
-  // Permanently Delete Transaction
+  // -----------------------------------------------------------------
+  // PERMANENT DELETE
+  // -----------------------------------------------------------------
   permanentDeleteTransaction: async (id) => {
     try {
       const transaction = await TransactionFixing.findById(id);
-      if (!transaction) {
+      if (!transaction)
         throw createAppError("Transaction not found", 404, "NOT_FOUND");
-      }
 
       await TransactionFixing.findByIdAndDelete(id);
       return { message: "Transaction permanently deleted" };
-    } catch (error) {
-      if (error.name === "CastError") {
+    } catch (err) {
+      if (err.name === "CastError")
         throw createAppError("Invalid Transaction ID", 400, "INVALID_ID");
-      }
-      throw error;
+      throw err;
     }
   },
 
-  // Restore Transaction
+  // -----------------------------------------------------------------
+  // RESTORE (soft-deleted → active)
+  // -----------------------------------------------------------------
   restoreTransaction: async (id, adminId) => {
     try {
       const transaction = await TransactionFixing.findById(id);
-      if (!transaction) {
+      if (!transaction)
         throw createAppError("Transaction not found", 404, "NOT_FOUND");
-      }
 
-      const restoredTransaction = await TransactionFixing.findByIdAndUpdate(
+      const restored = await TransactionFixing.findByIdAndUpdate(
         id,
-        {
-          status: "active",
-          isActive: true,
-          updatedBy: adminId,
-        },
+        { status: "active", isActive: true, updatedBy: adminId },
         { new: true }
       )
         .populate("partyId", "name code customerName accountCode")
         .populate("createdBy", "name email")
-        .populate("updatedBy", "name email");
+        .populate("updatedBy", "name email")
+        .populate("orders.selectedCurrencyId", "code symbol");
 
-      return restoredTransaction;
-    } catch (error) {
-      if (error.name === "CastError") {
+      return restored;
+    } catch (err) {
+      if (err.name === "CastError")
         throw createAppError("Invalid Transaction ID", 400, "INVALID_ID");
-      }
-      throw error;
+      throw err;
     }
   },
 
-  // Get transactions by party
+  // -----------------------------------------------------------------
+  // GET BY PARTY
+  // -----------------------------------------------------------------
   getTransactionsByParty: async (partyId, startDate = null, endDate = null) => {
     try {
-      if (!mongoose.Types.ObjectId.isValid(partyId)) {
+      if (!mongoose.Types.ObjectId.isValid(partyId))
         throw createAppError("Invalid Party ID", 400, "INVALID_PARTY_ID");
+
+      const filter = { partyId };
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) filter.createdAt.$gte = new Date(startDate);
+        if (endDate) filter.createdAt.$lte = new Date(endDate);
       }
 
-      return await TransactionFixing.getTransactionsByParty(
-        partyId,
-        startDate,
-        endDate
-      );
-    } catch (error) {
-      throw error;
+      return await TransactionFixing.find(filter)
+        .populate("partyId", "name code customerName accountCode")
+        .populate("orders.metalType", "rateType")
+        .populate("orders.selectedCurrencyId", "code symbol")
+        .sort({ createdAt: -1 })
+        .lean();
+    } catch (err) {
+      throw err;
     }
   },
 
-  // Get transactions by metal type
+  // -----------------------------------------------------------------
+  // GET BY METAL TYPE
+  // -----------------------------------------------------------------
   getTransactionsByMetal: async (
     metalType,
     startDate = null,
     endDate = null
   ) => {
     try {
-      return await TransactionFixing.getTransactionsByMetal(
-        metalType,
-        startDate,
-        endDate
-      );
-    } catch (error) {
-      throw error;
+      const filter = { "orders.metalType": mongoose.Types.ObjectId(metalType) };
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) filter.createdAt.$gte = new Date(startDate);
+        if (endDate) filter.createdAt.$lte = new Date(endDate);
+      }
+
+      return await TransactionFixing.find(filter)
+        .populate("partyId", "name code customerName accountCode")
+        .populate("orders.metalType", "rateType")
+        .populate("orders.selectedCurrencyId", "code symbol")
+        .sort({ createdAt: -1 })
+        .lean();
+    } catch (err) {
+      throw err;
     }
   },
 
-  // Get party metal summary
+  // -----------------------------------------------------------------
+  // PARTY METAL SUMMARY
+  // -----------------------------------------------------------------
   getPartyMetalSummary: async (partyId, metalType) => {
     try {
-      if (!mongoose.Types.ObjectId.isValid(partyId)) {
+      if (!mongoose.Types.ObjectId.isValid(partyId))
         throw createAppError("Invalid Party ID", 400, "INVALID_PARTY_ID");
-      }
 
-      return await TransactionFixing.getPartyMetalSummary(partyId, metalType);
-    } catch (error) {
-      throw error;
+      const pipeline = [
+        { $match: { partyId: mongoose.Types.ObjectId(partyId) } },
+        { $unwind: "$orders" },
+        {
+          $match: {
+            "orders.metalType": mongoose.Types.ObjectId(metalType),
+          },
+        },
+        {
+          $group: {
+            _id: "$type",
+            totalGrams: { $sum: "$orders.quantityGm" },
+            totalValue: { $sum: "$orders.price" },
+          },
+        },
+      ];
+
+      const result = await TransactionFixing.aggregate(pipeline);
+      return result;
+    } catch (err) {
+      throw err;
     }
   },
 };

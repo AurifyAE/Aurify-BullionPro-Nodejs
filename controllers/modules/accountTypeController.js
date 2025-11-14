@@ -25,7 +25,7 @@ export const createTradeDebtor = async (req, res, next) => {
       accountType,
     } = req.body;
 
-    console.log("req.body : ",req.body,);
+    // console.log("req.body : ",req.body,);
 
     // ✅ Helper function to handle 'null' and 'undefined' strings
     const sanitizeString = (value, defaultValue = '') => {
@@ -103,6 +103,7 @@ export const createTradeDebtor = async (req, res, next) => {
     // Now process currencies (extract IDs)
     parsedAcDefinition.currencies = parsedAcDefinition.currencies.map((c) => {
       const currencyId = c.currency?._id || c.currency;
+      
       if (!currencyId) {
         throw createAppError('Invalid currency reference', 400, 'INVALID_CURRENCY');
       }
@@ -112,6 +113,7 @@ export const createTradeDebtor = async (req, res, next) => {
         purchasePrice: parseFloat(c.purchasePrice) || 0,
         sellPrice: parseFloat(c.sellPrice) || 0,
         convertRate: parseFloat(c.convertRate) || 1,
+        currencyCode:c.currency.currencyCode
       };
     });
 
