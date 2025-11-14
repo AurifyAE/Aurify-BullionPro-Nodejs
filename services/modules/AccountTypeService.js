@@ -2,494 +2,602 @@ import AccountType from "../../models/modules/AccountType.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import { deleteMultipleS3Files } from "../../utils/s3Utils.js";
 import bcrypt from "bcrypt";
-import { hashPassword, encryptPassword, decryptPassword, verifyPassword } from "../../utils/passwordUtils.js";
+import {
+  hashPassword,
+  encryptPassword,
+  decryptPassword,
+  verifyPassword,
+} from "../../utils/passwordUtils.js";
 import AccountMode from "../../models/modules/AccountMode.js";
 import Registry from "../../models/modules/Registry.js";
 import mongoose from "mongoose";
 
-
 class AccountTypeService {
   // Create new trade debtor
-// In AccountTypeService.js
-// In AccountTypeService.js
-static async createTradeDebtor(debtorData, adminId) {
-  try {
-    // 1. Check duplicate account code
-    const isCodeExists = await AccountType.isAccountCodeExists(debtorData.accountCode);
-    if (isCodeExists) {
-      throw createAppError('Account code already exists', 400, 'DUPLICATE_ACCOUNT_CODE');
-    }
-
-    // 2. Hash password (if provided)
-    if (debtorData.password) {
-      const passwordHash = await hashPassword(debtorData.password);
-      const { encrypted, iv } = encryptPassword(debtorData.password);
-      debtorData.passwordHash = passwordHash;
-      debtorData.passwordEncrypted = encrypted;
-      debtorData.passwordIV = iv;
-    } else {
-      debtorData.passwordHash = null;
-      debtorData.passwordEncrypted = null;
-      debtorData.passwordIV = null;
-    }
-
-    // 3. Set createdBy
-    debtorData.createdBy = adminId;
-
-    // 4. Process VAT/GST
-    if (debtorData.vatGstDetails) {
-      const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
-      debtorData.vatGstDetails.vatStatus = debtorData.vatGstDetails.vatStatus
-        ? validStatuses.includes(debtorData.vatGstDetails.vatStatus.toUpperCase())
-          ? debtorData.vatGstDetails.vatStatus.toUpperCase()
-          : 'UNREGISTERED'
-        : 'UNREGISTERED';
-      debtorData.vatGstDetails.vatNumber = debtorData.vatGstDetails.vatNumber || '';
-      debtorData.vatGstDetails.documents = debtorData.vatGstDetails.documents || [];
-
-      if (debtorData.vatGstDetails.vatStatus === 'REGISTERED' && !debtorData.vatGstDetails.vatNumber) {
-        throw createAppError('VAT number is required for REGISTERED status', 400, 'MISSING_VAT_NUMBER');
-      }
-    } else {
-      debtorData.vatGstDetails = { vatStatus: 'UNREGISTERED', vatNumber: '', documents: [] };
-    }
-
-    // 5. Process KYC
-    if (debtorData.kycDetails && Array.isArray(debtorData.kycDetails)) {
-      debtorData.kycDetails = debtorData.kycDetails
-        .filter((kyc) => kyc.documentType && kyc.documentNumber)
-        .map((kyc) => ({
-          ...kyc,
-          documents: kyc.documents || [],
-          isVerified: kyc.isVerified ?? false,
-          issueDate: kyc.issueDate ? new Date(kyc.issueDate) : null,
-          expiryDate: kyc.expiryDate ? new Date(kyc.expiryDate) : null,
-        }));
-
-      if (debtorData.kycDetails.length === 0) delete debtorData.kycDetails;
-    }
-
-    // 6. Process bankDetails - ensure single primary and convert dates
-    if (debtorData.bankDetails?.length > 0) {
-      let primaryFound = false;
-      debtorData.bankDetails.forEach((bank, i) => {
-        // Ensure single primary
-        if (bank.isPrimary && !primaryFound) {
-          primaryFound = true;
-        } else if (bank.isPrimary && primaryFound) {
-          bank.isPrimary = false;
-        } else if (i === 0 && !primaryFound) {
-          bank.isPrimary = true;
-          primaryFound = true;
-        }
-        // Convert date fields
-        if (bank.maturityDate) {
-          bank.maturityDate = new Date(bank.maturityDate);
-        }
-        if (bank.pdcReceiptMaturityDate) {
-          bank.pdcReceiptMaturityDate = new Date(bank.pdcReceiptMaturityDate);
-        }
-      });
-    }
-
-    // Ensure single primary for addresses and employees
-    ['addresses', 'employees'].forEach((field) => {
-      if (debtorData[field]?.length > 0) {
-        let primaryFound = false;
-        debtorData[field].forEach((item, i) => {
-          if (item.isPrimary && !primaryFound) {
-            primaryFound = true;
-          } else if (item.isPrimary && primaryFound) {
-            item.isPrimary = false;
-          } else if (i === 0 && !primaryFound) {
-            item.isPrimary = true;
-            primaryFound = true;
-          }
-        });
-      }
-    });
-
-    // 7. Initialize balances from acDefinition.currencies
-    if (debtorData.acDefinition?.currencies?.length > 0) {
-      const cashBalance = debtorData.acDefinition.currencies.map((c) => ({
-        currency: c.currency?._id || c.currency,
-        amount: 0,
-        isDefault: !!c.isDefault,
-        lastUpdated: new Date(),
-      }));
-
-      debtorData.balances = {
-        goldBalance: { totalGrams: 0, totalValue: 0, lastUpdated: new Date() },
-        cashBalance,
-        totalOutstanding: 0,
-        lastBalanceUpdate: new Date(),
-      };
-    }
-
-    // 8. Create document
-    const tradeDebtor = new AccountType(debtorData);
-    await tradeDebtor.save();
-
-    // 9. Populate response
-    await tradeDebtor.populate([
-      { path: 'acDefinition.currencies.currency', select: 'currencyCode currencyName symbol description' },
-      { path: 'acDefinition.branches.branch', select: 'branchCode branchName address' },
-      { path: 'balances.cashBalance.currency', select: 'currencyCode currencyName symbol' },
-      { path: 'limitsMargins.currency', select: 'currencyCode' },
-      { path: 'createdBy', select: 'name email role' },
-    ]);
-
-    return tradeDebtor;
-  } catch (error) {
-    this._handleServiceError(error);
-  }
-}
-
-
-static async updateTradeDebtor(id, updateData, adminId) {
-  try {
-    const tradeDebtor = await AccountType.findById(id);
-    if (!tradeDebtor) {
-      throw createAppError('Trade debtor not found', 404, 'DEBTOR_NOT_FOUND');
-    }
-
-    // 1. Check account code uniqueness
-    if (updateData.accountCode && updateData.accountCode !== tradeDebtor.accountCode) {
-      const exists = await AccountType.isAccountCodeExists(updateData.accountCode, id);
-      if (exists) {
-        throw createAppError('Account code already exists', 400, 'DUPLICATE_ACCOUNT_CODE');
-      }
-    }
-
-    // 2. Process VAT/GST updates
-    if (updateData.vatGstDetails) {
-      const validStatuses = ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'];
-      updateData.vatGstDetails.vatStatus = updateData.vatGstDetails.vatStatus
-        ? validStatuses.includes(updateData.vatGstDetails.vatStatus.toUpperCase())
-          ? updateData.vatGstDetails.vatStatus.toUpperCase()
-          : 'UNREGISTERED'
-        : 'UNREGISTERED';
-      updateData.vatGstDetails.vatNumber = updateData.vatGstDetails.vatNumber || '';
-      updateData.vatGstDetails.documents = updateData.vatGstDetails.documents || [];
-
-      if (updateData.vatGstDetails.vatStatus === 'REGISTERED' && !updateData.vatGstDetails.vatNumber) {
-        throw createAppError('VAT number is required for REGISTERED status', 400, 'MISSING_VAT_NUMBER');
-      }
-
-      // Handle document replace/remove
-      const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
-      if (updateData.vatGstDetails._replaceDocuments) {
-        updateData.vatGstDetails.documents = updateData.vatGstDetails.documents || [];
-      } else if (updateData._removeVatDocuments?.length) {
-        updateData.vatGstDetails.documents = oldDocs.filter(
-          (doc) => !updateData._removeVatDocuments.includes(doc._id?.toString())
+  static async createTradeDebtor(debtorData, adminId) {
+    try {
+      // 1. Check duplicate account code
+      const isCodeExists = await AccountType.isAccountCodeExists(
+        debtorData.accountCode
+      );
+      if (isCodeExists) {
+        throw createAppError(
+          "Account code already exists",
+          400,
+          "DUPLICATE_ACCOUNT_CODE"
         );
-        updateData.vatGstDetails.documents.push(...(updateData.vatGstDetails.documents || []));
+      }
+
+      // 2. Hash password (if provided)
+      if (debtorData.password) {
+        const passwordHash = await hashPassword(debtorData.password);
+        const { encrypted, iv } = encryptPassword(debtorData.password);
+        debtorData.passwordHash = passwordHash;
+        debtorData.passwordEncrypted = encrypted;
+        debtorData.passwordIV = iv;
       } else {
-        updateData.vatGstDetails.documents = [...oldDocs, ...(updateData.vatGstDetails.documents || [])];
+        debtorData.passwordHash = null;
+        debtorData.passwordEncrypted = null;
+        debtorData.passwordIV = null;
       }
-      delete updateData.vatGstDetails._replaceDocuments;
-      delete updateData._removeVatDocuments;
-    }
 
-    // 3. Process bankDetails updates - convert dates
-    if (updateData.bankDetails?.length) {
-      updateData.bankDetails = updateData.bankDetails.map((bank) => {
-        const updatedBank = { ...bank };
-        // Convert date fields
-        if (bank.maturityDate) {
-          updatedBank.maturityDate = new Date(bank.maturityDate);
-        } else if (bank.maturityDate === null || bank.maturityDate === '') {
-          updatedBank.maturityDate = null;
+      // 3. Set createdBy
+      debtorData.createdBy = adminId;
+
+      // 4. Process VAT/GST
+      if (debtorData.vatGstDetails) {
+        const validStatuses = ["REGISTERED", "UNREGISTERED", "EXEMPTED"];
+        debtorData.vatGstDetails.vatStatus = debtorData.vatGstDetails.vatStatus
+          ? validStatuses.includes(
+              debtorData.vatGstDetails.vatStatus.toUpperCase()
+            )
+            ? debtorData.vatGstDetails.vatStatus.toUpperCase()
+            : "UNREGISTERED"
+          : "UNREGISTERED";
+        debtorData.vatGstDetails.vatNumber =
+          debtorData.vatGstDetails.vatNumber || "";
+        debtorData.vatGstDetails.documents =
+          debtorData.vatGstDetails.documents || [];
+
+        if (
+          debtorData.vatGstDetails.vatStatus === "REGISTERED" &&
+          !debtorData.vatGstDetails.vatNumber
+        ) {
+          throw createAppError(
+            "VAT number is required for REGISTERED status",
+            400,
+            "MISSING_VAT_NUMBER"
+          );
         }
-        if (bank.pdcReceiptMaturityDate) {
-          updatedBank.pdcReceiptMaturityDate = new Date(bank.pdcReceiptMaturityDate);
-        } else if (bank.pdcReceiptMaturityDate === null || bank.pdcReceiptMaturityDate === '') {
-          updatedBank.pdcReceiptMaturityDate = null;
-        }
-        return updatedBank;
-      });
-    }
-
-    // 4. Process KYC updates
-    if (updateData.kycDetails?.length) {
-      const oldKyc = tradeDebtor.kycDetails || [];
-      updateData.kycDetails = updateData.kycDetails
-        .filter((kyc) => kyc.documentType && kyc.documentNumber)
-        .map((kycUpdate) => {
-          const old = oldKyc.find(
-            (k) => k.documentType === kycUpdate.documentType && k.documentNumber === kycUpdate.documentNumber
-          ) || {};
-          const oldDocs = old.documents || [];
-
-          let finalDocs = oldDocs;
-          if (kycUpdate.documents) {
-            if (kycUpdate._replaceDocuments) {
-              finalDocs = kycUpdate.documents;
-            } else if (kycUpdate._removeDocuments?.length) {
-              finalDocs = oldDocs.filter((doc) => !kycUpdate._removeDocuments.includes(doc._id?.toString()));
-              finalDocs.push(...kycUpdate.documents);
-            } else {
-              finalDocs = [...oldDocs, ...kycUpdate.documents];
-            }
-          }
-
-          return {
-            ...kycUpdate,
-            documents: finalDocs,
-            isVerified: kycUpdate.isVerified ?? false,
-            issueDate: kycUpdate.issueDate ? new Date(kycUpdate.issueDate) : null,
-            expiryDate: kycUpdate.expiryDate ? new Date(kycUpdate.expiryDate) : null,
-          };
-        });
-    }
-
-    // 5. Re-init cash balances if currencies changed
-    if (updateData.acDefinition?.currencies?.length > 0) {
-      updateData.balances = {
-        cashBalance: updateData.acDefinition.currencies.map((c) => ({
-          currency: c.currency?._id || c.currency,
-          amount: 0,
-          isDefault: !!c.isDefault,
-          lastUpdated: new Date(),
-        })),
-        goldBalance: { totalGrams: 0, totalValue: 0, lastUpdated: new Date() },
-        totalOutstanding: 0,
-        lastBalanceUpdate: new Date(),
-      };
-    }
-
-    // 6. Set audit fields
-    updateData.updatedBy = adminId;
-    updateData.updatedAt = new Date();
-
-    // 7. Collect S3 keys to delete
-    const filesToDelete = this.getFilesToDelete(tradeDebtor, updateData);
-
-    // 8. Update DB
-    const updated = await AccountType.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    }).populate([
-      { path: 'acDefinition.currencies.currency', select: 'currencyCode currencyName symbol description' },
-      { path: 'acDefinition.branches.branch', select: 'branchCode branchName address' },
-      { path: 'balances.cashBalance.currency', select: 'currencyCode currencyName symbol' },
-      { path: 'limitsMargins.currency', select: 'currencyCode' },
-      { path: 'createdBy', select: 'name email role' },
-      { path: 'updatedBy', select: 'name email role' },
-    ]);
-
-    // 9. Delete old S3 files
-    let s3Result = { successful: [], failed: [] };
-    if (filesToDelete.length > 0) {
-      try {
-        s3Result = await deleteMultipleS3Files(filesToDelete);
-      } catch (err) {
-        console.error('S3 cleanup failed:', err);
-        s3Result.failed = filesToDelete.map((key) => ({ key, error: err.message }));
-      }
-    }
-
-    return {
-      ...updated.toObject(),
-      _filesManagement: {
-        filesDeleted: s3Result.successful?.length || 0,
-        filesFailedToDelete: s3Result.failed?.length || 0,
-        deletedKeys: s3Result.successful?.map((r) => r.key) || [],
-        failedKeys: s3Result.failed?.map((r) => r.key) || [],
-      },
-    };
-  } catch (error) {
-    this._handleServiceError(error);
-  }
-}
-
-
-// Helper method to determine files to delete
-static getFilesToDelete(tradeDebtor, updateData) {
-  const filesToDelete = [];
-
-  // Handle VAT/GST document deletion
-  if (updateData.vatGstDetails && updateData.vatGstDetails._replaceDocuments) {
-    const oldVatDocs = tradeDebtor.vatGstDetails?.documents || [];
-    oldVatDocs.forEach((doc) => {
-      if (doc.s3Key) {
-        filesToDelete.push(doc.s3Key);
-      }
-    });
-  } else if (updateData._removeVatDocuments?.length) {
-    const oldVatDocs = tradeDebtor.vatGstDetails?.documents || [];
-    oldVatDocs.forEach((doc) => {
-      if (updateData._removeVatDocuments.includes(doc._id?.toString()) && doc.s3Key) {
-        filesToDelete.push(doc.s3Key);
-      }
-    });
-  }
-
-  // Handle KYC document deletion
-  if (updateData.kycDetails?.length) {
-    updateData.kycDetails.forEach((kycUpdate, index) => {
-      if (kycUpdate._replaceDocuments) {
-        const oldKyc = tradeDebtor.kycDetails?.find(
-          (kyc) =>
-            kyc.documentType === kycUpdate.documentType &&
-            kyc.documentNumber === kycUpdate.documentNumber
-        );
-        if (oldKyc?.documents) {
-          oldKyc.documents.forEach((doc) => {
-            if (doc.s3Key) {
-              filesToDelete.push(doc.s3Key);
-            }
-          });
-        }
-      } else if (kycUpdate._removeDocuments?.length) {
-        const oldKyc = tradeDebtor.kycDetails?.find(
-          (kyc) =>
-            kyc.documentType === kycUpdate.documentType &&
-            kyc.documentNumber === kycUpdate.documentNumber
-        );
-        if (oldKyc?.documents) {
-          oldKyc.documents.forEach((doc) => {
-            if (kycUpdate._removeDocuments.includes(doc._id?.toString()) && doc.s3Key) {
-              filesToDelete.push(doc.s3Key);
-            }
-          });
-        }
-      }
-    });
-  }
-
-  return filesToDelete;
-}
-
-
- // Get all trade debtors with pagination and filters
- static async getAllTradeDebtors(options = {}) {
-  try {
-    const {
-      page = 1,
-      limit = 100,
-      search = "",
-      status = "",
-      classification = "",
-      sortBy = "createdAt",
-      sortOrder = "desc",
-      accountType,
-      sort,
-    } = options;
-
-    const skip = (page - 1) * limit;
-    const query = {};
-
-    // === 1. SEARCH ===
-    if (search) {
-      query.$or = [
-        { accountType: { $regex: search, $options: "i" } },
-        { customerName: { $regex: search, $options: "i" } },
-        { accountCode: { $regex: search, $options: "i" } },
-        { shortName: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    if (status) {
-      query.status = status;
-    }
-
-    if (classification) {
-      query.classification = classification;
-    }
-
-    console.log(accountType,'-----------------------')
-    let accountTypeIds = [];
-    if (Array.isArray(accountType) && accountType.length > 0) {
-      const normalizedNames = accountType.map(name => name.trim().toLowerCase());
-
-      const modes = await AccountMode.find(
-        { name: { $regex: `^(${normalizedNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`, $options: "i" } },
-        { _id: 1 }
-      ).lean();
-
-      accountTypeIds = modes.map(m => m._id);
-      console.log(accountTypeIds,'================')
-      if (accountTypeIds.length === 0) {
-        return {
-          tradeDebtors: [],
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages: 0,
-            totalItems: 0,
-            itemsPerPage: parseInt(limit),
-          },
+      } else {
+        debtorData.vatGstDetails = {
+          vatStatus: "UNREGISTERED",
+          vatNumber: "",
+          documents: [],
         };
       }
 
-      query.accountType = { $in: accountTypeIds };
+      // 5. Process KYC
+      if (debtorData.kycDetails && Array.isArray(debtorData.kycDetails)) {
+        debtorData.kycDetails = debtorData.kycDetails
+          .filter((kyc) => kyc.documentType && kyc.documentNumber)
+          .map((kyc) => ({
+            ...kyc,
+            documents: kyc.documents || [],
+            isVerified: kyc.isVerified ?? false,
+            issueDate: kyc.issueDate ? new Date(kyc.issueDate) : null,
+            expiryDate: kyc.expiryDate ? new Date(kyc.expiryDate) : null,
+          }));
+
+        if (debtorData.kycDetails.length === 0) delete debtorData.kycDetails;
+      }
+
+      // 6. Process bankDetails - ensure single primary and convert dates
+      if (debtorData.bankDetails?.length > 0) {
+        let primaryFound = false;
+        debtorData.bankDetails.forEach((bank, i) => {
+          // Ensure single primary
+          if (bank.isPrimary && !primaryFound) {
+            primaryFound = true;
+          } else if (bank.isPrimary && primaryFound) {
+            bank.isPrimary = false;
+          } else if (i === 0 && !primaryFound) {
+            bank.isPrimary = true;
+            primaryFound = true;
+          }
+          // Convert date fields
+          if (bank.maturityDate) {
+            bank.maturityDate = new Date(bank.maturityDate);
+          }
+          if (bank.pdcReceiptMaturityDate) {
+            bank.pdcReceiptMaturityDate = new Date(bank.pdcReceiptMaturityDate);
+          }
+        });
+      }
+
+      // Ensure single primary for addresses and employees
+      ["addresses", "employees"].forEach((field) => {
+        if (debtorData[field]?.length > 0) {
+          let primaryFound = false;
+          debtorData[field].forEach((item, i) => {
+            if (item.isPrimary && !primaryFound) {
+              primaryFound = true;
+            } else if (item.isPrimary && primaryFound) {
+              item.isPrimary = false;
+            } else if (i === 0 && !primaryFound) {
+              item.isPrimary = true;
+              primaryFound = true;
+            }
+          });
+        }
+      });
+
+      // 7. Initialize balances from acDefinition.currencies
+      if (debtorData.acDefinition?.currencies?.length > 0) {
+        const cashBalance = debtorData.acDefinition.currencies.map((c) => ({
+          currency: c.currency?._id || c.currency,
+          amount: 0,
+          code: c.currencyCode,
+          isDefault: !!c.isDefault,
+          lastUpdated: new Date(),
+        }));
+        console.log("-----------------------");
+        console.log(cashBalance);
+        debtorData.balances = {
+          goldBalance: {
+            totalGrams: 0,
+            totalValue: 0,
+            lastUpdated: new Date(),
+          },
+          cashBalance,
+          totalOutstanding: 0,
+          lastBalanceUpdate: new Date(),
+        };
+      }
+
+      // 8. Create document
+      const tradeDebtor = new AccountType(debtorData);
+      await tradeDebtor.save();
+
+      // 9. Populate response
+      await tradeDebtor.populate([
+        {
+          path: "acDefinition.currencies.currency",
+          select: "currencyCode currencyName symbol description",
+        },
+        {
+          path: "acDefinition.branches.branch",
+          select: "branchCode branchName address",
+        },
+        {
+          path: "balances.cashBalance.currency",
+          select: "currencyCode currencyName symbol",
+        },
+        { path: "limitsMargins.currency", select: "currencyCode" },
+        { path: "createdBy", select: "name email role" },
+      ]);
+
+      return tradeDebtor;
+    } catch (error) {
+      this._handleServiceError(error);
+    }
+  }
+
+  static async updateTradeDebtor(id, updateData, adminId) {
+    try {
+      const tradeDebtor = await AccountType.findById(id);
+      if (!tradeDebtor) {
+        throw createAppError("Trade debtor not found", 404, "DEBTOR_NOT_FOUND");
+      }
+
+      // 1. Check account code uniqueness
+      if (
+        updateData.accountCode &&
+        updateData.accountCode !== tradeDebtor.accountCode
+      ) {
+        const exists = await AccountType.isAccountCodeExists(
+          updateData.accountCode,
+          id
+        );
+        if (exists) {
+          throw createAppError(
+            "Account code already exists",
+            400,
+            "DUPLICATE_ACCOUNT_CODE"
+          );
+        }
+      }
+
+      // 2. Process VAT/GST updates
+      if (updateData.vatGstDetails) {
+        const validStatuses = ["REGISTERED", "UNREGISTERED", "EXEMPTED"];
+        updateData.vatGstDetails.vatStatus = updateData.vatGstDetails.vatStatus
+          ? validStatuses.includes(
+              updateData.vatGstDetails.vatStatus.toUpperCase()
+            )
+            ? updateData.vatGstDetails.vatStatus.toUpperCase()
+            : "UNREGISTERED"
+          : "UNREGISTERED";
+        updateData.vatGstDetails.vatNumber =
+          updateData.vatGstDetails.vatNumber || "";
+        updateData.vatGstDetails.documents =
+          updateData.vatGstDetails.documents || [];
+
+        if (
+          updateData.vatGstDetails.vatStatus === "REGISTERED" &&
+          !updateData.vatGstDetails.vatNumber
+        ) {
+          throw createAppError(
+            "VAT number is required for REGISTERED status",
+            400,
+            "MISSING_VAT_NUMBER"
+          );
+        }
+
+        // Handle document replace/remove
+        const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
+        if (updateData.vatGstDetails._replaceDocuments) {
+          updateData.vatGstDetails.documents =
+            updateData.vatGstDetails.documents || [];
+        } else if (updateData._removeVatDocuments?.length) {
+          updateData.vatGstDetails.documents = oldDocs.filter(
+            (doc) =>
+              !updateData._removeVatDocuments.includes(doc._id?.toString())
+          );
+          updateData.vatGstDetails.documents.push(
+            ...(updateData.vatGstDetails.documents || [])
+          );
+        } else {
+          updateData.vatGstDetails.documents = [
+            ...oldDocs,
+            ...(updateData.vatGstDetails.documents || []),
+          ];
+        }
+        delete updateData.vatGstDetails._replaceDocuments;
+        delete updateData._removeVatDocuments;
+      }
+
+      // 3. Process bankDetails updates - convert dates
+      if (updateData.bankDetails?.length) {
+        updateData.bankDetails = updateData.bankDetails.map((bank) => {
+          const updatedBank = { ...bank };
+          // Convert date fields
+          if (bank.maturityDate) {
+            updatedBank.maturityDate = new Date(bank.maturityDate);
+          } else if (bank.maturityDate === null || bank.maturityDate === "") {
+            updatedBank.maturityDate = null;
+          }
+          if (bank.pdcReceiptMaturityDate) {
+            updatedBank.pdcReceiptMaturityDate = new Date(
+              bank.pdcReceiptMaturityDate
+            );
+          } else if (
+            bank.pdcReceiptMaturityDate === null ||
+            bank.pdcReceiptMaturityDate === ""
+          ) {
+            updatedBank.pdcReceiptMaturityDate = null;
+          }
+          return updatedBank;
+        });
+      }
+
+      // 4. Process KYC updates
+      if (updateData.kycDetails?.length) {
+        const oldKyc = tradeDebtor.kycDetails || [];
+        updateData.kycDetails = updateData.kycDetails
+          .filter((kyc) => kyc.documentType && kyc.documentNumber)
+          .map((kycUpdate) => {
+            const old =
+              oldKyc.find(
+                (k) =>
+                  k.documentType === kycUpdate.documentType &&
+                  k.documentNumber === kycUpdate.documentNumber
+              ) || {};
+            const oldDocs = old.documents || [];
+
+            let finalDocs = oldDocs;
+            if (kycUpdate.documents) {
+              if (kycUpdate._replaceDocuments) {
+                finalDocs = kycUpdate.documents;
+              } else if (kycUpdate._removeDocuments?.length) {
+                finalDocs = oldDocs.filter(
+                  (doc) =>
+                    !kycUpdate._removeDocuments.includes(doc._id?.toString())
+                );
+                finalDocs.push(...kycUpdate.documents);
+              } else {
+                finalDocs = [...oldDocs, ...kycUpdate.documents];
+              }
+            }
+
+            return {
+              ...kycUpdate,
+              documents: finalDocs,
+              isVerified: kycUpdate.isVerified ?? false,
+              issueDate: kycUpdate.issueDate
+                ? new Date(kycUpdate.issueDate)
+                : null,
+              expiryDate: kycUpdate.expiryDate
+                ? new Date(kycUpdate.expiryDate)
+                : null,
+            };
+          });
+      }
+
+      // 5. Re-init cash balances if currencies changed
+      if (updateData.acDefinition?.currencies?.length > 0) {
+        updateData.balances = {
+          cashBalance: updateData.acDefinition.currencies.map((c) => ({
+            currency: c.currency?._id || c.currency,
+            amount: 0,
+            isDefault: !!c.isDefault,
+            lastUpdated: new Date(),
+          })),
+          goldBalance: {
+            totalGrams: 0,
+            totalValue: 0,
+            lastUpdated: new Date(),
+          },
+          totalOutstanding: 0,
+          lastBalanceUpdate: new Date(),
+        };
+      }
+
+      // 6. Set audit fields
+      updateData.updatedBy = adminId;
+      updateData.updatedAt = new Date();
+
+      // 7. Collect S3 keys to delete
+      const filesToDelete = this.getFilesToDelete(tradeDebtor, updateData);
+
+      // 8. Update DB
+      const updated = await AccountType.findByIdAndUpdate(id, updateData, {
+        new: true,
+        runValidators: true,
+      }).populate([
+        {
+          path: "acDefinition.currencies.currency",
+          select: "currencyCode currencyName symbol description",
+        },
+        {
+          path: "acDefinition.branches.branch",
+          select: "branchCode branchName address",
+        },
+        {
+          path: "balances.cashBalance.currency",
+          select: "currencyCode currencyName symbol",
+        },
+        { path: "limitsMargins.currency", select: "currencyCode" },
+        { path: "createdBy", select: "name email role" },
+        { path: "updatedBy", select: "name email role" },
+      ]);
+
+      // 9. Delete old S3 files
+      let s3Result = { successful: [], failed: [] };
+      if (filesToDelete.length > 0) {
+        try {
+          s3Result = await deleteMultipleS3Files(filesToDelete);
+        } catch (err) {
+          console.error("S3 cleanup failed:", err);
+          s3Result.failed = filesToDelete.map((key) => ({
+            key,
+            error: err.message,
+          }));
+        }
+      }
+
+      return {
+        ...updated.toObject(),
+        _filesManagement: {
+          filesDeleted: s3Result.successful?.length || 0,
+          filesFailedToDelete: s3Result.failed?.length || 0,
+          deletedKeys: s3Result.successful?.map((r) => r.key) || [],
+          failedKeys: s3Result.failed?.map((r) => r.key) || [],
+        },
+      };
+    } catch (error) {
+      this._handleServiceError(error);
+    }
+  }
+
+  // Helper method to determine files to delete
+  static getFilesToDelete(tradeDebtor, updateData) {
+    const filesToDelete = [];
+
+    // Handle VAT/GST document deletion
+    if (
+      updateData.vatGstDetails &&
+      updateData.vatGstDetails._replaceDocuments
+    ) {
+      const oldVatDocs = tradeDebtor.vatGstDetails?.documents || [];
+      oldVatDocs.forEach((doc) => {
+        if (doc.s3Key) {
+          filesToDelete.push(doc.s3Key);
+        }
+      });
+    } else if (updateData._removeVatDocuments?.length) {
+      const oldVatDocs = tradeDebtor.vatGstDetails?.documents || [];
+      oldVatDocs.forEach((doc) => {
+        if (
+          updateData._removeVatDocuments.includes(doc._id?.toString()) &&
+          doc.s3Key
+        ) {
+          filesToDelete.push(doc.s3Key);
+        }
+      });
     }
 
-    // === 5. SORTING ===
-    let sortObj = { favorite: -1,createdAt :-1 }; // Always show favorites first
+    // Handle KYC document deletion
+    if (updateData.kycDetails?.length) {
+      updateData.kycDetails.forEach((kycUpdate, index) => {
+        if (kycUpdate._replaceDocuments) {
+          const oldKyc = tradeDebtor.kycDetails?.find(
+            (kyc) =>
+              kyc.documentType === kycUpdate.documentType &&
+              kyc.documentNumber === kycUpdate.documentNumber
+          );
+          if (oldKyc?.documents) {
+            oldKyc.documents.forEach((doc) => {
+              if (doc.s3Key) {
+                filesToDelete.push(doc.s3Key);
+              }
+            });
+          }
+        } else if (kycUpdate._removeDocuments?.length) {
+          const oldKyc = tradeDebtor.kycDetails?.find(
+            (kyc) =>
+              kyc.documentType === kycUpdate.documentType &&
+              kyc.documentNumber === kycUpdate.documentNumber
+          );
+          if (oldKyc?.documents) {
+            oldKyc.documents.forEach((doc) => {
+              if (
+                kycUpdate._removeDocuments.includes(doc._id?.toString()) &&
+                doc.s3Key
+              ) {
+                filesToDelete.push(doc.s3Key);
+              }
+            });
+          }
+        }
+      });
+    }
 
-    // if (sort && typeof sort === 'object' && !Array.isArray(sort)) {
-    //   // If sort is a plain object, use it directly
-    //   sortObj = sort;
-    // } else if (Array.isArray(sort)) {
-    //   sort.forEach(([field, dir]) => {
-    //     sortObj[field] = dir === "desc" ? -1 : 1;
-    //   });
-    // } else {
-    //   if (sortBy === "favorite") {
-    //     sortObj.favorite = sortOrder === "desc" ? -1 : 1;
-    //     sortObj.createdAt = -1;
-    //   } else {
-    //     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
-    //   }
-    // }
-    console.log(sortObj,'////////////////////')
-    // === 6. EXECUTE QUERY ===
-    const [tradeDebtors, total] = await Promise.all([
-      AccountType.find(query)
-        .populate([
-          {
-            path: "acDefinition.currencies.currency",
-            select: "currencyCode description",
-          },
-          {
-            path: "balances.cashBalance.currency",
-            select: "currencyCode conversionRate description",
-          },
-          {
-            path:"accountType",
-            select:"name prefix"
-          },
-          { path: "acDefinition.branches.branch", select: "code name" },
-          { path: "createdBy", select: "name email" },
-          { path: "updatedBy", select: "name email" },
-        ])
-        .sort(sortObj)
-        .skip(skip)
-        .limit(parseInt(limit)),
-
-      AccountType.countDocuments(query),
-    ]);
-
-    return {
-      tradeDebtors,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit),
-      },
-    };
-  } catch (error) {
-    console.error("Error in getAllTradeDebtors:", error);
-    throw createAppError("Error fetching trade debtors", 500, "FETCH_ERROR");
+    return filesToDelete;
   }
-}
-// {
-//   path: "balances.cashBalance.currency",
-//   select: "code name symbol",
-// },
+
+  // Get all trade debtors with pagination and filters
+  static async getAllTradeDebtors(options = {}) {
+    try {
+      const {
+        page = 1,
+        limit = 100,
+        search = "",
+        status = "",
+        classification = "",
+        sortBy = "createdAt",
+        sortOrder = "desc",
+        accountType,
+        sort,
+      } = options;
+
+      const skip = (page - 1) * limit;
+      const query = {};
+
+      // === 1. SEARCH ===
+      if (search) {
+        query.$or = [
+          { accountType: { $regex: search, $options: "i" } },
+          { customerName: { $regex: search, $options: "i" } },
+          { accountCode: { $regex: search, $options: "i" } },
+          { shortName: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      if (status) {
+        query.status = status;
+      }
+
+      if (classification) {
+        query.classification = classification;
+      }
+
+      console.log(accountType, "-----------------------");
+      let accountTypeIds = [];
+      if (Array.isArray(accountType) && accountType.length > 0) {
+        const normalizedNames = accountType.map((name) =>
+          name.trim().toLowerCase()
+        );
+
+        const modes = await AccountMode.find(
+          {
+            name: {
+              $regex: `^(${normalizedNames
+                .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+                .join("|")})$`,
+              $options: "i",
+            },
+          },
+          { _id: 1 }
+        ).lean();
+
+        accountTypeIds = modes.map((m) => m._id);
+        console.log(accountTypeIds, "================");
+        if (accountTypeIds.length === 0) {
+          return {
+            tradeDebtors: [],
+            pagination: {
+              currentPage: parseInt(page),
+              totalPages: 0,
+              totalItems: 0,
+              itemsPerPage: parseInt(limit),
+            },
+          };
+        }
+
+        query.accountType = { $in: accountTypeIds };
+      }
+
+      // === 5. SORTING ===
+      let sortObj = { favorite: -1, createdAt: -1 }; // Always show favorites first
+
+      // if (sort && typeof sort === 'object' && !Array.isArray(sort)) {
+      //   // If sort is a plain object, use it directly
+      //   sortObj = sort;
+      // } else if (Array.isArray(sort)) {
+      //   sort.forEach(([field, dir]) => {
+      //     sortObj[field] = dir === "desc" ? -1 : 1;
+      //   });
+      // } else {
+      //   if (sortBy === "favorite") {
+      //     sortObj.favorite = sortOrder === "desc" ? -1 : 1;
+      //     sortObj.createdAt = -1;
+      //   } else {
+      //     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
+      //   }
+      // }
+      console.log(sortObj, "////////////////////");
+      // === 6. EXECUTE QUERY ===
+      const [tradeDebtors, total] = await Promise.all([
+        AccountType.find(query)
+          .populate([
+            {
+              path: "acDefinition.currencies.currency",
+              select: "currencyCode description",
+            },
+            {
+              path: "accountType",
+              select: "name prefix",
+            },
+            { path: "acDefinition.branches.branch", select: "code name" },
+            { path: "createdBy", select: "name email" },
+            { path: "updatedBy", select: "name email" },
+          ])
+          .sort(sortObj)
+          .skip(skip)
+          .limit(parseInt(limit)),
+
+        AccountType.countDocuments(query),
+      ]);
+
+      return {
+        tradeDebtors,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          itemsPerPage: parseInt(limit),
+        },
+      };
+    } catch (error) {
+      console.error("Error in getAllTradeDebtors:", error);
+      throw createAppError("Error fetching trade debtors", 500, "FETCH_ERROR");
+    }
+  }
+  // {
+  //   path: "balances.cashBalance.currency",
+  //   select: "code name symbol",
+  // },
 
   // Get trade debtor by ID
   static async getTradeDebtorById(id) {
@@ -682,17 +790,15 @@ static getFilesToDelete(tradeDebtor, updateData) {
     }
   }
 
-
-
   static async _isDebtorUsedInRegistry(debtorId) {
     const count = await Registry.countDocuments({
       party: debtorId,
-      isActive: true,              
+      isActive: true,
     }).exec();
-  
+
     return count > 0;
   }
-  
+
   /**
    * Soft-delete trade debtor (mark as inactive)
    */
@@ -704,7 +810,7 @@ static getFilesToDelete(tradeDebtor, updateData) {
       if (!tradeDebtor) {
         throw createAppError("Trade debtor not found", 404, "DEBTOR_NOT_FOUND");
       }
-  
+
       const isUsed = await this._isDebtorUsedInRegistry(id);
       if (isUsed) {
         throw createAppError(
@@ -713,7 +819,7 @@ static getFilesToDelete(tradeDebtor, updateData) {
           "DEBTOR_HAS_TRANSACTIONS"
         );
       }
-  
+
       const deletedTradeDebtor = await AccountType.findByIdAndUpdate(
         id,
         {
@@ -723,7 +829,7 @@ static getFilesToDelete(tradeDebtor, updateData) {
         },
         { new: true }
       );
-  
+
       return deletedTradeDebtor;
     } catch (error) {
       if (error.name === "CastError") {
@@ -732,20 +838,20 @@ static getFilesToDelete(tradeDebtor, updateData) {
       throw error;
     }
   }
-  
+
   /**
    * Hard-delete trade debtor (permanent removal + S3 cleanup)
    */
   static async hardDeleteTradeDebtor(id) {
     const session = await mongoose.startSession();
     session.startTransaction();
-    console.log(id,"delete user id")
+    console.log(id, "delete user id");
     try {
       const tradeDebtor = await AccountType.findById(id).session(session);
       if (!tradeDebtor) {
         throw createAppError("Trade debtor not found", 404, "DEBTOR_NOT_FOUND");
       }
-  
+
       const isUsed = await this._isDebtorUsedInRegistry(id);
       if (isUsed) {
         throw createAppError(
@@ -754,13 +860,13 @@ static getFilesToDelete(tradeDebtor, updateData) {
           "DEBTOR_HAS_TRANSACTIONS"
         );
       }
-  
+
       // Extract S3 keys *before* DB removal
       const s3Keys = this.extractS3Keys(tradeDebtor);
-  
+
       // 1. Delete DB record
       await AccountType.findByIdAndDelete(id).session(session);
-  
+
       // 2. Delete S3 files (outside transaction – idempotent & fire-and-forget)
       let s3DeletionResult = { successful: [], failed: [] };
       if (s3Keys.length > 0) {
@@ -780,30 +886,29 @@ static getFilesToDelete(tradeDebtor, updateData) {
           };
         }
       }
-  
+
       await session.commitTransaction();
-  
+
       const result = {
         message: "Trade debtor permanently deleted",
         filesDeleted: {
           total: s3Keys.length,
           successful: s3DeletionResult.successful?.length || 0,
           failed: s3DeletionResult.failed?.length || 0,
-          successfulKeys:
-            s3DeletionResult.successful?.map((r) => r.key) || [],
+          successfulKeys: s3DeletionResult.successful?.map((r) => r.key) || [],
           failedKeys: s3DeletionResult.failed?.map((r) => r.key) || [],
         },
       };
-  
+
       if (s3DeletionResult.failed?.length) {
         result.message += " (warning: some files may remain in S3)";
         result.filesDeleted.errors = s3DeletionResult.failed;
       }
-  
+
       return result;
     } catch (error) {
       await session.abortTransaction();
-  
+
       if (error.name === "CastError") {
         throw createAppError("Invalid trade debtor ID", 400, "INVALID_ID");
       }
@@ -930,16 +1035,24 @@ static getFilesToDelete(tradeDebtor, updateData) {
   }
 
   static _handleServiceError(error) {
-    if (error.name === 'ValidationError') {
+    if (error.name === "ValidationError") {
       const msgs = Object.values(error.errors).map((e) => e.message);
-      throw createAppError(`Validation failed: ${msgs.join(', ')}`, 400, 'VALIDATION_ERROR');
+      throw createAppError(
+        `Validation failed: ${msgs.join(", ")}`,
+        400,
+        "VALIDATION_ERROR"
+      );
     }
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
-      throw createAppError(`Duplicate value for ${field}`, 400, 'DUPLICATE_FIELD');
+      throw createAppError(
+        `Duplicate value for ${field}`,
+        400,
+        "DUPLICATE_FIELD"
+      );
     }
-    if (error.name === 'CastError') {
-      throw createAppError(`Invalid ID format`, 400, 'INVALID_ID');
+    if (error.name === "CastError") {
+      throw createAppError(`Invalid ID format`, 400, "INVALID_ID");
     }
     throw error;
   }
