@@ -460,6 +460,23 @@ export const createTradeDebtor = async (req, res, next) => {
   }
 };
 
+export const generateAcCode = async (req, res, next) => {
+  try {
+    const { accountModeId } = req.params;
+    if (!accountModeId) {
+      throw createAppError('Account mode ID is required', 400, 'MISSING_ACCOUNT_MODE');
+    }
+    const code = await generateUniqueAccountCode(accountModeId);
+    res.status(200).json({
+      success: true,
+      message: 'Account code generated successfully',
+      accountCode: code,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const updateTradeDebtor = async (req, res, next) => {
   let uploadedFiles = [];
   try {

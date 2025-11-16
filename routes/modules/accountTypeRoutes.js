@@ -12,6 +12,7 @@ import {
   getDebtorStatistics,
   bulkUpdateStatus,
   bulkDeleteDebtors,
+  generateAcCode,
 } from "../../controllers/modules/accountTypeController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import { tradeDebtorUploadHandler } from "../../utils/fileUpload.js";
@@ -27,6 +28,7 @@ router.get("/active", getActiveDebtorsList);
 router.get("/search", searchDebtors);
 router.get("/statistics", getDebtorStatistics);
 router.get("/:id", getTradeDebtorById);
+router.get("/generate-code/:accountModeId", generateAcCode);
 router.post(
   "/",
   tradeDebtorUploadHandler({
