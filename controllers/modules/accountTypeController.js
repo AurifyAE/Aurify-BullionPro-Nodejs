@@ -487,8 +487,6 @@ export const updateTradeDebtor = async (req, res, next) => {
     const { updatetype } = req.query;
     let updateData = { ...req.body };
 
-    console.log("Update data received:", updateData);
-
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
     }
@@ -946,7 +944,6 @@ export const getAllTradeDebtors = async (req, res, next) => {
       sortOrder = "desc",
       accountType,
     } = req.query;
-    console.log("req.query",req.query)
     const trimmedSortBy = sortBy.trim();
     const direction = sortOrder.trim() === "asc" ? 1 : -1;
 
@@ -988,7 +985,6 @@ export const getAllTradeDebtors = async (req, res, next) => {
     };
 
     const result = await AccountTypeService.getAllTradeDebtors(options);
-    console.log("result",JSON.stringify(result))
 
     res.status(200).json({
       success: true,

@@ -151,7 +151,7 @@ const entrySchema = new mongoose.Schema(
     cash: [
       {
         branch: {
-          type: String, 
+          type: String,
           default: null,
         },
         cashType: {
@@ -228,6 +228,11 @@ const entrySchema = new mongoose.Schema(
         },
       },
     ],
+    status: {
+      type: String,
+      enum: ["draft", "submitted", "approved", "cancelled"],
+      default: "approved",
+    },
     // Attachments array
     attachments: {
       type: [AttachmentSchema],

@@ -12,5 +12,5 @@ router.get('/metal-receipts', authenticateToken, entryMasterController.getMetalR
 router.get('/metal-payments', authenticateToken, entryMasterController.getMetalPayments);
 router.get('/:id', authenticateToken, entryMasterController.getEntryById);
 router.delete('/:id', authenticateToken, entryMasterController.deleteEntryById);
-
-export default router;
+router.patch('/:id/status', authenticateToken, entryMasterController.updateStatus);
+export default router;                      

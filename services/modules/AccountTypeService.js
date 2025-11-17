@@ -141,8 +141,7 @@ class AccountTypeService {
           isDefault: !!c.isDefault,
           lastUpdated: new Date(),
         }));
-        console.log("-----------------------");
-        console.log(cashBalance);
+  
         debtorData.balances = {
           goldBalance: {
             totalGrams: 0,
