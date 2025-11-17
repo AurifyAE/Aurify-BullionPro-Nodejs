@@ -236,8 +236,8 @@ class MetalTransactionService {
           entries.push(
             ...this.buildSaleEntries(
               mode,
-              _id,
-              totals,
+              id,
+              itemTotals,
               party,
               baseTransactionId,
               voucherDate,
@@ -3805,7 +3805,7 @@ class MetalTransactionService {
     }
 
     const transactions = await MetalTransaction.find(query)
-      .populate("partyCode", "accountCode customerName ")
+      .populate("partyCode", "accountCode customerName")
       .populate("partyCurrency", "code symbol")
       .populate("itemCurrency", "code symbol")
       .populate("baseCurrency", "code symbol")
@@ -3816,6 +3816,8 @@ class MetalTransactionService {
       .sort({ voucherDate: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit);
+
+      console.log("Fetched transactions:", transactions);
 
     const total = await MetalTransaction.countDocuments(query);
 
