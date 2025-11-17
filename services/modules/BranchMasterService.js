@@ -17,6 +17,27 @@ class BranchMasterService {
     return await this._populateBranch(branch._id);
   }
 
+  static async updateBranch(id, updateData, adminId) {
+    const branch = await Branch.findById(id);
+    if (!branch) throw createAppError("Branch not found", 404, "NOT_FOUND");
+
+    // Code change check
+    if (updateData.code && updateData.code !== branch.code) {
+      const codeExists = await Branch.isCodeExists(updateData.code, id);
+      if (codeExists) {
+        throw createAppError(`Branch code '${updateData.code}' already exists`, 409, "DUPLICATE_CODE");
+      }
+    }
+
+    const updated = await Branch.findByIdAndUpdate(
+      id,
+      { ...updateData, updatedBy: adminId },
+      { new: true, runValidators: true }
+    );
+
+    return await this._populateBranch(updated._id);
+  }
+  
   static async getAllBranches(page = 1, limit = 10, search = "", status = "") {
     const skip = (page - 1) * limit;
     const query = {};
@@ -58,26 +79,7 @@ class BranchMasterService {
     return branch;
   }
 
-  static async updateBranch(id, updateData, adminId) {
-    const branch = await Branch.findById(id);
-    if (!branch) throw createAppError("Branch not found", 404, "NOT_FOUND");
 
-    // Code change check
-    if (updateData.code && updateData.code !== branch.code) {
-      const codeExists = await Branch.isCodeExists(updateData.code, id);
-      if (codeExists) {
-        throw createAppError(`Branch code '${updateData.code}' already exists`, 409, "DUPLICATE_CODE");
-      }
-    }
-
-    const updated = await Branch.findByIdAndUpdate(
-      id,
-      { ...updateData, updatedBy: adminId },
-      { new: true, runValidators: true }
-    );
-
-    return await this._populateBranch(updated._id);
-  }
 
   static async deleteBranch(id) {
     const branch = await Branch.findById(id);
