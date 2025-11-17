@@ -1,17 +1,11 @@
-/**
- * Transaction Controller
- * Handles all transaction-related HTTP requests
- */
 import { TransactionFixingService } from "../../services/modules/TransactionFixingService.js";
 import { createAppError } from "../../utils/errorHandler.js";
 
-// Validation constants
-const VALID_TRANSACTION_TYPES = ["PURCHASE", "SELL"];
+const VALID_TYPES = ["PURCHASE", "SALE", "PURCHASE-FIXING", "SALE-FIXING"];
 const DEFAULT_PREFIX = "PF";
-const DEFAULT_PAYMENT_TERMS = "Cash";
 const DEFAULT_SALESMAN = "N/A";
+const DEFAULT_PAYMENT_TERMS = "Cash";
 
-// Helper function to validate transaction data
 const validateTransactionData = (data, isUpdate = false) => {
   if (!isUpdate && !data.partyId) {
     throw createAppError(
@@ -21,9 +15,9 @@ const validateTransactionData = (data, isUpdate = false) => {
     );
   }
 
-  if (data.type && !VALID_TRANSACTION_TYPES.includes(data.type.toUpperCase())) {
+  if (data.type && !VALID_TYPES.includes(data.type.toUpperCase())) {
     throw createAppError(
-      "Type must be either 'PURCHASE' or 'SELL'",
+      `Type must be one of: ${VALID_TYPES.join(", ")}`,
       400,
       "INVALID_TYPE"
     );
@@ -37,71 +31,58 @@ const validateTransactionData = (data, isUpdate = false) => {
     );
   }
 
-  // Validate orders array elements
-  if (data.orders && Array.isArray(data.orders)) {
-    data.orders.forEach((order, index) => {
-      if (order.quantityGm !== undefined && (isNaN(parseFloat(order.quantityGm)) || parseFloat(order.quantityGm) < 0)) {
-        throw createAppError(
-          `Invalid quantity in order ${index + 1}: must be a non-negative number`,
-          400,
-          "INVALID_QUANTITY"
-        );
-      }
-      if (order.price !== undefined && (isNaN(parseFloat(order.price)) || parseFloat(order.price) < 0)) {
-        throw createAppError(
-          `Invalid price in order ${index + 1}: must be a non-negative number`,
-          400,
-          "INVALID_PRICE"
-        );
-      }
-      if (order.goldBidValue !== undefined && (isNaN(parseFloat(order.goldBidValue)) || parseFloat(order.goldBidValue) < 0)) {
-        throw createAppError(
-          `Invalid gold bid value in order ${index + 1}: must be a non-negative number`,
-          400,
-          "INVALID_GOLD_BID_VALUE"
-        );
-      }
-    });
-  }
+  data.orders?.forEach((o, i) => {
+    if (!o.commodity)
+      throw createAppError(`Order ${i + 1}: commodity required`, 400);
+    if (isNaN(o.grossWeight) || o.grossWeight <= 0)
+      throw createAppError(`Order ${i + 1}: grossWeight must be >0`, 400);
+    if (isNaN(o.oneGramRate) || o.oneGramRate <= 0)
+      throw createAppError(`Order ${i + 1}: oneGramRate must be >0`, 400);
+    if (isNaN(o.price) || o.price <= 0)
+      throw createAppError(`Order ${i + 1}: price must be >0`, 400);
+  });
 };
 
-/**
- * Create a new transaction
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const createTransaction = async (req, res, next) => {
-
   try {
     const {
       partyId,
-      salesman = DEFAULT_SALESMAN,
-      paymentTerms = DEFAULT_PAYMENT_TERMS,
       type,
-      orders,
+      referenceNumber,
       voucherCode,
       voucherType,
       prefix = DEFAULT_PREFIX,
-      goldBidValue,
+      partyPhone,
+      partyEmail,
+      salesman = DEFAULT_SALESMAN,
+      orders,
     } = req.body;
 
     const transactionData = {
       partyId: partyId?.trim(),
       type: type?.toUpperCase(),
+      referenceNumber: referenceNumber?.trim(),
       voucherNumber: voucherCode || null,
-      voucherType,
-      prefix,
-      salesman,
-      paymentTerms,
-      orders: orders?.map(order => ({
-        quantityGm: parseFloat(order.quantityGm) || 0,
-        notes: order.notes?.trim() || "",
-        price: parseFloat(order.price) || 0,
-        goldBidValue: parseFloat(order.goldBidValue) || 0,
-        metalType: order.metalType?.trim(),
-        paymentTerms: order.paymentTerms || DEFAULT_PAYMENT_TERMS,
-      })) || [],
+      voucherType: voucherType?.trim(),
+      prefix: prefix?.trim(),
+      partyPhone: partyPhone?.trim() || "N/A",
+      partyEmail: partyEmail?.trim() || "N/A",
+      salesman: salesman?.trim() || DEFAULT_SALESMAN,
+      orders: (orders || []).map((o) => ({
+        commodity: o.commodity,
+        commodityValue: Number(o.commodityValue) || 0,
+        grossWeight: Number(o.grossWeight),
+        oneGramRate: Number(o.oneGramRate),
+        ozWeight: Number(o.ozWeight) || 0,
+        currentBidValue: Number(o.currentBidValue),
+        bidValue: Number(o.bidValue),
+        pureWeight: Number(o.pureWeight),
+        selectedCurrencyId: o.selectedCurrencyId,
+        purity: Number(o.purity),
+        remarks: o.remarks?.trim() || "",
+        price: +o.price,
+        metalType: o.metalType,
+      })),
     };
 
     validateTransactionData(transactionData);
@@ -116,17 +97,11 @@ export const createTransaction = async (req, res, next) => {
       message: "Transaction created successfully",
       data: transaction,
     });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 };
 
-/**
- * Get all transactions with pagination and filtering
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const getAllTransactions = async (req, res, next) => {
   try {
     const {
@@ -171,12 +146,6 @@ export const getAllTransactions = async (req, res, next) => {
   }
 };
 
-/**
- * Get transaction by ID
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const getTransactionById = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -185,7 +154,9 @@ export const getTransactionById = async (req, res, next) => {
       throw createAppError("Transaction ID is required", 400, "MISSING_ID");
     }
 
-    const transaction = await TransactionFixingService.getTransactionById(id.trim());
+    const transaction = await TransactionFixingService.getTransactionById(
+      id.trim()
+    );
 
     res.status(200).json({
       success: true,
@@ -197,81 +168,57 @@ export const getTransactionById = async (req, res, next) => {
   }
 };
 
-/**
- * Update existing transaction
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const updateTransaction = async (req, res, next) => {
   try {
-   
     const { id } = req.params;
-    const {
-      partyId,
-      salesman,
-      paymentTerms,
-      type,
-      orders,
-      voucherCode,
-      voucherType,
-      prefix,
-      goldBidValue,
-      status,
-      notes,
-    } = req.body;
+    const payload = req.body;
 
-    if (!id?.trim()) {
-      throw createAppError("Transaction ID is required", 400, "MISSING_ID");
-    }
+    if (!id?.trim())
+      throw createAppError("Transaction ID required", 400, "MISSING_ID");
 
     const updateData = {};
+    const fields = [
+      "partyId",
+      "type",
+      "referenceNumber",
+      "voucherNumber",
+      "voucherType",
+      "prefix",
+      "partyPhone",
+      "partyEmail",
+      "salesman",
+      "orders",
+    ];
 
-    // Handle all fields similar to createTransaction
-    if (partyId !== undefined) updateData.partyId = partyId?.trim();
-    if (salesman !== undefined) updateData.salesman = salesman?.trim() || DEFAULT_SALESMAN;
-    if (paymentTerms !== undefined) updateData.paymentTerms = paymentTerms?.trim() || DEFAULT_PAYMENT_TERMS;
-    if (type !== undefined) updateData.type = type?.toUpperCase();
-    if (voucherCode !== undefined) updateData.voucherNumber = voucherCode || null;
-    if (voucherType !== undefined) updateData.voucherType = voucherType?.trim();
-    if (prefix !== undefined) updateData.prefix = prefix?.trim() || DEFAULT_PREFIX;
-    if (goldBidValue !== undefined) {
-      const parsedGoldBidValue = parseFloat(goldBidValue);
-      if (goldBidValue !== null && (isNaN(parsedGoldBidValue) || parsedGoldBidValue < 0)) {
-        throw createAppError(
-          "Gold bid value must be a non-negative number",
-          400,
-          "INVALID_GOLD_BID_VALUE"
-        );
+    fields.forEach((f) => {
+      if (payload[f] !== undefined) {
+        updateData[f] = payload[f];
+        if (typeof payload[f] === "string") updateData[f] = payload[f].trim();
       }
-      updateData.goldBidValue = parsedGoldBidValue || 0;
-    }
-    if (notes !== undefined) updateData.notes = notes?.trim() || null;
-    if (status !== undefined) updateData.status = status?.trim();
+    });
 
-    // Handle orders array consistently with createTransaction
-    if (orders !== undefined) {
-      updateData.orders = orders?.map(order => ({
-        quantityGm: parseFloat(order.quantityGm) || 0,
-        notes: order.notes?.trim() || "",
-        price: parseFloat(order.price) || 0,
-        goldBidValue: parseFloat(order.goldBidValue) || 0,
-        metalType: order.metalType?.trim(),
-        paymentTerms: order.paymentTerms?.trim() || DEFAULT_PAYMENT_TERMS,
-      })) || [];
+    // Normalise orders the same way as create
+    if (updateData.orders) {
+      updateData.orders = updateData.orders.map((o) => ({
+        commodity: o.commodity,
+        commodityValue: Number(o.commodityValue) || 0,
+        grossWeight: Number(o.grossWeight),
+        oneGramRate: Number(o.oneGramRate),
+        ozWeight: Number(o.ozWeight) || 0,
+        currentBidValue: Number(o.currentBidValue),
+        bidValue: Number(o.bidValue),
+        pureWeight: Number(o.pureWeight),
+        selectedCurrencyId: o.selectedCurrencyId,
+        purity: Number(o.purity),
+        remarks: o.remarks?.trim() || "",
+        price: o.price?.toString(),
+        metalType: o.metalType,
+      }));
     }
 
-    // Validate the update data
     validateTransactionData(updateData, true);
-
-    // Ensure at least one field is provided for update
-    if (Object.keys(updateData).length === 0) {
-      throw createAppError(
-        "At least one field is required to update",
-        400,
-        "NO_UPDATE_FIELDS"
-      );
-    }
+    if (Object.keys(updateData).length === 0)
+      throw createAppError("No fields to update", 400, "NO_UPDATE_FIELDS");
 
     const transaction = await TransactionFixingService.updateTransaction(
       id.trim(),
@@ -279,23 +226,16 @@ export const updateTransaction = async (req, res, next) => {
       req.admin.id
     );
 
-    res.status(200).json({
+    res.json({
       success: true,
       message: "Transaction updated successfully",
       data: transaction,
     });
-  } catch (error) {
-    console.error('Update transaction error:', error);
-    next(error);
+  } catch (err) {
+    next(err);
   }
 };
 
-/**
- * Soft delete a transaction
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const deleteTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -319,12 +259,6 @@ export const deleteTransaction = async (req, res, next) => {
   }
 };
 
-/**
- * Cancel a transaction
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const cancelTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -348,12 +282,6 @@ export const cancelTransaction = async (req, res, next) => {
   }
 };
 
-/**
- * Permanently delete a transaction
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const permanentDeleteTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -362,7 +290,9 @@ export const permanentDeleteTransaction = async (req, res, next) => {
       throw createAppError("Transaction ID is required", 400, "MISSING_ID");
     }
 
-    const result = await TransactionFixingService.permanentDeleteTransaction(id.trim());
+    const result = await TransactionFixingService.permanentDeleteTransaction(
+      id.trim()
+    );
 
     res.status(200).json({
       success: true,
@@ -373,12 +303,6 @@ export const permanentDeleteTransaction = async (req, res, next) => {
   }
 };
 
-/**
- * Restore a soft-deleted transaction
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const restoreTransaction = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -402,12 +326,6 @@ export const restoreTransaction = async (req, res, next) => {
   }
 };
 
-/**
- * Get transactions by party ID
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const getTransactionsByParty = async (req, res, next) => {
   try {
     const { partyId } = req.params;
@@ -433,12 +351,6 @@ export const getTransactionsByParty = async (req, res, next) => {
   }
 };
 
-/**
- * Get transactions by metal type
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const getTransactionsByMetal = async (req, res, next) => {
   try {
     const { metalType } = req.params;
@@ -464,12 +376,6 @@ export const getTransactionsByMetal = async (req, res, next) => {
   }
 };
 
-/**
- * Get party metal summary
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
- */
 export const getPartyMetalSummary = async (req, res, next) => {
   try {
     const { partyId, metalType } = req.params;

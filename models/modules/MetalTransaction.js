@@ -1,6 +1,47 @@
 import mongoose from "mongoose";
 
-// Sub-schema for individual stock items within a transaction
+// ====================== ATTACHMENT SUB-SCHEMA ======================
+const AttachmentSchema = new mongoose.Schema(
+  {
+    fileName: {
+      type: String,
+      required: [true, "File name is required"],
+      trim: true,
+      maxlength: 255,
+    },
+    s3Key: {
+      type: String,
+      required: [true, "S3 key is required"],
+      trim: true,
+    },
+    uploadedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: true,
+    },
+    uploadedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+      default: null,
+    },
+    type: {
+      type: String,
+      enum: ["invoice", "receipt", "certificate", "photo", "contract", "other"],
+      default: "other",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  { _id: true, timestamps: false }
+);
+
 const StockItemSchema = new mongoose.Schema(
   {
     stockCode: {
@@ -20,6 +61,18 @@ const StockItemSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Pieces cannot be negative"],
     },
+    passPurityDiff: {
+      type: Boolean,
+      default: true,
+    },
+    excludeVAT: {
+      type: Boolean,
+      default: false,
+    },
+    vatOnMaking: {
+      type: Boolean,
+      default: false,
+    },
     grossWeight: {
       type: Number,
       default: 0,
@@ -31,72 +84,103 @@ const StockItemSchema = new mongoose.Schema(
       min: [0, "Purity cannot be negative"],
       max: [100, "Purity cannot exceed 100%"],
     },
-    standerdPurity: {
+    purityStd: {
       type: Number,
       required: [true, "Standard Purity is required"],
       min: [0, "Standard Purity cannot be negative"],
       max: [100, "Standard Purity cannot exceed 100%"],
     },
-    purityDiffWeight: {
+    pureWeightStd: {
       type: Number,
-      default: 0,
-    },
-    purityWeight: {
-      type: Number,
-      required: [true, "Purity Weight is required"],
-      min: [0, "Purity Weight cannot be negative"],
+      required: [true, "Standard Purity Weight is required"],
+      min: [0, "Standard Purity Weight cannot be negative"],
     },
     pureWeight: {
       type: Number,
       required: [true, "pureWeight is required"],
       min: [0, "pureWeight cannot be negative"],
     },
+    purityDifference: {
+      type: Number,
+      default: 0,
+    },
     weightInOz: {
       type: Number,
       required: [true, "Weight in Oz is required"],
       min: [0, "Weight in Oz cannot be negative"],
     },
+    FXGain: {
+      type: Number,
+      default: 0,
+    },
+    FXLoss: {
+      type: Number,
+      default: 0,
+    },
     cashDebit: {
       type: Number,
-      default: 0
+      default: 0,
     },
     cashCredit: {
       type: Number,
-      default: 0
+      default: 0,
     },
     goldDebit: {
       type: Number,
-      default: 0
+      default: 0,
     },
     goldCredit: {
       type: Number,
-      default: 0
+      default: 0,
     },
-    // Individual metal rate for this stock item
     metalRate: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MetalRateMaster",
       required: [true, "Metal Rate is required for stock item"],
     },
-    // Metal Rate & Requirements for this specific item
+
     metalRateRequirements: {
       amount: {
         type: Number,
         default: 0,
         min: [0, "Amount cannot be negative"],
       },
-      rate: {
+      rateInGram: {
         type: Number,
         default: 0,
         min: [0, "Rate cannot be negative"],
       },
+      currentBidValue: {
+        type: Number,
+        default: 2500,
+        min: [0, "Rate cannot be negative"],
+      },
+      bidValue: {
+        type: Number,
+        default: 2500,
+        min: [0, "Rate cannot be negative"],
+      },
     },
-    // Making Charges for this specific item
-    makingCharges: {
-      amount: {
+
+    makingUnit: {
+      unit: {
+        type: String,
+        default: null,
+      },
+      makingRate: {
         type: Number,
         default: 0,
         min: [0, "Amount cannot be negative"],
+      },
+      makingAmount: {
+        type: Number,
+        default: 0,
+      },
+    },
+    premiumDiscount: {
+      amount: {
+        type: Number,
+        default: 0,
       },
       rate: {
         type: Number,
@@ -114,34 +198,7 @@ const StockItemSchema = new mongoose.Schema(
         default: 0,
       },
     },
-    otherCharges: {
-      amount: {
-        type: Number,
-        default: 0,
-        min: [0, "Amount cannot be negative"],
-      },
-      // rate is actually the percentage
-      rate: {
-        type: Number,
-        default: 0,
-      },
-      description: {
-        type: String,
-        default: null,
-      },
-    },
-    // Premium for this specific item
-    premium: {
-      amount: {
-        type: Number,
-        default: 0,
-      },
-      rate: {
-        type: Number,
-        default: 0,
-      },
-    },
-    // Item-specific totals
+
     itemTotal: {
       baseAmount: {
         type: Number,
@@ -173,17 +230,112 @@ const StockItemSchema = new mongoose.Schema(
         min: [0, "Item Total Amount cannot be negative"],
       },
     },
-    // Item-specific notes
-    itemNotes: {
+
+    remarks: {
       type: String,
       trim: true,
       maxlength: [500, "Item notes cannot exceed 500 characters"],
     },
-    // Item status
+
     itemStatus: {
       type: String,
-      enum: ["active", "cancelled"],
-      default: "active",
+      default: "Approved",
+    },
+  },
+  {
+    _id: true, // Each stock item will have its own _id
+    timestamps: false, // We'll use the parent transaction timestamps
+  }
+);
+
+const otherChargeSchema = new mongoose.Schema(
+  {
+    code: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "OtherCharges",
+      required: [true, "OtherCharges Code is required"],
+      index: true, // Added index for better query performance
+    },
+    description: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: [200, "Description cannot exceed 200 characters"],
+    },
+    debit: {
+      account: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Account",
+        required: [true, "Party Code is required"],
+        index: true,
+      },
+      baseCurrency: {
+        type: Number,
+        default: 0,
+        min: [0, "baseCurrency cannot be negative"],
+      },
+      foreignCurrency: {
+        type: Number,
+        default: 0,
+        min: [0, "baseCurrency cannot be negative"],
+      },
+      currency: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "CurrencyMaster",
+        default: null,
+      },
+    },
+    credit: {
+      account: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Account",
+        required: [true, "Party Code is required"],
+        index: true,
+      },
+      baseCurrency: {
+        type: Number,
+        default: 0,
+        min: [0, "baseCurrency cannot be negative"],
+      },
+      foreignCurrency: {
+        type: Number,
+        default: 0,
+        min: [0, "baseCurrency cannot be negative"],
+      },
+      currency: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "CurrencyMaster",
+        default: null,
+      },
+    },
+    vatDetails: {
+      vatNo: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      invoiceNo: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      invoiceDate: {
+        type: Date,
+        default: Date.now,
+      },
+      vatRate: {
+        type: Number,
+        default: 0,
+      },
+      vatAmount: {
+        type: Number,
+        default: 0,
+      },
+    },
+    remarks: {
+      type: String,
+      trim: true,
+      maxlength: [500, "Item notes cannot exceed 500 characters"],
     },
   },
   {
@@ -208,6 +360,10 @@ const MetalTransactionSchema = new mongoose.Schema(
       default: false,
     },
     unfix: {
+      type: Boolean,
+      default: false,
+    },
+    hedge: {
       type: Boolean,
       default: false,
     },
@@ -253,7 +409,15 @@ const MetalTransactionSchema = new mongoose.Schema(
       trim: true,
       maxlength: [100, "Sub Ledger cannot exceed 100 characters"],
     },
-
+    supplierInvoiceNo: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    supplierDate: {
+      type: Date,
+      default: null,
+    },
     // Credit Terms
     crDays: {
       type: Number,
@@ -282,30 +446,50 @@ const MetalTransactionSchema = new mongoose.Schema(
         message: "Transaction must contain at least one stock item",
       },
     },
+    otherCharges: {
+      type: [otherChargeSchema],
+      default: [],
+    },
 
-    // SESSION-SPECIFIC TOTALS - ONLY TOTALS KEPT
-    totalAmountSession: {
-      totalAmountAED: {
+    totalSummary: {
+      itemSubTotal: {
         type: Number,
         default: 0,
-        min: [0, "Session Total Amount cannot be negative"],
       },
-      netAmountAED: {
+      itemTotalVat: {
         type: Number,
         default: 0,
-        min: [0, "Session Net Amount cannot be negative"],
       },
-      vatAmount: {
+      itemTotalAmount: {
         type: Number,
         default: 0,
-        min: [0, "Session VAT Amount cannot be negative"],
       },
-      vatPercentage: {
+      totalOtherCharges: {
         type: Number,
         default: 0,
-        min: [0, "Session VAT Percentage cannot be negative"],
-        max: [100, "Session VAT Percentage cannot exceed 100%"],
       },
+      totalOtherChargesVat: {
+        type: Number,
+        default: 0,
+      },
+      netAmount: {
+        type: Number,
+        default: 0,
+      },
+      rounded: {
+        type: Number,
+        default: 0,
+      },
+      totalAmount: {
+        type: Number,
+        default: 0,
+      },
+    },
+
+    // S3 ATTACHMENTS
+    attachments: {
+      type: [AttachmentSchema],
+      default: [],
     },
 
     // Status and Tracking
@@ -382,68 +566,68 @@ MetalTransactionSchema.virtual("totalStockItems").get(function () {
 });
 
 // Instance method to update session totals
-MetalTransactionSchema.methods.updateSessionTotals = function (sessionTotals) {
-  if (sessionTotals) {
-    this.totalAmountSession.totalAmountAED = sessionTotals.totalAmountAED || 0;
-    this.totalAmountSession.netAmountAED = sessionTotals.netAmountAED || 0;
-    this.totalAmountSession.vatAmount = sessionTotals.vatAmount || 0;
-    this.totalAmountSession.vatPercentage = sessionTotals.vatPercentage || 0;
-  }
-  return this;
-};
+// MetalTransactionSchema.methods.updateSessionTotals = function (sessionTotals) {
+//   if (sessionTotals) {
+//     this.totalAmountSession.totalAmountAED = sessionTotals.totalAmountAED || 0;
+//     this.totalAmountSession.netAmountAED = sessionTotals.netAmountAED || 0;
+//     this.totalAmountSession.vatAmount = sessionTotals.vatAmount || 0;
+//     this.totalAmountSession.vatPercentage = sessionTotals.vatPercentage || 0;
+//   }
+//   return this;
+// };
 
 // Instance method to calculate session totals from stock items
-MetalTransactionSchema.methods.calculateSessionTotals = function (
-  vatPercentage = 0
-) {
-  if (!this.stockItems || this.stockItems.length === 0) {
-    return this;
-  }
+// MetalTransactionSchema.methods.calculateSessionTotals = function (
+//   vatPercentage = 0
+// ) {
+//   if (!this.stockItems || this.stockItems.length === 0) {
+//     return this;
+//   }
 
-  // Calculate totals from stock items
-  const netAmount = this.stockItems.reduce((sum, item) => {
-    return sum + (item.itemTotal?.subTotal || 0);
-  }, 0);
+//   // Calculate totals from stock items
+//   const netAmount = this.stockItems.reduce((sum, item) => {
+//     return sum + (item.itemTotal?.subTotal || 0);
+//   }, 0);
 
-  this.totalAmountSession.netAmountAED = netAmount;
+//   this.totalAmountSession.netAmountAED = netAmount;
 
-  // Calculate VAT
-  if (vatPercentage > 0) {
-    this.totalAmountSession.vatPercentage = vatPercentage;
-    this.totalAmountSession.vatAmount = (netAmount * vatPercentage) / 100;
-  } else {
-    // Sum VAT from individual items
-    this.totalAmountSession.vatAmount = this.stockItems.reduce((sum, item) => {
-      return sum + (item.itemTotal?.vatAmount || 0);
-    }, 0);
-    this.totalAmountSession.vatPercentage =
-      netAmount > 0 ? (this.totalAmountSession.vatAmount / netAmount) * 100 : 0;
-  }
+//   // Calculate VAT
+//   if (vatPercentage > 0) {
+//     this.totalAmountSession.vatPercentage = vatPercentage;
+//     this.totalAmountSession.vatAmount = (netAmount * vatPercentage) / 100;
+//   } else {
+//     // Sum VAT from individual items
+//     this.totalAmountSession.vatAmount = this.stockItems.reduce((sum, item) => {
+//       return sum + (item.itemTotal?.vatAmount || 0);
+//     }, 0);
+//     this.totalAmountSession.vatPercentage =
+//       netAmount > 0 ? (this.totalAmountSession.vatAmount / netAmount) * 100 : 0;
+//   }
 
-  this.totalAmountSession.totalAmountAED =
-    this.totalAmountSession.netAmountAED + this.totalAmountSession.vatAmount;
+//   this.totalAmountSession.totalAmountAED =
+//     this.totalAmountSession.netAmountAED + this.totalAmountSession.vatAmount;
 
-  return this;
-};
+//   return this;
+// };
 
 // Static method to update session totals for multiple transactions
-MetalTransactionSchema.statics.updateMultipleSessionTotals = async function (
-  transactionIds,
-  sessionTotals
-) {
-  return this.updateMany(
-    { _id: { $in: transactionIds } },
-    {
-      $set: {
-        "totalAmountSession.totalAmountAED": sessionTotals.totalAmountAED || 0,
-        "totalAmountSession.netAmountAED": sessionTotals.netAmountAED || 0,
-        "totalAmountSession.vatAmount": sessionTotals.vatAmount || 0,
-        "totalAmountSession.vatPercentage": sessionTotals.vatPercentage || 0,
-        updatedAt: new Date(),
-      },
-    }
-  );
-};
+// MetalTransactionSchema.statics.updateMultipleSessionTotals = async function (
+//   transactionIds,
+//   sessionTotals
+// ) {
+//   return this.updateMany(
+//     { _id: { $in: transactionIds } },
+//     {
+//       $set: {
+//         "totalAmountSession.totalAmountAED": sessionTotals.totalAmountAED || 0,
+//         "totalAmountSession.netAmountAED": sessionTotals.netAmountAED || 0,
+//         "totalAmountSession.vatAmount": sessionTotals.vatAmount || 0,
+//         "totalAmountSession.vatPercentage": sessionTotals.vatPercentage || 0,
+//         updatedAt: new Date(),
+//       },
+//     }
+//   );
+// };
 
 // Static method to get purchases by party
 MetalTransactionSchema.statics.getPurchasesByParty = async function (
@@ -537,32 +721,29 @@ MetalTransactionSchema.statics.getPurchaseStats = async function (
 };
 
 // Static method to get sale statistics
-MetalTransactionSchema.statics.getSaleStats = async function (partyId = null) {
-  const matchCondition = {
-    transactionType: "sale",
-    isActive: true,
-    status: "completed",
-  };
-  if (partyId) {
-    matchCondition.partyCode = new mongoose.Types.ObjectId(partyId);
-  }
+// MetalTransactionSchema.statics.getSaleStats = async function (partyId = null) {
+//   const matchCondition = {
+//     transactionType: "sale",
+//     isActive: true,
+//     status: "completed",
+//   };
+//   if (partyId) {
+//     matchCondition.partyCode = new mongoose.Types.ObjectId(partyId);
+//   }
 
-  return this.aggregate([
-    { $match: matchCondition },
-    {
-      $group: {
-        _id: null,
-        totalTransactions: { $sum: 1 },
-        totalStockItems: { $sum: { $size: "$stockItems" } },
-        // Session totals
-        sessionTotalAmount: { $sum: "$totalAmountSession.totalAmountAED" },
-        sessionNetAmount: { $sum: "$totalAmountSession.netAmountAED" },
-        sessionVatAmount: { $sum: "$totalAmountSession.vatAmount" },
-        avgTransactionValue: { $avg: "$totalAmountSession.totalAmountAED" },
-      },
-    },
-  ]);
-};
+//   return this.aggregate([
+//     { $match: matchCondition },
+//     {
+//       $group: {
+//         _id: null,
+//         totalTransactions: { $sum: 1 },
+//         totalStockItems: { $sum: { $size: "$stockItems" } },
+//         // Session totals
+
+//       },
+//     },
+//   ]);
+// };
 
 // Instance method to add stock item to transaction
 MetalTransactionSchema.methods.addStockItem = function (stockItemData) {

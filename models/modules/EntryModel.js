@@ -1,5 +1,47 @@
 import mongoose from "mongoose";
 
+// Attachment subdocument schema
+const AttachmentSchema = new mongoose.Schema(
+  {
+    fileName: {
+      type: String,
+      required: [true, "File name is required"],
+      trim: true,
+      maxlength: 255,
+    },
+    s3Key: {
+      type: String,
+      required: [true, "S3 key is required"],
+      trim: true,
+    },
+    uploadedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: true,
+    },
+    uploadedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+      default: null,
+    },
+    type: {
+      type: String,
+      enum: ["invoice", "receipt", "certificate", "photo", "contract", "other"],
+      default: "other",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  { _id: true, timestamps: false }
+);
+
 const entrySchema = new mongoose.Schema(
   {
     type: {
@@ -8,8 +50,8 @@ const entrySchema = new mongoose.Schema(
       enum: [
         "metal-receipt",
         "metal-payment",
-        "cash receipt",
-        "cash payment",
+        "cash-receipt",
+        "cash-payment",
         "currency-receipt",
       ],
     },
@@ -109,14 +151,13 @@ const entrySchema = new mongoose.Schema(
     cash: [
       {
         branch: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Branch",
+          type: String, 
           default: null,
         },
         cashType: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "AccountMaster",
+          type: String,
           required: [true, "Cash type is required for cash entries"],
+          enum: ["cash", "bank", "cheque", "transfer", "card"],
         },
         currency: {
           type: mongoose.Schema.Types.ObjectId,
@@ -139,18 +180,59 @@ const entrySchema = new mongoose.Schema(
         },
         Totalamount: {
           type: Number,
-          default: 0
+          default: 0,
         },
         vatPercentage: {
           type: Number,
-          default: 0
+          default: 0,
         },
         vatAmount: {
           type: Number,
-          default: 0
-        }
+          default: 0,
+        },
+        // Additional fields for different cash types
+        account: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Account",
+          default: null,
+        },
+        chequeNo: {
+          type: String,
+          trim: true,
+        },
+        chequeDate: {
+          type: Date,
+          default: null,
+        },
+        chequeBank: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Account",
+          default: null,
+        },
+        transferReference: {
+          type: String,
+          trim: true,
+        },
+        transferAccount: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Account",
+          default: null,
+        },
+        cardChargePercent: {
+          type: Number,
+          default: 0,
+        },
+        cardChargeAmount: {
+          type: Number,
+          default: 0,
+        },
       },
     ],
+    // Attachments array
+    attachments: {
+      type: [AttachmentSchema],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -162,11 +244,15 @@ entrySchema.pre("save", function (next) {
   // Validate required fields based on type
   if (["metal-receipt", "metal-payment"].includes(this.type)) {
     if (!this.stockItems?.length) {
-      return next(new Error("stockItems array cannot be empty for metal entries"));
+      return next(
+        new Error("stockItems array cannot be empty for metal entries")
+      );
     }
     // Clear cash array for metal entries
     this.cash = undefined;
-  } else if (["cash-receipt", "cash-payment", "currency-receipt"].includes(this.type)) {
+  } else if (
+    ["cash-receipt", "cash-payment", "currency-receipt"].includes(this.type)
+  ) {
     if (!this.cash?.length) {
       return next(new Error("Cash array cannot be empty for cash entries"));
     }
@@ -176,10 +262,22 @@ entrySchema.pre("save", function (next) {
 
   // Calculate totals for metal entries
   if (this.stockItems?.length) {
-    this.totalGrossWeight = this.stockItems.reduce((sum, item) => sum + (item.grossWeight || 0), 0);
-    this.totalPurityWeight = this.stockItems.reduce((sum, item) => sum + (item.purityWeight || 0), 0);
-    this.totalNetWeight = this.stockItems.reduce((sum, item) => sum + (item.netWeight || 0), 0);
-    this.totalOzWeight = this.stockItems.reduce((sum, item) => sum + (item.ozWeight || 0), 0);
+    this.totalGrossWeight = this.stockItems.reduce(
+      (sum, item) => sum + (item.grossWeight || 0),
+      0
+    );
+    this.totalPurityWeight = this.stockItems.reduce(
+      (sum, item) => sum + (item.purityWeight || 0),
+      0
+    );
+    this.totalNetWeight = this.stockItems.reduce(
+      (sum, item) => sum + (item.netWeight || 0),
+      0
+    );
+    this.totalOzWeight = this.stockItems.reduce(
+      (sum, item) => sum + (item.ozWeight || 0),
+      0
+    );
   } else {
     this.totalGrossWeight = 0;
     this.totalPurityWeight = 0;
@@ -189,7 +287,10 @@ entrySchema.pre("save", function (next) {
 
   // Calculate total amount for cash entries
   if (this.cash?.length) {
-    this.totalAmount = this.cash.reduce((sum, cashItem) => sum + (cashItem.amount || 0), 0);
+    this.totalAmount = this.cash.reduce(
+      (sum, cashItem) => sum + (cashItem.amount || 0),
+      0
+    );
   } else {
     this.totalAmount = 0;
   }
@@ -201,6 +302,7 @@ entrySchema.pre("save", function (next) {
 entrySchema.index({ type: 1, voucherDate: -1 });
 entrySchema.index({ party: 1, createdAt: -1 });
 entrySchema.index({ enteredBy: 1, createdAt: -1 });
+entrySchema.index({ "attachments.uploadedBy": 1 });
 
 const Entry = mongoose.model("Entry", entrySchema);
 
