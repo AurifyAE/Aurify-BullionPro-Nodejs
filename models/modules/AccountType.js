@@ -1,9 +1,9 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const documentSchema = new mongoose.Schema({
   fileName: { type: String, default: null },
   filePath: { type: String, default: null },
-  fileType: { type: String, enum: ['image', 'pdf'], default: null },
+  fileType: { type: String, enum: ["image", "pdf"], default: null },
   s3Key: { type: String, default: null },
   uploadedAt: { type: Date, default: Date.now },
 });
@@ -11,15 +11,15 @@ const documentSchema = new mongoose.Schema({
 const vatGstDetailsSchema = new mongoose.Schema({
   vatStatus: {
     type: String,
-    enum: ['REGISTERED', 'UNREGISTERED', 'EXEMPTED'],
-    default: 'UNREGISTERED',
-    required: [true, 'VAT status is required'],
+    enum: ["REGISTERED", "UNREGISTERED", "EXEMPTED"],
+    default: "UNREGISTERED",
+    required: [true, "VAT status is required"],
   },
   isVerified: {
     type: Boolean,
-    default: false, 
+    default: false,
   },
-  vatNumber: { type: String, trim: true, maxlength: 50, default: '' },
+  vatNumber: { type: String, trim: true, maxlength: 50, default: "" },
   documents: {
     type: [documentSchema],
     default: [],
@@ -30,17 +30,17 @@ const AccountSchema = new mongoose.Schema(
   {
     // Basic Account Information
     accountType: {
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'AccountMode',
-      required: [true, 'Account type is required'],
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AccountMode",
+      required: [true, "Account type is required"],
       trim: true,
     },
     title: {
       type: String,
       required: false,
       trim: true,
-      default:"null",
-      maxlength: [10, 'Title cannot exceed 10 characters'],
+      default: "null",
+      maxlength: [10, "Title cannot exceed 10 characters"],
     },
     favorite: {
       type: Boolean,
@@ -48,17 +48,20 @@ const AccountSchema = new mongoose.Schema(
     },
     accountCode: {
       type: String,
-      required: [true, 'Account code is required'],
+      required: [true, "Account code is required"],
       trim: true,
       uppercase: true,
-      maxlength: [10, 'Account code cannot exceed 20 characters'],
-      match: [/^[A-Z0-9_-]+$/, "Account code can only contain uppercase letters, numbers, hyphen or underscore"],
+      maxlength: [10, "Account code cannot exceed 20 characters"],
+      match: [
+        /^[A-Z0-9_-]+$/,
+        "Account code can only contain uppercase letters, numbers, hyphen or underscore",
+      ],
     },
     customerName: {
       type: String,
-      required: [true, 'Customer name is required'],
+      required: [true, "Customer name is required"],
       trim: true,
-      maxlength: [100, 'Customer name cannot exceed 100 characters'],
+      maxlength: [100, "Customer name cannot exceed 100 characters"],
     },
     classification: {
       type: String,
@@ -68,7 +71,7 @@ const AccountSchema = new mongoose.Schema(
     remarks: {
       type: String,
       trim: true,
-      maxlength: [500, 'Remarks cannot exceed 500 characters'],
+      maxlength: [500, "Remarks cannot exceed 500 characters"],
       default: null,
     },
 
@@ -84,9 +87,10 @@ const AccountSchema = new mongoose.Schema(
           {
             currency: {
               type: mongoose.Schema.Types.ObjectId,
-              ref: 'CurrencyMaster',
+              ref: "CurrencyMaster",
               required: true,
             },
+            code: { type: String, default: "AED" },
             amount: { type: Number, default: 0 },
             isDefault: { type: Boolean, default: false },
             lastUpdated: { type: Date, default: Date.now },
@@ -103,34 +107,47 @@ const AccountSchema = new mongoose.Schema(
       currencies: {
         type: [
           {
-            currency: { type: mongoose.Schema.Types.ObjectId, ref: 'CurrencyMaster', required: true },
+            currency: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "CurrencyMaster",
+              required: true,
+            },
             isDefault: { type: Boolean, default: false },
             purchasePrice: { type: Number, min: 0, default: 0 },
             sellPrice: { type: Number, min: 0, default: 0 },
             convertRate: { type: Number, min: 0, default: 1 },
           },
         ],
-        required: [true, 'At least one currency is required'],
+        required: [true, "At least one currency is required"],
         validate: {
           validator: (currencies) => currencies && currencies.length > 0,
-          message: 'At least one currency must be specified',
+          message: "At least one currency must be specified",
         },
       },
       branches: {
-        type: [{
-          branch: { type: mongoose.Schema.Types.ObjectId },
-          isDefault: { type: Boolean, default: false }
-        }],
-        default: []
-      }
+        type: [
+          {
+            branch: { type: mongoose.Schema.Types.ObjectId },
+            isDefault: { type: Boolean, default: false },
+          },
+        ],
+        default: [],
+      },
     },
 
     // Limits & Margins
     limitsMargins: {
       type: [
         {
-          limitType: { type: String, enum: ['Fixed', 'Flexible', 'Unlimited'], default: 'Fixed' },
-          currency: { type: mongoose.Schema.Types.ObjectId, ref: 'CurrencyMaster' },
+          limitType: {
+            type: String,
+            enum: ["Fixed", "Flexible", "Unlimited"],
+            default: "Fixed",
+          },
+          currency: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "CurrencyMaster",
+          },
           unfixGold: { type: Number, min: 0, default: 0 },
           netAmount: { type: Number, min: 0, default: 0 },
           creditDaysAmt: { type: Number, min: 0, default: 0 },
@@ -147,21 +164,49 @@ const AccountSchema = new mongoose.Schema(
     addresses: {
       type: [
         {
-          streetAddress: { type: String, trim: true, maxlength: 200, default: null },
+          streetAddress: {
+            type: String,
+            trim: true,
+            maxlength: 200,
+            default: null,
+          },
           city: { type: String, trim: true, maxlength: 50, default: null },
           country: { type: String, trim: true, maxlength: 50, default: null },
           zipCode: { type: String, trim: true, maxlength: 20, default: null },
-          phoneNumber1: { type: String, trim: true, match: /^[0-9]{10,15}$/, default: null },
-          phoneNumber2: { type: String, trim: true, match: /^[0-9]{10,15}$/, default: null },
-          phoneNumber3: { type: String, trim: true, match: /^[0-9]{10,15}$/, default: null },
+          phoneNumber1: {
+            type: String,
+            trim: true,
+            match: /^[0-9]{10,15}$/,
+            default: null,
+          },
+          phoneNumber2: {
+            type: String,
+            trim: true,
+            match: /^[0-9]{10,15}$/,
+            default: null,
+          },
+          phoneNumber3: {
+            type: String,
+            trim: true,
+            match: /^[0-9]{10,15}$/,
+            default: null,
+          },
           email: {
             type: String,
             trim: true,
             lowercase: true,
-            match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email'],
+            match: [
+              /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+              "Please enter a valid email",
+            ],
             default: null,
           },
-          telephone: { type: String, trim: true, match: /^[0-9]{10,15}$/, default: null },
+          telephone: {
+            type: String,
+            trim: true,
+            match: /^[0-9]{10,15}$/,
+            default: null,
+          },
           website: { type: String, trim: true, default: null },
           isPrimary: { type: Boolean, default: false },
         },
@@ -174,19 +219,32 @@ const AccountSchema = new mongoose.Schema(
       type: [
         {
           name: { type: String, trim: true, maxlength: 100, required: true },
-          designation: { type: String, trim: true, maxlength: 50, default: null },
+          designation: {
+            type: String,
+            trim: true,
+            maxlength: 50,
+            default: null,
+          },
           email: {
             type: String,
             trim: true,
             lowercase: true,
-            match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email'],
+            match: [
+              /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+              "Please enter a valid email",
+            ],
             required: true,
           },
-          mobile: { type: String, trim: true, match: /^[0-9]{10,15}$/, default: null },
+          mobile: {
+            type: String,
+            trim: true,
+            match: /^[0-9]{10,15}$/,
+            default: null,
+          },
           document: {
             fileName: { type: String, default: null },
             filePath: { type: String, default: null },
-            fileType: { type: String, enum: ['image', 'pdf'], default: null },
+            fileType: { type: String, enum: ["image", "pdf"], default: null },
             s3Key: { type: String, default: null },
             uploadedAt: { type: Date, default: Date.now },
           },
@@ -204,30 +262,57 @@ const AccountSchema = new mongoose.Schema(
       type: [
         {
           bankName: { type: String, trim: true, maxlength: 100, default: null },
-          swiftId: { type: String, trim: true, uppercase: true, maxlength: 20, default: null },
-          iban: { type: String, trim: true, uppercase: true, maxlength: 50, default: null },
-          accountNumber: { type: String, trim: true, maxlength: 30, default: null },
-          branchCode: { type: String, trim: true, maxlength: 20, default: null },
+          swiftId: {
+            type: String,
+            trim: true,
+            uppercase: true,
+            maxlength: 20,
+            default: null,
+          },
+          iban: {
+            type: String,
+            trim: true,
+            uppercase: true,
+            maxlength: 50,
+            default: null,
+          },
+          accountNumber: {
+            type: String,
+            trim: true,
+            maxlength: 30,
+            default: null,
+          },
+          branchCode: {
+            type: String,
+            trim: true,
+            maxlength: 20,
+            default: null,
+          },
           purpose: { type: String, default: null },
           country: { type: String, trim: true, maxlength: 50, default: null },
           city: { type: String, trim: true, maxlength: 50, default: null },
-          routingCode: { type: String, trim: true, maxlength: 20, default: null },
+          routingCode: {
+            type: String,
+            trim: true,
+            maxlength: 20,
+            default: null,
+          },
           address: { type: String, trim: true, maxlength: 200, default: null },
           isPrimary: { type: Boolean, default: false },
           // New PDC related fields
-          pdcIssue: { 
-            type: String, 
-            trim: true, 
-            // enum: ['Bank', 'Customer', 'Supplier', 'Vendor', ''], 
-            default: '' 
+          pdcIssue: {
+            type: String,
+            trim: true,
+            // enum: ['Bank', 'Customer', 'Supplier', 'Vendor', ''],
+            default: "",
           },
-          maturityDate: { 
-            type: Date, 
-            default: null 
+          maturityDate: {
+            type: Date,
+            default: null,
           },
-          pdcReceiptMaturityDate: { 
-            type: Date, 
-            default: null 
+          pdcReceiptMaturityDate: {
+            type: Date,
+            default: null,
           },
         },
       ],
@@ -239,7 +324,12 @@ const AccountSchema = new mongoose.Schema(
       type: [
         {
           documentType: { type: String, trim: true, default: null },
-          documentNumber: { type: String, trim: true, maxlength: 50, default: null },
+          documentNumber: {
+            type: String,
+            trim: true,
+            maxlength: 50,
+            default: null,
+          },
           issueDate: {
             type: Date,
             default: null,
@@ -250,13 +340,13 @@ const AccountSchema = new mongoose.Schema(
               validator: function (value) {
                 return !value || !this.issueDate || value > this.issueDate;
               },
-              message: 'Expiry date must be after issue date',
+              message: "Expiry date must be after issue date",
             },
             default: null,
           },
           isVerified: {
             type: Boolean,
-            default: false, 
+            default: false,
           },
           documents: {
             type: [documentSchema],
@@ -272,9 +362,21 @@ const AccountSchema = new mongoose.Schema(
 
     // Status and Activity
     isActive: { type: Boolean, default: true },
-    status: { type: String, enum: ['active', 'inactive', 'suspended'], default: 'active' },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', required: true },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    status: {
+      type: String,
+      enum: ["active", "inactive", "suspended"],
+      default: "active",
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: true,
+    },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -289,22 +391,22 @@ AccountSchema.index({ customerName: 1 });
 AccountSchema.index({ status: 1 });
 AccountSchema.index({ isActive: 1 });
 AccountSchema.index({ createdAt: -1 });
-AccountSchema.index({ 'employees.email': 1 });
-AccountSchema.index({ 'vatGstDetails.vatNumber': 1 });
-AccountSchema.index({ 'balances.totalOutstanding': 1 });
-AccountSchema.index({ 'balances.goldBalance.totalGrams': 1 });
-AccountSchema.index({ 'balances.cashBalance.currency': 1 });
-AccountSchema.index({ 'balances.cashBalance.amount': 1 });
+AccountSchema.index({ "employees.email": 1 });
+AccountSchema.index({ "vatGstDetails.vatNumber": 1 });
+AccountSchema.index({ "balances.totalOutstanding": 1 });
+AccountSchema.index({ "balances.goldBalance.totalGrams": 1 });
+AccountSchema.index({ "balances.cashBalance.currency": 1 });
+AccountSchema.index({ "balances.cashBalance.amount": 1 });
 
 // Pre-save middleware (unchanged)
-AccountSchema.pre('save', function (next) {
+AccountSchema.pre("save", function (next) {
   if (this.accountCode) {
     this.accountCode = this.accountCode.toUpperCase();
   }
 
   if (this.acDefinition?.currencies?.length > 0 && this.isNew) {
-    const existingCurrencies = this.balances.cashBalance.map(
-      (cb) => cb.currency?.toString()
+    const existingCurrencies = this.balances.cashBalance.map((cb) =>
+      cb.currency?.toString()
     );
 
     this.acDefinition.currencies.forEach((currencyDef) => {
@@ -330,23 +432,27 @@ AccountSchema.pre('save', function (next) {
     }
   };
 
-  if (this.addresses) ensureSingle(this.addresses, 'isPrimary');
-  if (this.employees) ensureSingle(this.employees, 'isPrimary');
-  if (this.bankDetails) ensureSingle(this.bankDetails, 'isPrimary');
-  if (this.acDefinition?.branches) ensureSingle(this.acDefinition.branches, 'isDefault');
+  if (this.addresses) ensureSingle(this.addresses, "isPrimary");
+  if (this.employees) ensureSingle(this.employees, "isPrimary");
+  if (this.bankDetails) ensureSingle(this.bankDetails, "isPrimary");
+  if (this.acDefinition?.branches)
+    ensureSingle(this.acDefinition.branches, "isDefault");
 
   next();
 });
 
 // Static and Instance Methods (unchanged, included for completeness)
-AccountSchema.statics.isAccountCodeExists = async function (accountCode, excludeId = null) {
+AccountSchema.statics.isAccountCodeExists = async function (
+  accountCode,
+  excludeId = null
+) {
   const query = { accountCode: accountCode.toUpperCase() };
   if (excludeId) query._id = { $ne: excludeId };
   return !!(await this.findOne(query));
 };
 
 AccountSchema.statics.getActiveAccounts = function () {
-  return this.find({ isActive: true, status: 'active' });
+  return this.find({ isActive: true, status: "active" });
 };
 
 AccountSchema.methods.getPrimaryContact = function () {
@@ -358,7 +464,9 @@ AccountSchema.methods.getPrimaryAddress = function () {
 };
 
 AccountSchema.methods.getPrimaryBank = function () {
-  return this.bankDetails?.find((bank) => bank.isPrimary) || this.bankDetails?.[0];
+  return (
+    this.bankDetails?.find((bank) => bank.isPrimary) || this.bankDetails?.[0]
+  );
 };
 
 AccountSchema.methods.getDefaultCurrencies = function () {
@@ -381,7 +489,7 @@ AccountSchema.methods.updateGoldBalance = function (grams, value) {
 
 AccountSchema.methods.updateCashBalance = function (amount, currencyId) {
   if (!currencyId) {
-    throw new Error('Currency ID is required to update cash balance');
+    throw new Error("Currency ID is required to update cash balance");
   }
 
   const currencyIdStr = currencyId.toString();
@@ -488,7 +596,7 @@ AccountSchema.methods.setDefaultCurrencies = function (currencyIds) {
 AccountSchema.methods.addOrUpdateCurrencyBalance = function (
   currencyId,
   amount,
-  isDefault = false
+  isDefault = falsex
 ) {
   const currencyIdStr = currencyId.toString();
   const existingBalance = this.balances.cashBalance.find(
@@ -526,16 +634,12 @@ AccountSchema.methods.removeCurrencyBalance = function (currencyId) {
   return this.save();
 };
 
-AccountSchema.pre('validate', function (next) {
+AccountSchema.pre("validate", function (next) {
   if (this.accountCode && this.accountCode.length > 10) {
-    this.invalidate(
-      'accountCode',
-      'Account code cannot exceed 10 characters'
-    );
+    this.invalidate("accountCode", "Account code cannot exceed 10 characters");
   }
   next();
 });
 
-
-const Account = mongoose.model('Account', AccountSchema);
+const Account = mongoose.model("Account", AccountSchema);
 export default Account;

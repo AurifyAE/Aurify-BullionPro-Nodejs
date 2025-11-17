@@ -1,69 +1,91 @@
 import mongoose from "mongoose";
 
+// ====================== ATTACHMENT SUB-SCHEMA ======================
+const AttachmentSchema = new mongoose.Schema(
+  {
+    fileName: {
+      type: String,
+      required: [true, "File name is required"],
+      trim: true,
+      maxlength: 255,
+    },
+    s3Key: {
+      type: String,
+      required: [true, "S3 key is required"],
+      trim: true,
+    },
+    uploadedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: true,
+    },
+    uploadedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+      default: null,
+    },
+    type: {
+      type: String,
+      enum: ["invoice", "receipt", "certificate", "photo", "contract", "other"],
+      default: "other",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  { _id: true, timestamps: false }
+);
+
+/* ============================= ORDER SCHEMA ============================= */
 const OrderSchema = new mongoose.Schema(
   {
-    quantityGm: {
-      type: Number,
-      required: [true, "Quantity in grams is required"],
-      min: [0, "Quantity cannot be negative"],
+    commodity: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Commodity",
+      required: [true, "Commodity is required"],
     },
-    price: {
+    commodityValue: { type: Number, default: 0 },
+    grossWeight: {
       type: Number,
-      required: [true, "Price is required"],
-      min: [0, "Price cannot be negative"],
+      required: true,
+      min: [0, "Gross weight must be >= 0"],
     },
-    goldBidValue: {
+    oneGramRate: {
       type: Number,
-      required: [true, "Gold bid value is required"],
-      min: [0, "Gold bid value cannot be negative"],
+      required: true,
+      min: [0, "Rate must be >= 0"],
     },
+    ozWeight: { type: Number, default: 0 },
+    currentBidValue: { type: Number, required: true },
+    bidValue: { type: Number, required: true },
+    pureWeight: { type: Number, required: true },
+    selectedCurrencyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CurrencyMaster",
+      required: true,
+    },
+    purity: { type: Number, required: true },
+    remarks: { type: String, trim: true, default: "" },
+    price: { type: Number, required: true }, // from React as string
     metalType: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MetalRateMaster",
-      required: [true, "Metal type is required"],
-    },
-    paymentTerms: {
-      type: String,
-      trim: true,
-      enum: ["Cash", "Credit", "Other"],
-      default: "Cash",
-    },
-    notes: {
-      type: String,
-      trim: true,
-      maxlength: [500, "Notes cannot exceed 500 characters"],
-      default: "",
+      required: true,
     },
   },
   { _id: false }
 );
 
+/* ============================= MAIN SCHEMA ============================= */
 const TransactionFixingSchema = new mongoose.Schema(
   {
-    transactionId: {
-      type: String,
-      required: true,
-      trim: true,
-      uppercase: true,
-      unique: true,
-    },
-    voucherType: {
-      type: String,
-      trim: true,
-      default: null,
-      maxlength: [50, "Voucher type cannot exceed 50 characters"],
-    },
-    voucherDate: {
-      type: Date,
-      default: Date.now,
-      index: true,
-    },
-    voucherNumber: {
-      type: String,
-      trim: true,
-      maxlength: [50, "Voucher number cannot exceed 50 characters"],
-      index: true,
-    },
+    transactionId: { type: String, required: true, unique: true, trim: true },
     partyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Account",
@@ -71,99 +93,83 @@ const TransactionFixingSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      required: [true, "Transaction type is required"],
-      enum: ["purchase", "sell"],
-      lowercase: true,
+      required: true,
     },
+    referenceNumber: { type: String, trim: true, uppercase: true },
+    voucherNumber: { type: String, trim: true },
+    voucherType: { type: String, trim: true },
+    salesman: { type: String, default: "N/A" },
+
     orders: {
       type: [OrderSchema],
-      validate: {
-        validator: (v) => v.length > 0,
-        message: "At least one order is required",
-      },
+      validate: [(v) => v.length > 0, "At least one order is required"],
     },
-    transactionDate: {
-      type: Date,
-      required: [true, "Transaction date is required"],
-      default: () => new Date(),
+
+    attachments: {
+      type: [AttachmentSchema],
+      default: [],
     },
-    referenceNumber: {
-      type: String,
-      trim: true,
-      default: null,
-      uppercase: true,
-      maxlength: [20, "Reference number cannot exceed 20 characters"],
-    },
-    notes: {
-      type: String,
-      default: null,
-      trim: true,
-      maxlength: [500, "Notes cannot exceed 500 characters"],
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
+    transactionDate: { type: Date, default: Date.now },
+    notes: { type: String, trim: true },
+
+    isActive: { type: Boolean, default: true },
     status: {
       type: String,
       enum: ["active", "inactive", "cancelled"],
       default: "active",
     },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
       required: true,
     },
-    updatedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Admin",
-      default: null,
-    },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
   },
-  {
-    timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
-  }
+  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
-/* ===== Indexes ===== */
+/* ============================= INDEXES ============================= */
 TransactionFixingSchema.index({ partyId: 1, transactionDate: -1 });
 TransactionFixingSchema.index({ type: 1, transactionDate: -1 });
 TransactionFixingSchema.index({ "orders.metalType": 1 });
-TransactionFixingSchema.index({ "orders.metalType": 1, transactionDate: -1 });
 TransactionFixingSchema.index({ status: 1, isActive: 1 });
 
-/* ===== Transaction ID Generator ===== */
-TransactionFixingSchema.pre("validate", function (next) {
+/* ============================= PRE-VALIDATE: Generate ID ============================= */
+TransactionFixingSchema.pre("validate", async function (next) {
   if (!this.transactionId) {
-    const prefix = this.type === "purchase" ? "PUR" : "SELL";
-    const randomPart = Math.floor(10000 + Math.random() * 90000); // 5-digit
-    const timePart = Date.now().toString().slice(-6); // last 6 digits of timestamp
-    this.transactionId = `${prefix}${timePart}${randomPart}`;
+    const prefix =
+      this.prefix || (this.type.includes("purchase") ? "PF" : "SF");
+    this.transactionId = await generateUniqueId(prefix, this.constructor);
   }
-
-  if (this.referenceNumber) {
+  if (this.referenceNumber)
     this.referenceNumber = this.referenceNumber.toUpperCase();
-  }
-
   next();
 });
 
+async function generateUniqueId(prefix, Model) {
+  let id, exists;
+  do {
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    id = `${prefix}${rand}`;
+    exists = await Model.exists({ transactionId: id });
+  } while (exists);
+  return id;
+}
+
+/* ============================= STATIC METHODS ============================= */
 TransactionFixingSchema.statics.getTransactionsByParty = async function (
   partyId,
-  startDate,
-  endDate
+  start,
+  end
 ) {
-  const query = { partyId, status: "active" };
-
-  if (startDate || endDate) {
-    query.transactionDate = {};
-    if (startDate) query.transactionDate.$gte = new Date(startDate);
-    if (endDate) query.transactionDate.$lte = new Date(endDate);
+  const q = { partyId, status: "active" };
+  if (start || end) {
+    q.transactionDate = {};
+    if (start) q.transactionDate.$gte = new Date(start);
+    if (end) q.transactionDate.$lte = new Date(end);
   }
-
-  return this.find(query).sort({ transactionDate: -1 });
+  return this.find(q).sort({ transactionDate: -1 });
 };
 
 export default mongoose.model("TransactionFixing", TransactionFixingSchema);

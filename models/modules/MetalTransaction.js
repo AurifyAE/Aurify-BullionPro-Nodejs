@@ -363,6 +363,10 @@ const MetalTransactionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    hedge: {
+      type: Boolean,
+      default: false,
+    },
     voucherType: {
       type: String,
       trim: true,

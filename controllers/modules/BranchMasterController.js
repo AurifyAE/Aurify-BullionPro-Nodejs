@@ -26,6 +26,32 @@ class BranchMasterController {
     }
   };
 
+
+  static updateBranch = async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const payload = { ...req.body };
+
+      if (req.fileInfo) {
+        payload.logo = {
+          url: req.fileInfo.location || req.fileInfo.path,
+          key: req.fileInfo.filename,
+        };
+      }
+
+      const branch = await BranchMasterService.updateBranch(id, payload, req.admin.id);
+
+      res.status(200).json({
+        success: true,
+        message: "Branch updated successfully",
+        data: branch,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  
   static getAllBranches = async (req, res, next) => {
     try {
       const { page = 1, limit = 10, search = "", status = "" } = req.query;
@@ -63,29 +89,7 @@ class BranchMasterController {
     }
   };
 
-  static updateBranch = async (req, res, next) => {
-    try {
-      const { id } = req.params;
-      const payload = { ...req.body };
 
-      if (req.fileInfo) {
-        payload.logo = {
-          url: req.fileInfo.location || req.fileInfo.path,
-          key: req.fileInfo.filename,
-        };
-      }
-
-      const branch = await BranchMasterService.updateBranch(id, payload, req.admin.id);
-
-      res.status(200).json({
-        success: true,
-        message: "Branch updated successfully",
-        data: branch,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
 
   static deleteBranch = async (req, res, next) => {
     try {

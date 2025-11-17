@@ -127,6 +127,15 @@ const BranchSchema = new mongoose.Schema(
       ref: "Admin",
       required: true,
     },
+    isHedged: {
+      type: Boolean,
+      default: false,
+    },
+    
+    enableMobileApp: {
+      type: Boolean,
+      default: false,
+    },
 
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
