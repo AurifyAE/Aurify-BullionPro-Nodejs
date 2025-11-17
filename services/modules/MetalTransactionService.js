@@ -106,10 +106,8 @@ class MetalTransactionService {
   }
   static async deleteStcoks(voucherCode) {
     try {
-      console.log(`[CLEANUP] Deleting data for voucher: ${voucherCode}`);
       // Delete Inventory Logs
       await InventoryLog.deleteMany({ voucherCode });
-      console.log(`[CLEANUP] Deletion complete for voucher: ${voucherCode}`);
     } catch (error) {
       console.error(
         `[CLEANUP_ERROR] Failed to delete data for voucher: ${voucherCode}`,
@@ -209,12 +207,10 @@ class MetalTransactionService {
       const item = stockItems[i];
       // Build itemTotals from stockItems
       const itemTotals = this.calculateTotals([item], totalSummary);
-      console.log("object");
-      console.log(itemTotals);
+  
 
       switch (transactionType) {
         case "purchase":
-          console.log("---");
           entries.push(
             ...this.buildPurchaseEntries(
               mode,
@@ -506,7 +502,6 @@ class MetalTransactionService {
     otherCharges,
     transactionType
   ) {
-    console.log("here in buildPurchaseFixEntries");
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
@@ -1067,7 +1062,6 @@ class MetalTransactionService {
     otherCharges,
     transactionType
   ) {
-    console.log(otherCharges);
     const entries = [];
     const partyName = party.customerName || party.accountCode;
     const pureValue =
@@ -2185,7 +2179,6 @@ class MetalTransactionService {
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
-    console.log("here in buildSaleFixEntries");
 
     // Sales-fixing entry
     if (totals.pureWeight > 0) {
@@ -4183,11 +4176,8 @@ class MetalTransactionService {
     }
 
     // 5️⃣ Log Summary
-    console.log(
-      `\n===== 💎 BALANCE UPDATE LOG for ${party.customerName} =====`
-    );
+   
     logs.forEach((l) => console.log(l));
-    console.log("=========================================================\n");
   }
 
   static buildUpdateOperations(balanceChanges) {
@@ -4202,9 +4192,7 @@ class MetalTransactionService {
     } = balanceChanges;
     const incObj = {};
     const setObj = {};
-    console.log("---------------");
-    console.log(balanceChanges);
-    console.log("--------------------");
+
     // ✅ Gold
     if (goldBalance !== 0) {
       incObj["balances.goldBalance.totalGrams"] = goldBalance;
@@ -5032,7 +5020,6 @@ class MetalTransactionService {
       // Save updated transaction
       transaction.updatedBy = adminId;
       await transaction.save({ session });
-      console.log(`[UPDATE_TRANSACTION] Transaction ${transactionId} updated`);
 
       // Handle registry and balance updates
       await this.handleRegistryAndBalances(
@@ -5046,18 +5033,14 @@ class MetalTransactionService {
         updateData
       );
       // Commit transaction
-      console.log(
-        `[UPDATE_TRANSACTION] Committing transaction for ${transactionId}`
-      );
+     
       await session.commitTransaction();
 
       // Fetch and return final transaction
       const finalTransaction = await this.getMetalTransactionById(
         transactionId
       );
-      console.log(
-        `[UPDATE_TRANSACTION] Update completed successfully for transaction ${transactionId}`
-      );
+     
       return finalTransaction;
     } catch (error) {
       console.error(

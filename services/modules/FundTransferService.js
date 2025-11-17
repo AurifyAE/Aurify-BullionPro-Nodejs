@@ -49,7 +49,9 @@ class FundTransferService {
         throw createAppError("Sender or receiver account not found", 404);
       }
 
-      // CASH TRANSFER
+      // Check if accounts have sufficient balance for the transfer
+      const transferAmount = Math.abs(value);
+      const isNegativeTransfer = value < 0;
       if (assetType === "CASH") {
         await handleCashTransfer(
           senderAccount,
@@ -284,17 +286,15 @@ async function handleCashTransfer(
   const amount = Math.abs(value);
   const isNegative = value < 0;
 
-  const senderCash = FundTransferService.getDefaultCashBalance(senderAccount);
-  const receiverCash =
-    FundTransferService.getDefaultCashBalance(receiverAccount);
-
-  const prevSenderBal = senderCash.amount;
-  const prevReceiverBal = receiverCash.amount;
-
-  // APPLY TRANSFER
-  if (isNegative) {
-    senderCash.amount += amount;
-    receiverCash.amount -= amount;
+  // Store previous balances for registry logging
+  const senderPreviousBalance = senderAccount.balances.cashBalance.amount;
+  const receiverPreviousBalance = receiverAccount.balances.cashBalance.amount;
+  if (isNegativeTransfer) {
+    // Negative transfer: sender gets credited, receiver gets debited
+    // Example: value = -2000, sender balance = -1000
+    // Result: sender = -1000 + 2000 = 1000, receiver = current - 2000
+    senderAccount.balances.cashBalance.amount -= transferAmount;
+    receiverAccount.balances.cashBalance.amount += transferAmount;
   } else {
     senderCash.amount -= amount;
     receiverCash.amount += amount;

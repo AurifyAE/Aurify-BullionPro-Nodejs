@@ -104,7 +104,6 @@ const handleMetalReceipt = async (entry , reference) => {
 
 // Helper function for cash receipt
 const handleCashReceipt = async (entry) => {
-  console.log(entry)
   // Find AccountType
   const accountType = await AccountType.findOne({ _id: entry.party });
   if (!accountType) {
