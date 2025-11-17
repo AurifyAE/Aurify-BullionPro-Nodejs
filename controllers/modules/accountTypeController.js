@@ -485,7 +485,7 @@ export const updateTradeDebtor = async (req, res, next) => {
     const { id } = req.params;
     const { updatetype } = req.query;
     let updateData = { ...req.body };
-
+    console.log("Update Data:", updateData);
 
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
@@ -701,6 +701,7 @@ export const updateTradeDebtor = async (req, res, next) => {
         updateData.vatGstDetails.documents = replace ? processed : [...updateData.vatGstDetails.documents, ...processed];
       }
     }
+    console.log("After VAT/GST document handling:", updateData.vatGstDetails.documents);
     // Handle KYC documents
     if (updateData.kycDetails) {
       let parsedKycDetails = [];
