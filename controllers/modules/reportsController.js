@@ -327,9 +327,7 @@ export const getTransactionSummary = async (req, res) => {
 export const getOwnStock = async (req, res) => {
   try {
     const filters = req.body;
-    console.log('====================================');
-    console.log(filters);
-    console.log('====================================');
+
     // Call service to get report data
     const reportData = await reportService.getOwnStockReport(filters);
     // Return success response (even if no data found)

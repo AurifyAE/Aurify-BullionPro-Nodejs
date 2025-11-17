@@ -279,10 +279,7 @@ export class ReportService {
         Account.aggregate(receivablesPayablesPipeline),
       ]);
 
-      console.log("-----receivablesAndPayables------");
-      console.log(reportData);
-      console.log(receivablesAndPayables);
-      console.log(getOpeningBalance);
+     
 
       // 4. Format the output
       const formatted = this.formatedOwnStock(reportData, receivablesAndPayables, getOpeningBalance);
@@ -2934,7 +2931,6 @@ export class ReportService {
     return pipeline;
   }
   formatedOwnStock(reportData, receivablesAndPayables, openingBalance) {
-    console.log();
 
     const summary = {
       totalGrossWeight: 0,
@@ -3003,7 +2999,6 @@ export class ReportService {
     summary.shortLongPosition = summary.openingBalance + summary.netPurchase + summary.purityDifference;
 
     // log puriy difference
-    console.log("Purity Difference - Purchase:", purchasePurityDifference, "Sale:", salePurityDifference, "Total:", summary.purityDifference);
 
     return {
       summary,

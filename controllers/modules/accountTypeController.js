@@ -49,7 +49,6 @@ export const createTradeDebtor = async (req, res, next) => {
 
     // ✅ NEW: Generate unique account code automatically
     const accountCode = await generateUniqueAccountCode(accountType);
-    console.log('Generated account code:', accountCode);
 
     // Basic validation - required fields (removed accountCode from here)
     if (!customerName || !accountType) {
@@ -487,7 +486,6 @@ export const updateTradeDebtor = async (req, res, next) => {
     const { updatetype } = req.query;
     let updateData = { ...req.body };
 
-    console.log("Update data received:", updateData);
 
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
@@ -946,7 +944,6 @@ export const getAllTradeDebtors = async (req, res, next) => {
       sortOrder = "desc",
       accountType,
     } = req.query;
-    console.log("req.query",req.query)
     const trimmedSortBy = sortBy.trim();
     const direction = sortOrder.trim() === "asc" ? 1 : -1;
 
@@ -1031,7 +1028,6 @@ export const deleteTradeDebtor = async (req, res, next) => {
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
     }
-    console.log(id,'---')
     const deletedTradeDebtor = await AccountTypeService.deleteTradeDebtor(
       id,
       req.admin.id
@@ -1055,7 +1051,6 @@ export const hardDeleteTradeDebtor = async (req, res, next) => {
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
     }
-    console.log(id,'----')
     // console.log(`Processing hard delete request for trade debtor: ${id}`);
 
     const result = await AccountTypeService.hardDeleteTradeDebtor(id);

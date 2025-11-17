@@ -37,7 +37,6 @@ class FundTransferService {
       // Check if accounts have sufficient balance for the transfer
       const transferAmount = Math.abs(value);
       const isNegativeTransfer = value < 0;
-      console.log(isNegativeTransfer)
       if (assetType === "CASH") {
 
         await handleCashTransfer(
@@ -316,7 +315,6 @@ async function handleCashTransfer(
   // Store previous balances for registry logging
   const senderPreviousBalance = senderAccount.balances.cashBalance.amount;
   const receiverPreviousBalance = receiverAccount.balances.cashBalance.amount;
-  console.log(isNegativeTransfer);
   if (isNegativeTransfer) {
     // Negative transfer: sender gets credited, receiver gets debited
     // Example: value = -2000, sender balance = -1000

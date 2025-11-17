@@ -29,7 +29,7 @@ export const createMetalStock = async (req, res, next) => {
       MakingUnit,
       ozDecimal,
       passPurityDiff,
-      exclusiveVAT,
+      excludeVAT,
       vatOnMaking,
       wastage,
     } = req.body;
@@ -78,7 +78,7 @@ export const createMetalStock = async (req, res, next) => {
       MakingUnit: MakingUnit || "grams",
       ozDecimal: ozDecimal ? parseFloat(ozDecimal) : null,
       passPurityDiff: passPurityDiff || false,
-      exclusiveVAT: exclusiveVAT || false,
+      excludeVAT: excludeVAT || false,
       vatOnMaking: vatOnMaking || false,
       wastage: wastage || false,
     };
@@ -175,7 +175,7 @@ export const updateMetalStock = async (req, res, next) => {
       MakingUnit,
       ozDecimal,
       passPurityDiff,
-      exclusiveVAT,
+      excludeVAT,
       vatOnMaking,
       wastage,
     } = req.body;
@@ -226,7 +226,7 @@ export const updateMetalStock = async (req, res, next) => {
     
     if (passPurityDiff !== undefined)cleanedUpdateData.passPurityDiff = passPurityDiff || false;
     
-    if (exclusiveVAT !== undefined) cleanedUpdateData.exclusiveVAT = exclusiveVAT || false;
+    if (excludeVAT !== undefined) cleanedUpdateData.excludeVAT = excludeVAT || false;
     
     if (vatOnMaking !== undefined) cleanedUpdateData.vatOnMaking = vatOnMaking || false;
     

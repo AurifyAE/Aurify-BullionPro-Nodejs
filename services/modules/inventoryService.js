@@ -487,7 +487,6 @@ class InventoryService {
 static async updateInventory(transaction, isSale, admin, session = null) {
   try {
     const updated = [];
-    console.log("📦 [updateInventory] Starting inventory update...");
 
     for (const item of transaction.stockItems || []) {
       const metalId = new mongoose.Types.ObjectId(item.stockCode?._id || item.stockCode);
