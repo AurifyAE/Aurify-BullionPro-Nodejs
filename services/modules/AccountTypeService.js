@@ -141,7 +141,7 @@ class AccountTypeService {
           isDefault: !!c.isDefault,
           lastUpdated: new Date(),
         }));
-
+  
         debtorData.balances = {
           goldBalance: {
             totalGrams: 0,

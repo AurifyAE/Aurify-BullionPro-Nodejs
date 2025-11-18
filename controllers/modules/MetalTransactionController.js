@@ -12,7 +12,7 @@ const toDate = (val) => (val ? new Date(val) : null);
 
 // ======================== CREATE METAL TRANSACTION ========================
 export const createMetalTransaction = async (req, res, next) => {
-  // console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
+  console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
   try {
     const {
       transactionType,
@@ -25,7 +25,7 @@ export const createMetalTransaction = async (req, res, next) => {
       partyCurrencyRate = 1,
       voucherType,
       voucherDate,
-      voucherNumber,  
+      voucherNumber,
       supplierInvoiceNo,
       supplierDate,
       metalRateUnit,
@@ -66,9 +66,10 @@ export const createMetalTransaction = async (req, res, next) => {
       );
     }
 
+
     if (
       ![
-        "METAL_PURCHASE",
+        "METAL-PURCHASE",
         "METAL_SALE",
         "METAL_PURCHASE_RETURN",
         "METAL_SALE_RETURN",
@@ -110,7 +111,7 @@ export const createMetalTransaction = async (req, res, next) => {
         purity: toNumber(purity),
         pureWeightStd: toNumber(pureWeightStd),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
-        purityDifference: toNumber(purityDifference) ?toNumber(purityDifference) : 0 ,
+        purityDifference: toNumber(purityDifference) ? toNumber(purityDifference) : 0,
         weightInOz: toNumber(weightInOz),
         metalRate: metalRate?.type || null,
         passPurityDiff: Boolean(item.passPurityDiff),
@@ -150,6 +151,8 @@ export const createMetalTransaction = async (req, res, next) => {
       };
     });
 
+    console.log(otherCharges);
+    
     // === MAP OTHER CHARGES ===
     const mappedOtherCharges = otherCharges.map((charge) => {
       if (!charge.code || !charge.debit || !charge.credit) {
@@ -173,18 +176,18 @@ export const createMetalTransaction = async (req, res, next) => {
         },
         vatDetails: charge.vatDetails
           ? {
-              vatNo: trim(charge.vatDetails.vatNo) || "",
-              invoiceNo: trim(charge.vatDetails.invoiceNo),
-              invoiceDate: toDate(charge.vatDetails.invoiceDate),
-              vatRate: toNumber(charge.vatDetails.vatRate),
-              vatAmount: toNumber(charge.vatDetails.vatAmount),
-            }
+            vatNo: trim(charge.vatDetails.vatNo) || "",
+            invoiceNo: trim(charge.vatDetails.invoiceNo),
+            invoiceDate: toDate(charge.vatDetails.invoiceDate),
+            vatRate: toNumber(charge.vatDetails.vatRate),
+            vatAmount: toNumber(charge.vatDetails.vatAmount),
+          }
           : null,
-          remarks: trim(charge.remarks) || "",
+        remarks: trim(charge.remarks) || "",
       };
     });
 
-    
+
     // === FINAL TRANSACTION DATA ===
     const transactionData = {
       transactionType,
@@ -202,14 +205,14 @@ export const createMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       metalRateUnit: metalRateUnit
         ? {
-            rateType: trim(metalRateUnit.rateType),
-            rate: toNumber(metalRateUnit.rate),
-            rateInGram: toNumber(metalRateUnit.rateInGram),
-          }
+          rateType: trim(metalRateUnit.rateType),
+          rate: toNumber(metalRateUnit.rate),
+          rateInGram: toNumber(metalRateUnit.rateInGram),
+        }
         : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,
-      totalSummary : {
+      totalSummary: {
         itemSubTotal: toNumber(totalSummary?.itemSubTotal) || 0,
         itemTotalVat: toNumber(totalSummary?.itemTotalVat) || 0,
         itemTotalAmount: toNumber(totalSummary?.itemTotalAmount) || 0,
@@ -261,7 +264,7 @@ export const updateMetalTransaction = async (req, res, next) => {
     if (!req.admin?.id)
       throw createAppError("Unauthorized", 401, "UNAUTHORIZED");
 
-     const {
+    const {
       transactionType,
       fix,
       unfix,
@@ -272,7 +275,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       partyCurrencyRate = 1,
       voucherType,
       voucherDate,
-      voucherNumber,  
+      voucherNumber,
       supplierInvoiceNo,
       supplierDate,
       metalRateUnit,
@@ -327,7 +330,7 @@ export const updateMetalTransaction = async (req, res, next) => {
         purity: toNumber(purity),
         pureWeightStd: toNumber(pureWeightStd),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
-        purityDifference: toNumber(purityDifference) ?toNumber(purityDifference) : 0 ,
+        purityDifference: toNumber(purityDifference) ? toNumber(purityDifference) : 0,
         weightInOz: toNumber(weightInOz),
         metalRate: metalRate?.type || null,
         passPurityDiff: Boolean(item.passPurityDiff),
@@ -388,18 +391,18 @@ export const updateMetalTransaction = async (req, res, next) => {
         },
         vatDetails: charge.vatDetails
           ? {
-              vatNo: trim(charge.vatDetails.vatNo) || "",
-              invoiceNo: trim(charge.vatDetails.invoiceNo),
-              invoiceDate: toDate(charge.vatDetails.invoiceDate),
-              vatRate: toNumber(charge.vatDetails.vatRate),
-              vatAmount: toNumber(charge.vatDetails.vatAmount),
-            }
+            vatNo: trim(charge.vatDetails.vatNo) || "",
+            invoiceNo: trim(charge.vatDetails.invoiceNo),
+            invoiceDate: toDate(charge.vatDetails.invoiceDate),
+            vatRate: toNumber(charge.vatDetails.vatRate),
+            vatAmount: toNumber(charge.vatDetails.vatAmount),
+          }
           : null,
-          remarks: trim(charge.remarks) || "",
+        remarks: trim(charge.remarks) || "",
       };
     });
 
-    
+
     // === FINAL TRANSACTION DATA ===
     const transactionData = {
       transactionType,
@@ -416,14 +419,14 @@ export const updateMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       metalRateUnit: metalRateUnit
         ? {
-            rateType: trim(metalRateUnit.rateType),
-            rate: toNumber(metalRateUnit.rate),
-            rateInGram: toNumber(metalRateUnit.rateInGram),
-          }
+          rateType: trim(metalRateUnit.rateType),
+          rate: toNumber(metalRateUnit.rate),
+          rateInGram: toNumber(metalRateUnit.rateInGram),
+        }
         : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,
-      totalSummary : {
+      totalSummary: {
         itemSubTotal: toNumber(totalSummary?.itemSubTotal) || 0,
         itemTotalVat: toNumber(totalSummary?.itemTotalVat) || 0,
         itemTotalAmount: toNumber(totalSummary?.itemTotalAmount) || 0,
