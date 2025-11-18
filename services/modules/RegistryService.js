@@ -942,13 +942,69 @@ class RegistryService {
       throw error;
     }
   }
-
+  static async getOpeningBalanceByPartyId(partyId) {
+    try {
+      // Define transaction types
+      const goldTypes = ["PARTY_GOLD_BALANCE"];
+      const cashTypes = [
+        "PARTY_CASH_BALANCE",
+        "PARTY_MAKING_CHARGES",
+        "PARTY_PREMIUM",
+        "PARTY_DISCOUNT",
+        "PARTY_VAT_AMOUNT",
+        "OTHER-CHARGE",
+      ];
+  
+      // Get today's start time (midnight)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+  
+      // Fetch all transactions before today (up to yesterday end of day)
+      const previousTransactions = await Registry.find({
+        party: partyId,
+        isActive: true,
+        transactionDate: { $lt: today }, // All transactions before today
+      }).sort({ transactionDate: 1, createdAt: 1 }); // Sort chronologically
+  
+      // Initialize balances
+      let cashBalance = 0;
+      let goldBalance = 0;
+  
+      // Calculate running balance from all previous transactions
+      previousTransactions.forEach((txn) => {
+        const debit = txn.debit || 0;
+        const credit = txn.credit || 0;
+        const netAmount = credit - debit;
+  
+        if (goldTypes.includes(txn.type)) {
+          goldBalance += netAmount;
+        } else if (cashTypes.includes(txn.type)) {
+          cashBalance += netAmount;
+        }
+      });
+  
+      return {
+        success: true,
+        openingBalance: {
+          cash: cashBalance,
+          gold: goldBalance,
+          asOfDate: new Date(today.getTime() - 1), // Yesterday's date
+        },
+      };
+    } catch (error) {
+      throw new Error(`Failed to fetch opening balance: ${error.message}`);
+    }
+  }
+  
   // get registry by party id
 
   static async getRegistriesByPartyId(partyId, page = 1, limit = 10) {
     try {
       const filter = { party: partyId, isActive: true };
       const skip = (page - 1) * limit;
+
+      const openingBalanceResult = await this.getOpeningBalanceByPartyId(partyId);
+      const openingBalance = openingBalanceResult.openingBalance;
 
       const totalItems = await Registry.countDocuments(filter);
 
@@ -961,7 +1017,7 @@ class RegistryService {
         .limit(limit);
 
       const totalPages = Math.ceil(totalItems / limit);
-      return { data: registries, totalItems, totalPages, currentPage: page };
+      return { data: registries, openingBalance, totalItems, totalPages, currentPage: page };
     } catch (error) {
       throw new Error(`Failed to fetch registries: ${error.message}`);
     }

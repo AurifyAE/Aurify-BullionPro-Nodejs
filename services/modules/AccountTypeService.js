@@ -210,6 +210,7 @@ class AccountTypeService {
       // 2. Process VAT/GST updates
       if (updateData.vatGstDetails) {
         const validStatuses = ["REGISTERED", "UNREGISTERED", "EXEMPTED"];
+        console.log("Update VAT/GST Details:", updateData.vatGstDetails); 
         updateData.vatGstDetails.vatStatus = updateData.vatGstDetails.vatStatus
           ? validStatuses.includes(
               updateData.vatGstDetails.vatStatus.toUpperCase()
@@ -234,24 +235,24 @@ class AccountTypeService {
         }
 
         // Handle document replace/remove
-        const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
-        if (updateData.vatGstDetails._replaceDocuments) {
-          updateData.vatGstDetails.documents =
-            updateData.vatGstDetails.documents || [];
-        } else if (updateData._removeVatDocuments?.length) {
-          updateData.vatGstDetails.documents = oldDocs.filter(
-            (doc) =>
-              !updateData._removeVatDocuments.includes(doc._id?.toString())
-          );
-          updateData.vatGstDetails.documents.push(
-            ...(updateData.vatGstDetails.documents || [])
-          );
-        } else {
-          updateData.vatGstDetails.documents = [
-            ...oldDocs,
-            ...(updateData.vatGstDetails.documents || []),
-          ];
-        }
+        // const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
+        // if (updateData.vatGstDetails._replaceDocuments) {
+        //   updateData.vatGstDetails.documents =
+        //     updateData.vatGstDetails.documents || [];
+        // } else if (updateData._removeVatDocuments?.length) {
+        //   updateData.vatGstDetails.documents = oldDocs.filter(
+        //     (doc) =>
+        //       !updateData._removeVatDocuments.includes(doc._id?.toString())
+        //   );
+        //   updateData.vatGstDetails.documents.push(
+        //     ...(updateData.vatGstDetails.documents || [])
+        //   );
+        // } else {
+        //   updateData.vatGstDetails.documents = [
+        //     ...oldDocs,
+        //     ...(updateData.vatGstDetails.documents || []),
+        //   ];
+        // }
         delete updateData.vatGstDetails._replaceDocuments;
         delete updateData._removeVatDocuments;
       }

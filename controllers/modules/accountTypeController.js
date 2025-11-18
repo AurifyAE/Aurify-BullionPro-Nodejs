@@ -700,6 +700,7 @@ export const updateTradeDebtor = async (req, res, next) => {
         updateData.vatGstDetails.documents = replace ? processed : [...updateData.vatGstDetails.documents, ...processed];
       }
     }
+    console.log("After VAT/GST document handling:", updateData.vatGstDetails.documents);
     // Handle KYC documents
     if (updateData.kycDetails) {
       let parsedKycDetails = [];

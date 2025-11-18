@@ -4177,7 +4177,6 @@ class MetalTransactionService {
 
     // 5️⃣ Log Summary
    
-    logs.forEach((l) => console.log(l));
   }
 
   static buildUpdateOperations(balanceChanges) {
@@ -4614,7 +4613,6 @@ class MetalTransactionService {
       .skip(skip)
       .limit(limit);
 
-      console.log("Fetched transactions:", transactions);
 
     const total = await MetalTransaction.countDocuments(query);
 
