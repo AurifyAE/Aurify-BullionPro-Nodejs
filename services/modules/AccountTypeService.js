@@ -141,8 +141,7 @@ class AccountTypeService {
           isDefault: !!c.isDefault,
           lastUpdated: new Date(),
         }));
-        console.log("-----------------------");
-        console.log(cashBalance);
+
         debtorData.balances = {
           goldBalance: {
             totalGrams: 0,
@@ -211,6 +210,7 @@ class AccountTypeService {
       // 2. Process VAT/GST updates
       if (updateData.vatGstDetails) {
         const validStatuses = ["REGISTERED", "UNREGISTERED", "EXEMPTED"];
+        console.log("Update VAT/GST Details:", updateData.vatGstDetails); 
         updateData.vatGstDetails.vatStatus = updateData.vatGstDetails.vatStatus
           ? validStatuses.includes(
               updateData.vatGstDetails.vatStatus.toUpperCase()
@@ -235,24 +235,24 @@ class AccountTypeService {
         }
 
         // Handle document replace/remove
-        const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
-        if (updateData.vatGstDetails._replaceDocuments) {
-          updateData.vatGstDetails.documents =
-            updateData.vatGstDetails.documents || [];
-        } else if (updateData._removeVatDocuments?.length) {
-          updateData.vatGstDetails.documents = oldDocs.filter(
-            (doc) =>
-              !updateData._removeVatDocuments.includes(doc._id?.toString())
-          );
-          updateData.vatGstDetails.documents.push(
-            ...(updateData.vatGstDetails.documents || [])
-          );
-        } else {
-          updateData.vatGstDetails.documents = [
-            ...oldDocs,
-            ...(updateData.vatGstDetails.documents || []),
-          ];
-        }
+        // const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
+        // if (updateData.vatGstDetails._replaceDocuments) {
+        //   updateData.vatGstDetails.documents =
+        //     updateData.vatGstDetails.documents || [];
+        // } else if (updateData._removeVatDocuments?.length) {
+        //   updateData.vatGstDetails.documents = oldDocs.filter(
+        //     (doc) =>
+        //       !updateData._removeVatDocuments.includes(doc._id?.toString())
+        //   );
+        //   updateData.vatGstDetails.documents.push(
+        //     ...(updateData.vatGstDetails.documents || [])
+        //   );
+        // } else {
+        //   updateData.vatGstDetails.documents = [
+        //     ...oldDocs,
+        //     ...(updateData.vatGstDetails.documents || []),
+        //   ];
+        // }
         delete updateData.vatGstDetails._replaceDocuments;
         delete updateData._removeVatDocuments;
       }
@@ -502,7 +502,6 @@ class AccountTypeService {
         query.classification = classification;
       }
 
-      console.log(accountType, "-----------------------");
       let accountTypeIds = [];
       if (Array.isArray(accountType) && accountType.length > 0) {
         const normalizedNames = accountType.map((name) =>
@@ -522,7 +521,6 @@ class AccountTypeService {
         ).lean();
 
         accountTypeIds = modes.map((m) => m._id);
-        console.log(accountTypeIds, "================");
         if (accountTypeIds.length === 0) {
           return {
             tradeDebtors: [],
@@ -556,7 +554,6 @@ class AccountTypeService {
       //     sortObj[sortBy] = sortOrder === "desc" ? -1 : 1;
       //   }
       // }
-      console.log(sortObj, "////////////////////");
       // === 6. EXECUTE QUERY ===
       const [tradeDebtors, total] = await Promise.all([
         AccountType.find(query)
@@ -844,7 +841,6 @@ class AccountTypeService {
   static async hardDeleteTradeDebtor(id) {
     const session = await mongoose.startSession();
     session.startTransaction();
-    console.log(id, "delete user id");
     try {
       const tradeDebtor = await AccountType.findById(id).session(session);
       if (!tradeDebtor) {

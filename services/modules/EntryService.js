@@ -442,7 +442,6 @@ class EntryService {
     startDate,
     endDate,
   }) {
-    console.log("inside the funtion");
     const query = { type };
     if (startDate || endDate) {
       query.voucherDate = {};

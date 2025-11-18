@@ -5,7 +5,6 @@ export default class CommodityController {
   // CREATE
   static createCommodity = async (req, res, next) => {
     try {
-      console.log("Request Body:", req.body); // Debugging line
       const commodity = await CommodityService.createCommodity(req.body, req.admin.id);
       res.status(201).json({ success: true, message: "Commodity created successfully", data: commodity });
     } catch (error) {

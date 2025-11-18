@@ -182,8 +182,7 @@ const getEntryById = async (req, res) => {
 };
 
 const listHandler = (type) => async (req, res) => {
-  console.log("object");
-  console.log(type);
+
   try {
     const { page, limit, search, startDate, endDate } = req.query;
     const result = await EntryService.getEntriesByType({
@@ -194,8 +193,7 @@ const listHandler = (type) => async (req, res) => {
       startDate,
       endDate,
     });
-    console.log("testing");
-    console.log(result);
+
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
