@@ -460,6 +460,7 @@ export const TransactionFixingService = {
       applyCashDeltasToAccount(account, reversedCashDeltas);
 
       // Remove existing registry & fixing price entries for this fixing
+      console.log("Deleting existing Registry and FixingPrice entries...",existing._id);
       await Registry.deleteMany({ fixingTransactionId: existing._id }).session(
         session
       );
@@ -676,60 +677,96 @@ export const TransactionFixingService = {
     }
   },
 
-  // -----------------------------------------------------------------
-  // DELETE (full reverse)
-  // -----------------------------------------------------------------
-  deleteTransaction: async (id, adminId) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+// -----------------------------------------------------------------
+// DELETE (full reverse) - FIXED VERSION
+// -----------------------------------------------------------------
+deleteTransaction: async (id, adminId) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-    try {
-      const transaction = await TransactionFixing.findById(id).session(session);
-      if (!transaction)
-        throw createAppError("Transaction not found", 404, "NOT_FOUND");
+  try {
+    const transaction = await TransactionFixing.findById(id).session(session);
+    if (!transaction)
+      throw createAppError("Transaction not found", 404, "NOT_FOUND");
 
-      const account = await Account.findById(transaction.partyId).session(
-        session
-      );
-      if (!account)
-        throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
+    const account = await Account.findById(transaction.partyId).session(
+      session
+    );
+    if (!account)
+      throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
 
-      const type = transaction.type.toUpperCase();
-      const goldDelta =
-        type === "PURCHASE"
-          ? +transaction.orders.reduce((s, o) => s + Number(o.quantityGm), 0)
-          : -transaction.orders.reduce((s, o) => s + Number(o.quantityGm), 0);
-
-      const cashDeltas = {};
-      for (const o of transaction.orders) {
-        const cid = o.selectedCurrencyId;
-        const delta = type === "PURCHASE" ? -Number(o.price) : +Number(o.price);
-        cashDeltas[cid] = (cashDeltas[cid] || 0) + delta;
-      }
-
-      account.balances.goldBalance.totalGrams += goldDelta;
-      for (const [cid, delta] of Object.entries(cashDeltas)) {
-        const bal = account.balances.cashBalance.find(
-          (cb) => cb.currency?.toString() === cid
-        );
-        if (bal) bal.amount += delta;
-      }
-      account.balances.lastBalanceUpdate = new Date();
-      await account.save({ session });
-
-      await Registry.deleteMany({ fixingTransactionId: id }).session(session);
-      await FixingPrice.deleteMany({ transactionFix: id }).session(session);
-      await TransactionFixing.deleteOne({ _id: id }).session(session);
-
-      await session.commitTransaction();
-      return { success: true, message: "Transaction deleted" };
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
+    // Ensure account has proper balance structure
+    ensureGoldBalanceObject(account);
+    if (!Array.isArray(account.balances.cashBalance)) {
+      account.balances.cashBalance = [];
     }
-  },
+
+    const type = transaction.type.toUpperCase();
+    
+    // FIX: Use resolveOrderWeight to get the correct weight field
+    // This will check pureWeight → quantityGm → grossWeight in priority order
+    const goldDelta = transaction.orders.reduce((sum, order) => {
+      const weight = resolveOrderWeight(order);
+      return sum + weight;
+    }, 0);
+
+    // Reverse the original effect:
+    // - If it was a PURCHASE (which reduced gold), add it back
+    // - If it was a SALE (which added gold), subtract it back
+    const reversalGoldDelta = type === "PURCHASE" ? goldDelta : -goldDelta;
+
+    // Calculate cash reversals
+    const cashDeltas = {};
+    for (const order of transaction.orders) {
+      const cid = order.selectedCurrencyId?.toString();
+      if (!cid) continue;
+      
+      const price = toNumberOrThrow(order.price, "price");
+      // Reverse the original cash effect:
+      // - If it was a PURCHASE (which added cash), subtract it back
+      // - If it was a SALE (which reduced cash), add it back
+      const delta = type === "PURCHASE" ? -price : price;
+      cashDeltas[cid] = (cashDeltas[cid] || 0) + delta;
+    }
+
+    // Apply reversals
+    console.log('Before reversal:', account.balances.goldBalance.totalGrams);
+    console.log('Reversal delta:', reversalGoldDelta);
+    
+    account.balances.goldBalance.totalGrams = 
+      (account.balances.goldBalance.totalGrams || 0) + reversalGoldDelta;
+    account.balances.goldBalance.lastUpdated = new Date();
+
+    // Apply cash reversals
+    for (const [cid, delta] of Object.entries(cashDeltas)) {
+      let bal = account.balances.cashBalance.find(
+        (cb) => cb.currency?.toString() === cid
+      );
+      if (bal) {
+        bal.amount = (bal.amount || 0) + delta;
+        bal.lastUpdated = new Date();
+      }
+    }
+
+    console.log('After reversal:', account.balances.goldBalance.totalGrams);
+
+    account.balances.lastBalanceUpdate = new Date();
+    await account.save({ session });
+
+    // Delete related records
+    await Registry.deleteMany({ fixingTransactionId: id }).session(session);
+    await FixingPrice.deleteMany({ transactionFix: id }).session(session);
+    await TransactionFixing.deleteOne({ _id: id }).session(session);
+
+    await session.commitTransaction();
+    return { success: true, message: "Transaction deleted successfully" };
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
+},
 
   // -----------------------------------------------------------------
   // CANCEL (soft)
