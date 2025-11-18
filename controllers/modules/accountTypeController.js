@@ -485,7 +485,6 @@ export const updateTradeDebtor = async (req, res, next) => {
     const { id } = req.params;
     const { updatetype } = req.query;
     let updateData = { ...req.body };
-    console.log("Update Data:", updateData);
 
     if (!id) {
       throw createAppError("Trade debtor ID is required", 400, "MISSING_ID");
@@ -986,7 +985,6 @@ export const getAllTradeDebtors = async (req, res, next) => {
     };
 
     const result = await AccountTypeService.getAllTradeDebtors(options);
-    // console.log("result",JSON.stringify(result)) 
 
     res.status(200).json({
       success: true,

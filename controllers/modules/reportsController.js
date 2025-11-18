@@ -327,7 +327,6 @@ export const getTransactionSummary = async (req, res) => {
 export const getOwnStock = async (req, res) => {
   try {
     const filters = req.body;
-
     // Call service to get report data
     const reportData = await reportService.getOwnStockReport(filters);
     // Return success response (even if no data found)
@@ -426,7 +425,7 @@ export const getDashboard = async (req, res, next) => {
         message: 'Failed to fetch dashboard data',
       });
     }
-    // console.log(data,'data to dashboard.....')
+    // (data,'data to dashboard.....')
     res.status(200).json({
       success: true,
       data,
@@ -453,7 +452,7 @@ export const getDashboardReport = async (req, res, next) => {
         message: 'Failed to fetch dashboard data',
       });
     }
-    // console.log(data,'data to dashboard.....')
+    // (data,'data to dashboard.....')
     res.status(200).json({
       success: true,
       data,
