@@ -151,10 +151,8 @@ export const createMetalTransaction = async (req, res, next) => {
       };
     });
 
-    console.log("before other charges")
+  
 
-    console.log(otherCharges);
-    
     // === MAP OTHER CHARGES ===
     const mappedOtherCharges = otherCharges.map((charge) => {
       if (!charge.code || !charge.debit || !charge.credit) {
