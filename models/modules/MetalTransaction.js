@@ -385,7 +385,12 @@ const MetalTransactionSchema = new mongoose.Schema(
       index: true,
       // Allow null values but enforce uniqueness when present
     },
-
+   hedgeVoucherNumber: {
+      type: String,
+      trim: true,
+      index: true,
+      default:null
+    },
     // Party Information
     partyCode: {
       type: mongoose.Schema.Types.ObjectId,

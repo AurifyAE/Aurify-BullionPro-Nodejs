@@ -70,9 +70,9 @@ export const createMetalTransaction = async (req, res, next) => {
     if (
       ![
         "METAL-PURCHASE",
-        "METAL_SALE",
-        "METAL_PURCHASE_RETURN",
-        "METAL_SALE_RETURN",
+        "METAL-SALE",
+        "PURCHASE-RETURN",
+        "SALE-RETURN",
       ].includes(voucherType)
     ) {
       throw createAppError("Invalid voucherType", 400, "INVALID_VOUCHER_TYPE");
