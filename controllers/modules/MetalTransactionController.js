@@ -13,6 +13,7 @@ const toDate = (val) => (val ? new Date(val) : null);
 // ======================== CREATE METAL TRANSACTION ========================
 export const createMetalTransaction = async (req, res, next) => {
   console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
+  
   try {
     const {
       transactionType,
@@ -66,7 +67,6 @@ export const createMetalTransaction = async (req, res, next) => {
       );
     }
 
-
     if (
       ![
         "METAL-PURCHASE",
@@ -100,7 +100,7 @@ export const createMetalTransaction = async (req, res, next) => {
         itemTotal,
         remarks,
         FXGain,
-        FXLoss
+        FXLoss,
       } = item;
 
       return {
@@ -111,7 +111,9 @@ export const createMetalTransaction = async (req, res, next) => {
         purity: toNumber(purity),
         pureWeightStd: toNumber(pureWeightStd),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
-        purityDifference: toNumber(purityDifference) ? toNumber(purityDifference) : 0,
+        purityDifference: toNumber(purityDifference)
+          ? toNumber(purityDifference)
+          : 0,
         weightInOz: toNumber(weightInOz),
         metalRate: metalRate?.type || null,
         passPurityDiff: Boolean(item.passPurityDiff),
@@ -151,8 +153,6 @@ export const createMetalTransaction = async (req, res, next) => {
       };
     });
 
-  
-
     // === MAP OTHER CHARGES ===
     const mappedOtherCharges = otherCharges.map((charge) => {
       if (!charge.code || !charge.debit || !charge.credit) {
@@ -176,17 +176,16 @@ export const createMetalTransaction = async (req, res, next) => {
         },
         vatDetails: charge.vatDetails
           ? {
-            vatNo: trim(charge.vatDetails.vatNo) || "",
-            invoiceNo: trim(charge.vatDetails.invoiceNo),
-            invoiceDate: toDate(charge.vatDetails.invoiceDate),
-            vatRate: toNumber(charge.vatDetails.vatRate),
-            vatAmount: toNumber(charge.vatDetails.vatAmount),
-          }
+              vatNo: trim(charge.vatDetails.vatNo) || "",
+              invoiceNo: trim(charge.vatDetails.invoiceNo),
+              invoiceDate: toDate(charge.vatDetails.invoiceDate),
+              vatRate: toNumber(charge.vatDetails.vatRate),
+              vatAmount: toNumber(charge.vatDetails.vatAmount),
+            }
           : null,
         remarks: trim(charge.remarks) || "",
       };
     });
-
 
     // === FINAL TRANSACTION DATA ===
     const transactionData = {
@@ -205,10 +204,10 @@ export const createMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       metalRateUnit: metalRateUnit
         ? {
-          rateType: trim(metalRateUnit.rateType),
-          rate: toNumber(metalRateUnit.rate),
-          rateInGram: toNumber(metalRateUnit.rateInGram),
-        }
+            rateType: trim(metalRateUnit.rateType),
+            rate: toNumber(metalRateUnit.rate),
+            rateInGram: toNumber(metalRateUnit.rateInGram),
+          }
         : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,
@@ -220,7 +219,7 @@ export const createMetalTransaction = async (req, res, next) => {
         totalOtherChargesVat: toNumber(totalSummary?.totalOtherChargesVat) || 0,
         netAmount: toNumber(totalSummary?.netAmount) || 0,
         rounded: toNumber(totalSummary?.rounded) || 0,
-        totalAmount: toNumber(totalSummary?.totalAmount) || 0
+        totalAmount: toNumber(totalSummary?.totalAmount) || 0,
       },
       enteredBy: trim(enteredBy),
       salesman: trim(salesman),
@@ -330,7 +329,9 @@ export const updateMetalTransaction = async (req, res, next) => {
         purity: toNumber(purity),
         pureWeightStd: toNumber(pureWeightStd),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
-        purityDifference: toNumber(purityDifference) ? toNumber(purityDifference) : 0,
+        purityDifference: toNumber(purityDifference)
+          ? toNumber(purityDifference)
+          : 0,
         weightInOz: toNumber(weightInOz),
         metalRate: metalRate?.type || null,
         passPurityDiff: Boolean(item.passPurityDiff),
@@ -391,17 +392,16 @@ export const updateMetalTransaction = async (req, res, next) => {
         },
         vatDetails: charge.vatDetails
           ? {
-            vatNo: trim(charge.vatDetails.vatNo) || "",
-            invoiceNo: trim(charge.vatDetails.invoiceNo),
-            invoiceDate: toDate(charge.vatDetails.invoiceDate),
-            vatRate: toNumber(charge.vatDetails.vatRate),
-            vatAmount: toNumber(charge.vatDetails.vatAmount),
-          }
+              vatNo: trim(charge.vatDetails.vatNo) || "",
+              invoiceNo: trim(charge.vatDetails.invoiceNo),
+              invoiceDate: toDate(charge.vatDetails.invoiceDate),
+              vatRate: toNumber(charge.vatDetails.vatRate),
+              vatAmount: toNumber(charge.vatDetails.vatAmount),
+            }
           : null,
         remarks: trim(charge.remarks) || "",
       };
     });
-
 
     // === FINAL TRANSACTION DATA ===
     const transactionData = {
@@ -419,10 +419,10 @@ export const updateMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       metalRateUnit: metalRateUnit
         ? {
-          rateType: trim(metalRateUnit.rateType),
-          rate: toNumber(metalRateUnit.rate),
-          rateInGram: toNumber(metalRateUnit.rateInGram),
-        }
+            rateType: trim(metalRateUnit.rateType),
+            rate: toNumber(metalRateUnit.rate),
+            rateInGram: toNumber(metalRateUnit.rateInGram),
+          }
         : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,
@@ -434,7 +434,7 @@ export const updateMetalTransaction = async (req, res, next) => {
         totalOtherChargesVat: toNumber(totalSummary?.totalOtherChargesVat) || 0,
         netAmount: toNumber(totalSummary?.netAmount) || 0,
         rounded: toNumber(totalSummary?.rounded) || 0,
-        totalAmount: toNumber(totalSummary?.totalAmount) || 0
+        totalAmount: toNumber(totalSummary?.totalAmount) || 0,
       },
       enteredBy: trim(enteredBy),
       salesman: trim(salesman),

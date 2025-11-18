@@ -207,8 +207,9 @@ class MetalTransactionService {
       const item = stockItems[i];
       // Build itemTotals from stockItems
       const itemTotals = this.calculateTotals([item], totalSummary);
-  
-
+      console.log("+++++++++++++++++++++");
+      console.log(itemTotals);
+      
       switch (transactionType) {
         case "purchase":
           entries.push(
@@ -2870,7 +2871,7 @@ class MetalTransactionService {
       );
     }
 
-   if (totals.makingCharges > 0) {
+    if (totals.makingCharges > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -2922,7 +2923,6 @@ class MetalTransactionService {
       );
     }
 
-    
     // === 💱 FX GAIN / LOSS ENTRIES ===
     if (totals.FXGain > 0) {
       entries.push(
@@ -3872,6 +3872,7 @@ class MetalTransactionService {
   static calculateTotals(stockItems, totalSummary) {
     const totals = stockItems.reduce(
       (acc, item) => {
+        console.log(item)
         const makingChargesAmount =
           item.itemTotal?.makingChargesTotal || item.makingCharges?.amount || 0;
         const premiumDiscountAmount =
@@ -3890,14 +3891,10 @@ class MetalTransactionService {
         const passPurityDiff =
           typeof item.passPurityDiff === "boolean" ? item.passPurityDiff : true;
         const finalPureWeight =
-          passPurityDiff === false
-            ? pureWeight
-            : purityDifference === 0
-            ? pureWeightStd
-            : pureWeight;
+          passPurityDiff === true ? pureWeight : purityDifference === 0  ? pureWeightStd : pureWeight;
 
         const finalPurity =
-          passPurityDiff === false
+          passPurityDiff === true
             ? purity
             : purityDifference === 0
             ? purityStd
@@ -4108,8 +4105,12 @@ class MetalTransactionService {
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.otherCharges || 0) +
-      (ch.discountBalance || 0) + 
-      (ch.vatAmount || 0);  
+      (ch.discountBalance || 0) +
+      (ch.vatAmount || 0);
+    console.log("--------------------");
+    console.log(netCash);
+
+    console.log("--------------------");
 
     if (currencyObjId && !isNaN(netCash) && netCash !== 0) {
       await this.ensureCashRow(party._id, currencyId, session);
@@ -4174,9 +4175,8 @@ class MetalTransactionService {
         }
       }
     }
-
+    console.log(logs);
     // 5️⃣ Log Summary
-   
   }
 
   static buildUpdateOperations(balanceChanges) {
@@ -4613,7 +4613,6 @@ class MetalTransactionService {
       .skip(skip)
       .limit(limit);
 
-
     const total = await MetalTransaction.countDocuments(query);
 
     return {
@@ -5033,14 +5032,14 @@ class MetalTransactionService {
         updateData
       );
       // Commit transaction
-     
+
       await session.commitTransaction();
 
       // Fetch and return final transaction
       const finalTransaction = await this.getMetalTransactionById(
         transactionId
       );
-     
+
       return finalTransaction;
     } catch (error) {
       console.error(
