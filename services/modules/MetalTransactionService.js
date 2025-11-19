@@ -8,7 +8,7 @@ import Inventory from "../../models/modules/inventory.js";
 import MetalStock from "../../models/modules/MetalStock.js";
 import InventoryService from "./inventoryService.js";
 import FixingPrice from "../../models/modules/FixingPrice.js";
-
+import { generateHedgeVoucherNumber } from "../../utils/hedgeVoucher.js";
 class MetalTransactionService {
   static async createMetalTransaction(transactionData, adminId) {
     const session = await mongoose.startSession();
@@ -71,8 +71,10 @@ class MetalTransactionService {
     adminId,
     session
   ) {
-    const entries = this.buildRegistryEntries(metalTransaction, party, adminId);
-    if (entries.length === 0) return [];
+    const entries = await this.buildRegistryEntries(metalTransaction, party, adminId);
+   if (!entries || entries.length === 0) return [];
+   console.log("Registry entries:", entries);
+
     return await Registry.insertMany(entries, { session, ordered: false });
   }
 
@@ -183,7 +185,16 @@ class MetalTransactionService {
     }
   }
 
-  static buildRegistryEntries(metalTransaction, party, adminId) {
+  static async buildRegistryEntries(metalTransaction, party, adminId) {
+    let transaction = metalTransaction;
+
+    // Ensure we have a real Mongoose document
+    if (!transaction.save) {
+      transaction = await MetalTransaction.findById(
+        metalTransaction._id || metalTransaction.id
+      );
+      if (!transaction) throw new Error("Transaction not found");
+    }
     const {
       id,
       transactionType,
@@ -196,8 +207,20 @@ class MetalTransactionService {
       voucherNumber,
       partyCurrency,
       otherCharges = [],
-    } = metalTransaction;
+    } = transaction;
+    let hedgeVoucherNo = transaction.hedgeVoucherNumber;
 
+    // Generate ONLY if hedge=true and not already generated
+    if (hedge && !hedgeVoucherNo) {
+      hedgeVoucherNo = await generateHedgeVoucherNumber(transactionType);
+
+      // Save it immediately — 100% guaranteed
+      transaction.hedgeVoucherNumber = hedgeVoucherNo;
+      transaction.hedge = true;
+      await transaction.save();
+
+      console.log(`Hedge Voucher Created: ${hedgeVoucherNo}`); // optional
+    }
     const baseTransactionId = this.generateTransactionId();
     const mode = this.getTransactionMode(fixed, unfix);
 
@@ -207,16 +230,14 @@ class MetalTransactionService {
       const item = stockItems[i];
       // Build itemTotals from stockItems
       const itemTotals = this.calculateTotals([item], totalSummary);
-      console.log("+++++++++++++++++++++");
-      console.log(itemTotals);
-      
+
       switch (transactionType) {
         case "purchase":
           entries.push(
             ...this.buildPurchaseEntries(
               mode,
               hedge,
-              id,
+              transaction._id,
               itemTotals,
               party,
               baseTransactionId,
@@ -226,7 +247,8 @@ class MetalTransactionService {
               item,
               partyCurrency,
               totalSummary,
-              otherCharges
+              otherCharges,
+              hedgeVoucherNo
             )
           );
           break;
@@ -308,7 +330,8 @@ class MetalTransactionService {
     item,
     partyCurrency,
     totalSummary,
-    otherCharges = []
+    otherCharges = [],
+    hedgeVoucherNo
   ) {
     let transactionType = "Purchase";
     if (mode === "fix") {
@@ -342,19 +365,20 @@ class MetalTransactionService {
           transactionType
         )
       : this.buildPurchaseUnfixEntries(
-          hedge,
-          totals,
-          metalTransactionId,
-          party,
-          baseTransactionId,
-          voucherDate,
-          voucherNumber,
-          adminId,
-          item,
-          partyCurrency,
-          totalSummary,
-          otherCharges,
-          transactionType
+          hedgeVoucherNo, // 1
+          hedge, // 2
+          totals, // 3
+          metalTransactionId, // 4
+          party, // 5
+          baseTransactionId, // 6
+          voucherDate, // 7
+          voucherNumber, // 8
+          adminId, // 9
+          item, // 10
+          partyCurrency, // 11
+          totalSummary, // 12
+          otherCharges, // 13
+          transactionType // 14
         );
   }
 
@@ -1049,19 +1073,20 @@ class MetalTransactionService {
   }
 
   static buildPurchaseUnfixEntries(
-    hedge,
-    totals,
-    metalTransactionId,
-    party,
-    baseTransactionId,
-    voucherDate,
-    voucherNumber,
-    adminId,
-    item,
-    partyCurrency,
-    totalSummary,
-    otherCharges,
-    transactionType
+    hedgeVoucherNo, // 1
+    hedge, // 2
+    totals, // 3
+    metalTransactionId, // 4
+    party, // 5
+    baseTransactionId, // 6
+    voucherDate, // 7
+    voucherNumber, // 8
+    adminId, // 9
+    item, // 10
+    partyCurrency, // 11
+    totalSummary, // 12
+    otherCharges, // 13
+    transactionType // 14
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -1118,13 +1143,14 @@ class MetalTransactionService {
             goldBidValue: totals.bidValue,
           },
           voucherDate,
-          voucherNumber,
+           hedge ? hedgeVoucherNo : voucherNumber,   // ✅ Proper reference
           adminId
         )
       );
     }
 
     if (hedge) {
+      console.log(hedgeVoucherNo);
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -1145,7 +1171,7 @@ class MetalTransactionService {
             goldBidValue: totals.bidValue,
           },
           voucherDate,
-          voucherNumber,
+          hedgeVoucherNo,
           adminId
         )
       );
@@ -1187,13 +1213,13 @@ class MetalTransactionService {
           0,
           {
             debit: totals.pureWeight,
-            goldCredit: totals.pureWeight,
-            cashDebit: totals.goldValue,
+            goldDebit: totals.pureWeight,
+            cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
           },
           voucherDate,
-          voucherNumber,
+          hedgeVoucherNo,
           adminId
         )
       );
@@ -3872,7 +3898,6 @@ class MetalTransactionService {
   static calculateTotals(stockItems, totalSummary) {
     const totals = stockItems.reduce(
       (acc, item) => {
-        console.log(item)
         const makingChargesAmount =
           item.itemTotal?.makingChargesTotal || item.makingCharges?.amount || 0;
         const premiumDiscountAmount =
@@ -3891,7 +3916,11 @@ class MetalTransactionService {
         const passPurityDiff =
           typeof item.passPurityDiff === "boolean" ? item.passPurityDiff : true;
         const finalPureWeight =
-          passPurityDiff === true ? pureWeight : purityDifference === 0  ? pureWeightStd : pureWeight;
+          passPurityDiff === true
+            ? pureWeight
+            : purityDifference === 0
+            ? pureWeightStd
+            : pureWeight;
 
         const finalPurity =
           passPurityDiff === true
@@ -3943,63 +3972,76 @@ class MetalTransactionService {
     return totals;
   }
 
-  static createRegistryEntry(
-    transactionType,
-    baseId,
+static createRegistryEntry(
+  transactionType,
+  baseId,
+  metalTransactionId,
+  suffix,
+  type,
+  description,
+  partyId,
+  isBullion,
+  value,
+  credit,
+  {
+    cashDebit = 0,
+    goldCredit = 0,
+    cashCredit = 0,
+    goldDebit = 0,
+    debit = 0,
+    grossWeight,
+    pureWeight,
+    purity,
+    goldBidValue,
+  } = {},
+  voucherDate,
+  reference,
+  adminId
+) {
+
+  // Allow zero-value entries for hedge-related types
+  const ALLOW_ZERO_FOR = [
+    "HEDGE_ENTRY",
+    "PARTY_CASH_BALANCE",
+    "PARTY_GOLD_BALANCE",
+    "purchase-fixing",
+    "sale-fixing",
+    "purchase-unfix",
+    "sale-unfix"
+  ];
+
+  if (value <= 0 && !ALLOW_ZERO_FOR.includes(type)) {
+    return null;
+  }
+
+  const transactionIdStr = baseId?.toString?.() ?? `${baseId ?? ""}`;
+
+  return {
+    transactionId: transactionIdStr,
     metalTransactionId,
-    suffix,
+    transactionType,
     type,
     description,
-    partyId,
+    party: partyId || null,
     isBullion,
-    value,
-    credit,
-    {
-      cashDebit = 0,
-      goldCredit = 0,
-      cashCredit = 0,
-      goldDebit = 0,
-      debit = 0,
-      grossWeight,
-      pureWeight,
-      purity,
-      goldBidValue,
-    } = {},
-    voucherDate,
+    value: parseFloat(value) || 0,
+    credit: parseFloat(credit) || 0,
+    cashDebit: parseFloat(cashDebit) || 0,
+    goldCredit: parseFloat(goldCredit) || 0,
+    cashCredit: parseFloat(cashCredit) || 0,
+    goldDebit: parseFloat(goldDebit) || 0,
+    debit: parseFloat(debit) || 0,
+    goldBidValue: goldBidValue ?? 0,
+    transactionDate: voucherDate || new Date(),
     reference,
-    adminId
-  ) {
-    if (value <= 0 && !["sales-fixing", "sale-return-fixing"].includes(type))
-      return null;
+    createdBy: adminId,
+    createdAt: new Date(),
+    grossWeight: grossWeight ?? 0,
+    pureWeight: pureWeight ?? 0,
+    purity: purity ?? 0,
+  };
+}
 
-    // ✅ ensure transactionId is string (not ObjectId)
-    const transactionIdStr = baseId?.toString?.() ?? `${baseId ?? ""}`;
-
-    return {
-      transactionId: transactionIdStr,
-      metalTransactionId,
-      transactionType,
-      type,
-      description,
-      party: partyId || null,
-      isBullion,
-      value: parseFloat(value) || 0,
-      credit: parseFloat(credit) || 0,
-      cashDebit: parseFloat(cashDebit) || 0,
-      goldCredit: parseFloat(goldCredit) || 0,
-      cashCredit: parseFloat(cashCredit) || 0,
-      goldDebit: parseFloat(goldDebit) || 0,
-      debit: parseFloat(debit) || 0,
-      goldBidValue: goldBidValue ?? 0,
-      transactionDate: voucherDate || new Date(),
-      reference,
-      createdBy: adminId,
-      createdAt: new Date(),
-      grossWeight: grossWeight ?? 0,
-      pureWeight: pureWeight ?? 0,
-      purity: purity ?? 0,
-    };
-  }
 
   static async ensureCashRow(accountId, currencyId, session) {
     const currencyObjId = new mongoose.Types.ObjectId(currencyId);
