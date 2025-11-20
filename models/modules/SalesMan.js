@@ -18,6 +18,25 @@ const SalesmanSchema = new mongoose.Schema(
       unique: true,
       maxlength: [100, "Name cannot exceed 100 characters"],
     },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      match: [
+        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,})+$/,
+        "Please enter a valid email address",
+      ],
+      default: null,
+    },
+    phone: {
+      type: String,
+      trim: true,
+      match: [
+        /^[0-9+()\-\s]{7,20}$/,
+        "Phone must be 7-20 digits and can include + ( ) -",
+      ],
+      default: null,
+    },
     status: {
       type: Boolean,
       default: true,

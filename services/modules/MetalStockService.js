@@ -375,8 +375,8 @@ class MetalStockService {
       // Create Registry entries for stock update (only if values changed)
       const shouldCreateRegistry = 
         (updatedMetalStock.pcs && (
-          previousValues.totalValue !== updatedMetalStock.totalValue ||
-          previousValues.pcsCount !== updatedMetalStock.pcsCount
+          previousValues.totalValue !== updatedMetalStock.totalValue 
+          // previousValues.pcsCount !== updatedMetalStock.pcsCount
         )) ||
         (!updatedMetalStock.pcs && (
           previousValues.standardPurity !== (updatedMetalStock.karat?.standardPurity || 0)
@@ -453,7 +453,7 @@ class MetalStockService {
       const skip = (page - 1) * limit;
       const query = {
         pcs: true, // Only piece-based items can have low stock
-        pcsCount: { $gte: 0 },
+        // pcsCount: { $gte: 0 },
         isActive: true,
         status: "active",
       };

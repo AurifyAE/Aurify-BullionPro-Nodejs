@@ -12,10 +12,7 @@ export class SalesmanController {
         throw createAppError("Salesman name is required", 400, "REQUIRED_FIELD_MISSING");
       }
 
-      const salesman = await SalesmanService.createSalesman(
-        { name },
-        req.admin.id
-      );
+      const salesman = await SalesmanService.createSalesman(req.body, req.admin.id);
 
       res.status(201).json({
         success: true,
@@ -33,8 +30,9 @@ export class SalesmanController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || "";
+      const status = req.query.status || "";
 
-      const result = await SalesmanService.getAllSalesmen(page, limit, search);
+      const result = await SalesmanService.getAllSalesmen(page, limit, search, status);
 
       res.status(200).json({
         success: true,
@@ -67,13 +65,13 @@ export class SalesmanController {
   static updateSalesman = async (req, res, next) => {
     try {
       const { id } = req.params;
-      const updateData = req.body;
+      const { name } = req.body;
 
-      const salesman = await SalesmanService.updateSalesman(
-        id,
-        updateData,
-        req.admin.id
-      );
+      if (!name?.trim()) {
+        throw createAppError("Salesman name is required", 400, "REQUIRED_FIELD_MISSING");
+      }
+
+      const salesman = await SalesmanService.updateSalesman(id, req.body, req.admin.id);
 
       res.status(200).json({
         success: true,
@@ -94,6 +92,27 @@ export class SalesmanController {
       res.status(200).json({
         success: true,
         message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  static updateSalesmanStatus = async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (typeof status !== "boolean") {
+        throw createAppError("Status must be boolean", 400, "INVALID_STATUS");
+      }
+
+      const salesman = await SalesmanService.updateSalesmanStatus(id, status, req.admin.id);
+
+      res.status(200).json({
+        success: true,
+        message: "Salesman status updated successfully",
+        data: salesman,
       });
     } catch (error) {
       next(error);
