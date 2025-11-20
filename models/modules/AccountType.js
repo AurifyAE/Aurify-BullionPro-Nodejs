@@ -451,6 +451,18 @@ AccountSchema.statics.isAccountCodeExists = async function (
   return !!(await this.findOne(query));
 };
 
+AccountSchema.statics.isCustomerNameExists = async function (
+  customerName,
+  excludeId = null
+) {
+  if (!customerName?.trim()) return false;
+  const query = {
+    customerName: new RegExp(`^${customerName.trim()}$`, "i"),
+  };
+  if (excludeId) query._id = { $ne: excludeId };
+  return !!(await this.findOne(query));
+};
+
 AccountSchema.statics.getActiveAccounts = function () {
   return this.find({ isActive: true, status: "active" });
 };

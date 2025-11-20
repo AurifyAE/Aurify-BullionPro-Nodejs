@@ -4,7 +4,7 @@ import { createAppError } from "../../utils/errorHandler.js";
 
 export class SalesmanService {
   static async createSalesman(salesmanData, adminId) {
-    const { name } = salesmanData;
+    const { name, email, phone, status = true } = salesmanData;
 
     if (!name?.trim()) {
       throw createAppError("Salesman name is required", 400, "REQUIRED_FIELD_MISSING");
@@ -17,6 +17,9 @@ export class SalesmanService {
 
     const salesman = new Salesman({
       name: name.trim(),
+      email: email?.trim()?.toLowerCase() || null,
+      phone: phone?.trim() || null,
+      status: status !== undefined ? !!status : true,
       createdBy: adminId,
     });
 
@@ -27,14 +30,19 @@ export class SalesmanService {
       .populate("updatedBy", "name email");
   }
 
-  static async getAllSalesmen(page = 1, limit = 10, search = "") {
+  static async getAllSalesmen(page = 1, limit = 10, search = "", statusFilter = "") {
     const skip = (page - 1) * limit;
-    const query = { status: true };
+    const query = {};
+
+    if (statusFilter === "active") query.status = true;
+    if (statusFilter === "inactive") query.status = false;
 
     if (search) {
       query.$or = [
         { code: new RegExp(search, "i") },
         { name: new RegExp(search, "i") },
+        { email: new RegExp(search, "i") },
+        { phone: new RegExp(search, "i") },
       ];
     }
 
@@ -65,7 +73,6 @@ export class SalesmanService {
       .populate("updatedBy", "name email");
 
     if (!salesman) throw createAppError("Salesman not found", 404, "NOT_FOUND");
-    if (!salesman.status) throw createAppError("Salesman is inactive", 410, "INACTIVE");
 
     return salesman;
   }
@@ -74,7 +81,7 @@ export class SalesmanService {
     const salesman = await Salesman.findById(id);
     if (!salesman) throw createAppError("Salesman not found", 404, "NOT_FOUND");
 
-    const { name } = updateData;
+    const { name, email, phone, status } = updateData;
 
     if (name && name.trim() !== salesman.name) {
       const nameExists = await Salesman.isNameExists(name.trim(), id);
@@ -83,18 +90,36 @@ export class SalesmanService {
       }
     }
 
-    const updatedSalesman = await Salesman.findByIdAndUpdate(
-      id,
-      {
-        ...(name && { name: name.trim() }),
-        updatedBy: adminId,
-      },
-      { new: true, runValidators: true }
-    )
+    const payload = {
+      updatedBy: adminId,
+    };
+
+    if (name) payload.name = name.trim();
+    if (email !== undefined) payload.email = email?.trim()?.toLowerCase() || null;
+    if (phone !== undefined) payload.phone = phone?.trim() || null;
+    if (status !== undefined) payload.status = !!status;
+
+    const updatedSalesman = await Salesman.findByIdAndUpdate(id, payload, {
+      new: true,
+      runValidators: true,
+    })
       .populate("createdBy", "name email")
       .populate("updatedBy", "name email");
 
     return updatedSalesman;
+  }
+
+  static async updateSalesmanStatus(id, status, adminId) {
+    const salesman = await Salesman.findById(id);
+    if (!salesman) throw createAppError("Salesman not found", 404, "NOT_FOUND");
+
+    salesman.status = !!status;
+    salesman.updatedBy = adminId;
+    await salesman.save();
+
+    return await Salesman.findById(id)
+      .populate("createdBy", "name email")
+      .populate("updatedBy", "name email");
   }
 
   static async deleteSalesman(id) {

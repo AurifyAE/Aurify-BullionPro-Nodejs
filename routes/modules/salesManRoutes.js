@@ -9,5 +9,6 @@ router.get("/", SalesmanController.getAllSalesmen);
 router.get("/:id", SalesmanController.getSalesmanById);
 router.put("/:id", SalesmanController.updateSalesman);
 router.delete("/:id", SalesmanController.deleteSalesman);
+router.patch("/:id/status", SalesmanController.updateSalesmanStatus);
 
 export default router;

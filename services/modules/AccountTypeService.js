@@ -16,6 +16,10 @@ class AccountTypeService {
   // Create new trade debtor
   static async createTradeDebtor(debtorData, adminId) {
     try {
+      if (debtorData.customerName) {
+        debtorData.customerName = debtorData.customerName.trim().toUpperCase();
+      }
+
       // 1. Check duplicate account code
       const isCodeExists = await AccountType.isAccountCodeExists(
         debtorData.accountCode
@@ -25,6 +29,18 @@ class AccountTypeService {
           "Account code already exists",
           400,
           "DUPLICATE_ACCOUNT_CODE"
+        );
+      }
+
+      // 1b. Check duplicate customer name
+      const isCustomerNameExists = await AccountType.isCustomerNameExists(
+        debtorData.customerName
+      );
+      if (isCustomerNameExists) {
+        throw createAppError(
+          "Customer name already exists. Please use a unique party name.",
+          400,
+          "DUPLICATE_CUSTOMER_NAME"
         );
       }
 
@@ -189,6 +205,12 @@ class AccountTypeService {
         throw createAppError("Trade debtor not found", 404, "DEBTOR_NOT_FOUND");
       }
 
+      let normalizedCustomerName = null;
+      if (updateData.customerName) {
+        normalizedCustomerName = updateData.customerName.trim().toUpperCase();
+        updateData.customerName = normalizedCustomerName;
+      }
+
       // 1. Check account code uniqueness
       if (
         updateData.accountCode &&
@@ -203,6 +225,23 @@ class AccountTypeService {
             "Account code already exists",
             400,
             "DUPLICATE_ACCOUNT_CODE"
+          );
+        }
+      }
+
+      if (
+        normalizedCustomerName &&
+        normalizedCustomerName !== (tradeDebtor.customerName || "").toUpperCase()
+      ) {
+        const nameExists = await AccountType.isCustomerNameExists(
+          normalizedCustomerName,
+          id
+        );
+        if (nameExists) {
+          throw createAppError(
+            "Customer name already exists. Please use a unique party name.",
+            400,
+            "DUPLICATE_CUSTOMER_NAME"
           );
         }
       }

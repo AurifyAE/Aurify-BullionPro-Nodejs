@@ -13,7 +13,7 @@ export const createMetalStock = async (req, res, next) => {
       branch,
       karat,
       pcs,
-      pcsCount,
+      // pcsCount,
       totalValue,
       charges,
       makingCharge,
@@ -44,14 +44,14 @@ export const createMetalStock = async (req, res, next) => {
     }
 
     // Validate pcsCount and totalValue when pcs is true
-    if (pcs) {
-      if (pcsCount === undefined || pcsCount === null || !Number.isInteger(pcsCount) || pcsCount < 0) {
-        throw createAppError("Piece count is required and must be a non-negative integer for piece-based stock", 400, "INVALID_PCS_COUNT");
-      }
-      if (totalValue === undefined || totalValue === null || isNaN(totalValue) || totalValue < 0) {
-        throw createAppError("Total value is required and must be a non-negative number for piece-based stock", 400, "INVALID_TOTAL_VALUE");
-      }
-    }
+    // if (pcs) {
+    //   if (pcsCount === undefined || pcsCount === null || !Number.isInteger(pcsCount) || pcsCount < 0) {
+    //     throw createAppError("Piece count is required and must be a non-negative integer for piece-based stock", 400, "INVALID_PCS_COUNT");
+    //   }
+    //   if (totalValue === undefined || totalValue === null || isNaN(totalValue) || totalValue < 0) {
+    //     throw createAppError("Total value is required and must be a non-negative number for piece-based stock", 400, "INVALID_TOTAL_VALUE");
+    //   }
+    // }
 
     const metalStockData = {
       metalType: metalType.trim(),
@@ -60,7 +60,7 @@ export const createMetalStock = async (req, res, next) => {
       branch: branch || null,
       karat: karat.trim(),
       pcs: Boolean(pcs),
-      pcsCount: pcs ? parseInt(pcsCount) : 0,
+      // pcsCount: pcs ? parseInt(pcsCount) : 0,
       totalValue: pcs ? parseFloat(totalValue) : 0,
       charges: charges || null,
       makingCharge: makingCharge || null,
@@ -159,7 +159,7 @@ export const updateMetalStock = async (req, res, next) => {
       branch,
       karat,
       pcs,
-      pcsCount,
+      // pcsCount,
       totalValue,
       charges,
       makingCharge,
@@ -185,14 +185,14 @@ export const updateMetalStock = async (req, res, next) => {
     }
 
     // Validate pcsCount and totalValue when pcs is true
-    if (pcs) {
-      if (pcsCount !== undefined && (!Number.isInteger(pcsCount) || pcsCount < 0)) {
-        throw createAppError("Piece count must be a non-negative integer for piece-based stock", 400, "INVALID_PCS_COUNT");
-      }
-      if (totalValue !== undefined && (isNaN(totalValue) || totalValue < 0)) {
-        throw createAppError("Total value must be a non-negative number for piece-based stock", 400, "INVALID_TOTAL_VALUE");
-      }
-    }
+    // if (pcs) {
+    //   if (pcsCount !== undefined && (!Number.isInteger(pcsCount) || pcsCount < 0)) {
+    //     throw createAppError("Piece count must be a non-negative integer for piece-based stock", 400, "INVALID_PCS_COUNT");
+    //   }
+    //   if (totalValue !== undefined && (isNaN(totalValue) || totalValue < 0)) {
+    //     throw createAppError("Total value must be a non-negative number for piece-based stock", 400, "INVALID_TOTAL_VALUE");
+    //   }
+    // }
 
     const cleanedUpdateData = {};
     if (metalType) cleanedUpdateData.metalType = metalType.trim();
@@ -202,10 +202,10 @@ export const updateMetalStock = async (req, res, next) => {
     if (karat) cleanedUpdateData.karat = karat.trim();
     if (pcs !== undefined) cleanedUpdateData.pcs = Boolean(pcs);
     if (pcs) {
-      if (pcsCount !== undefined) cleanedUpdateData.pcsCount = parseInt(pcsCount);
+      // if (pcsCount !== undefined) cleanedUpdateData.pcsCount = parseInt(pcsCount);
       if (totalValue !== undefined) cleanedUpdateData.totalValue = parseFloat(totalValue);
     } else {
-      cleanedUpdateData.pcsCount = 0;
+      // cleanedUpdateData.pcsCount = 0;
       cleanedUpdateData.totalValue = 0;
     }
     if (charges !== undefined) cleanedUpdateData.charges = charges || null;
@@ -359,12 +359,12 @@ export const updateStockQuantity = async (req, res, next) => {
     // Validate inputs based on pcs
     const metalStock = await MetalStockService.getMetalStockById(id);
     if (metalStock.pcs) {
-      if (pcsCount === undefined || pcsCount === null) {
-        throw createAppError("Piece count is required for piece-based stock", 400, "MISSING_PCS_COUNT");
-      }
-      if (!Number.isInteger(pcsCount) || pcsCount <= 0) {
-        throw createAppError("Piece count must be a positive integer", 400, "INVALID_PCS_COUNT");
-      }
+      // if (pcsCount === undefined || pcsCount === null) {
+      //   throw createAppError("Piece count is required for piece-based stock", 400, "MISSING_PCS_COUNT");
+      // }
+      // if (!Number.isInteger(pcsCount) || pcsCount <= 0) {
+      //   throw createAppError("Piece count must be a positive integer", 400, "INVALID_PCS_COUNT");
+      // }
       if (totalValue === undefined || totalValue === null) {
         throw createAppError("Total value is required for piece-based stock", 400, "MISSING_TOTAL_VALUE");
       }
