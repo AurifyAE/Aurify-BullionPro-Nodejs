@@ -49,8 +49,11 @@ export const createTransaction = async (req, res, next) => {
       partyId,
       type,
       referenceNumber,
+      invoiceReferenceNumber,
+      invoiceDate,
       voucherCode,
       voucherType,
+      voucherDate,
       prefix = DEFAULT_PREFIX,
       partyPhone,
       partyEmail,
@@ -62,8 +65,11 @@ export const createTransaction = async (req, res, next) => {
       partyId: partyId?.trim(),
       type: type?.toUpperCase(),
       referenceNumber: referenceNumber?.trim(),
+      invoiceReferenceNumber: invoiceReferenceNumber?.trim(),
+      invoiceDate: invoiceDate ? new Date(invoiceDate) : null,
       voucherNumber: voucherCode || null,
       voucherType: voucherType?.trim(),
+      voucherDate: voucherDate ? new Date(voucherDate) : null,
       prefix: prefix?.trim(),
       partyPhone: partyPhone?.trim() || "N/A",
       partyEmail: partyEmail?.trim() || "N/A",
@@ -181,8 +187,11 @@ export const updateTransaction = async (req, res, next) => {
       "partyId",
       "type",
       "referenceNumber",
+      "invoiceReferenceNumber",
+      "invoiceDate",
       "voucherNumber",
       "voucherType",
+      "voucherDate",
       "prefix",
       "partyPhone",
       "partyEmail",
@@ -192,8 +201,12 @@ export const updateTransaction = async (req, res, next) => {
 
     fields.forEach((f) => {
       if (payload[f] !== undefined) {
-        updateData[f] = payload[f];
-        if (typeof payload[f] === "string") updateData[f] = payload[f].trim();
+        if (f === "invoiceDate" || f === "voucherDate") {
+          updateData[f] = payload[f] ? new Date(payload[f]) : null;
+        } else {
+          updateData[f] = payload[f];
+          if (typeof payload[f] === "string") updateData[f] = payload[f].trim();
+        }
       }
     });
 

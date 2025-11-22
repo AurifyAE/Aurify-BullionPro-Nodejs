@@ -19,7 +19,7 @@ export default class CommodityService {
         standardPurity,
       } = payload;
 
-      if (!division || !code?.trim() || !description?.trim() || !karatSelect || defaultRateType == null) {
+      if (!division || !code?.trim() || !karatSelect || defaultRateType == null) {
         throw createAppError("Missing required fields", 400, "REQUIRED_FIELD_MISSING");
       }
 
@@ -31,7 +31,7 @@ export default class CommodityService {
       const doc = new Commodity({
         division,
         code: code.trim().toUpperCase(),
-        description: description.trim(),
+        description: description?.trim() || null,
         karatSelect,
         standardPurity: Number(payload.standardPurity) || 0,
         metalDecimal: Number(metalDecimal) || 0,
@@ -125,7 +125,9 @@ export default class CommodityService {
 
       const update = { ...payload };
       if (update.code) update.code = update.code.trim().toUpperCase();
-      if (update.description) update.description = update.description.trim();
+      if (update.description !== undefined) {
+        update.description = update.description?.trim() || null;
+      }
       if (update.metalDecimal !== undefined) update.metalDecimal = Number(update.metalDecimal) || 0;
       if (update.standardPurity !== undefined) update.standardPurity = Number(update.standardPurity) || 0;
       if (update.lotEnabled !== undefined) update.lotEnabled = !!update.lotEnabled;

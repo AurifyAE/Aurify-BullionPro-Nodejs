@@ -96,8 +96,11 @@ const TransactionFixingSchema = new mongoose.Schema(
       required: true,
     },
     referenceNumber: { type: String, trim: true, uppercase: true },
+    invoiceReferenceNumber: { type: String, trim: true },
+    invoiceDate: { type: Date },
     voucherNumber: { type: String, trim: true },
     voucherType: { type: String, trim: true },
+    voucherDate: { type: Date },
     salesman: { type: String, default: "N/A" },
     metalTransactionId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -147,6 +150,8 @@ TransactionFixingSchema.pre("validate", async function (next) {
   }
   if (this.referenceNumber)
     this.referenceNumber = this.referenceNumber.toUpperCase();
+  if (this.invoiceReferenceNumber)
+    this.invoiceReferenceNumber = this.invoiceReferenceNumber.trim();
   next();
 });
 
