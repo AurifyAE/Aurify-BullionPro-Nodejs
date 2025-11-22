@@ -56,7 +56,7 @@ export const createMetalTransaction = async (req, res, next) => {
     }
 
     if (
-      !["purchase", "sale", "purchaseReturn", "saleReturn"].includes(
+      !["purchase", "sale", "purchaseReturn", "saleReturn" , "exportSale" , "importPurchase"].includes(
         transactionType
       )
     ) {
@@ -73,6 +73,8 @@ export const createMetalTransaction = async (req, res, next) => {
         "METAL-SALE",
         "PURCHASE-RETURN",
         "SALE-RETURN",
+        "IMPORT-PURCHASE",
+        "EXPORT-SALE"
       ].includes(voucherType)
     ) {
       throw createAppError("Invalid voucherType", 400, "INVALID_VOUCHER_TYPE");
@@ -408,6 +410,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       transactionType,
       fixed: Boolean(fix),
       unfix: Boolean(unfix),
+      hedge: Boolean(hedge),
       partyCode: trim(partyCode),
       partyCurrency: trim(partyCurrency),
       itemCurrency: trim(itemCurrency),

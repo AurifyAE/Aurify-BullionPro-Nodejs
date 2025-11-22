@@ -349,7 +349,7 @@ const MetalTransactionSchema = new mongoose.Schema(
     // Transaction Type - Key field to differentiate between purchase and sale
     transactionType: {
       type: String,
-      enum: ["purchase", "sale", "purchaseReturn", "saleReturn"],
+      enum: ["purchase", "sale", "purchaseReturn", "saleReturn" , "exportSale" , "importPurchase"],
       required: [true, "Transaction type is required"],
       index: true,
     },
