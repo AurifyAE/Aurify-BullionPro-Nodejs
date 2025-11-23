@@ -349,7 +349,14 @@ const MetalTransactionSchema = new mongoose.Schema(
     // Transaction Type - Key field to differentiate between purchase and sale
     transactionType: {
       type: String,
-      enum: ["purchase", "sale", "purchaseReturn", "saleReturn" , "exportSale" , "importPurchase"],
+      enum: [
+        "purchase",
+        "sale",
+        "purchaseReturn",
+        "saleReturn",
+        "exportSale",
+        "importPurchase",
+      ],
       required: [true, "Transaction type is required"],
       index: true,
     },
@@ -385,11 +392,11 @@ const MetalTransactionSchema = new mongoose.Schema(
       index: true,
       // Allow null values but enforce uniqueness when present
     },
-   hedgeVoucherNumber: {
+    hedgeVoucherNumber: {
       type: String,
       trim: true,
       index: true,
-      default:null
+      default: null,
     },
     // Party Information
     partyCode: {
@@ -513,6 +520,11 @@ const MetalTransactionSchema = new mongoose.Schema(
       type: String,
       trim: true,
       maxlength: [1000, "Notes cannot exceed 1000 characters"],
+    },
+    salesman: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Salesman",
+      default: null,
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

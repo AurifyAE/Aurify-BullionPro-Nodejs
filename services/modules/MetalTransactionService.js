@@ -452,7 +452,7 @@ class MetalTransactionService {
       transactionId,
       metalTransactionId,
       partyId: party._id,
-      type: transactionType === "Purchase" ? "Sale-Hedge" : "Purchase-Hedge",
+      type: transactionType === "Purchase" ? "SALE-HEDGE" : "PURCHASE-HEDGE",
       referenceNumber: voucherNumber,
       voucherNumber: hedgeVoucherNo,
       orders: [order],
@@ -8464,7 +8464,7 @@ class MetalTransactionService {
           otherCharges: 0,
         },
       },
-         importPurchase: {
+      importPurchase: {
         unfix: {
           goldBalance: totals.pureWeight,
           goldValue: totals.goldValue,
