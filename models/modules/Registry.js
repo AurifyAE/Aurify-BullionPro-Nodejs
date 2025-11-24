@@ -129,6 +129,11 @@ const RegistrySchema = new mongoose.Schema(
       trim: true,
       maxlength: [100, "Reference cannot exceed 100 characters"],
     },
+     hedgeReference: {
+      type: String,
+      trim: true,
+      default : null
+    },
     status: {
       type: String,
       enum: ["pending", "completed", "cancelled"],

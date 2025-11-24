@@ -18,9 +18,9 @@ const CommoditySchema = new mongoose.Schema(
     },
     description: {
       type: String,
-      required: [true, "Description is required"],
       trim: true,
       maxlength: [200, "Description cannot exceed 200 characters"],
+      default: null,
     },
     karatSelect: {
       type: mongoose.Schema.Types.ObjectId,
