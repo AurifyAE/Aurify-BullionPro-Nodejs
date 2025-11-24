@@ -33,7 +33,6 @@ export const createMetalStock = async (req, res, next) => {
       vatOnMaking,
       wastage,
     } = req.body;
-    console.log("req.body :",req.body)
     // Validate required fields
     if (!metalType || !code || !description || !karat) {
       throw createAppError("Required fields missing", 400, "REQUIRED_FIELDS_MISSING");
