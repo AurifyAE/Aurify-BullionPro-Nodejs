@@ -649,6 +649,7 @@ class AccountTypeService {
         },
         {
           path: "balances.cashBalance.currency",
+          select: "currencyCode conversionRate description ",
           select: "currencyCode description conversionRate symbol",
         },
         { path: "acDefinition.branches.branch", select: "code name" },

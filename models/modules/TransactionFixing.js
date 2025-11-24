@@ -102,7 +102,10 @@ const TransactionFixingSchema = new mongoose.Schema(
     voucherType: { type: String, trim: true },
     voucherDate: { type: Date },
     salesman: { type: String, default: "N/A" },
-
+    metalTransactionId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "MetalTransaction",
+      },
     orders: {
       type: [OrderSchema],
       validate: [(v) => v.length > 0, "At least one order is required"],
