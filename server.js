@@ -30,6 +30,7 @@ import accountModeRoutes from './routes/modules/accountModeRoutes.js'
 import financialYearRoutes from "./routes/modules/financialYearMasterRoutes.js";
 import commodityRoutes from "./routes/modules/commodityRoutes.js";
 import salesmanRoutes from "./routes/modules/salesManRoutes.js";
+import documentTypeRoutes from "./routes/modules/documentTypeRoutes.js";
 import { mongodb } from "./config/db.js";
 import { errorHandler } from "./utils/errorHandler.js";
 
@@ -101,6 +102,7 @@ app.use("/api/v1/account-mode", accountModeRoutes)
 app.use("/api/v1/financial-year", financialYearRoutes);
 app.use("/api/v1/commodity", commodityRoutes);
 app.use("/api/v1/salesman", salesmanRoutes);
+app.use("/api/v1/document-type", documentTypeRoutes);
 // Global error handling middleware
 app.use(errorHandler);
 

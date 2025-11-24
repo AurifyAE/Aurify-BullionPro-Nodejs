@@ -323,7 +323,11 @@ const AccountSchema = new mongoose.Schema(
     kycDetails: {
       type: [
         {
-          documentType: { type: String, trim: true, default: null },
+          documentType: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "DocumentType",
+            default: null,
+          },
           documentNumber: {
             type: String,
             trim: true,
@@ -352,7 +356,6 @@ const AccountSchema = new mongoose.Schema(
             type: [documentSchema],
             default: [],
           },
-          isVerified: { type: Boolean, default: false },
         },
       ],
       default: [],
