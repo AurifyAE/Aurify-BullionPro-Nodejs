@@ -15,7 +15,7 @@ const router = express.Router();
 router.post("/login", validateLoginInput, login);
 router.post("/refresh", refreshToken);
 router.post("/logout", authenticateToken, logout);
-router.get("/view-password", authenticateToken , viewPassword);
+router.get("/view-password", authenticateToken, viewPassword);
 router.post("/verify-token", authenticateToken, verifyToken);
 
 export default router;

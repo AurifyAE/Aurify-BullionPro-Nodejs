@@ -14,6 +14,7 @@ export const login = async (req, res, next) => {
     
     const ipAddress = req.ip || req.connection.remoteAddress;
     const result = await loginAdmin(email, password, ipAddress);
+    console.log(result)
     // for login
       // const isValid = await verifyPassword(password, account.passwordHash);
 
@@ -28,6 +29,7 @@ export const login = async (req, res, next) => {
       message: result.message,
       data: {
         admin: result.data.admin,
+        Adminname: result.data.admin.name,
         accessToken: result.data.tokens.accessToken,
         refreshToken: result.data.tokens.refreshToken,
         expiresIn: result.data.tokens.expiresIn,
