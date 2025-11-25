@@ -33,6 +33,14 @@ const RegistrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "FundTransfer",
     },
+     assetType: {
+      type: String,
+      default: "AED",
+    },
+    currencyRate: {
+      type: Number,
+      default: 1,
+    },
     costCenter: {
       type: String,
       ref: "CostCenterMaster",
