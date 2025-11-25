@@ -608,6 +608,10 @@ class AccountTypeService {
             { path: "acDefinition.branches.branch", select: "code name" },
             { path: "createdBy", select: "name email" },
             { path: "updatedBy", select: "name email" },
+            {
+              path: "kycDetails.documentType",
+              select: "name code validationProperties",
+            },
           ])
           .sort(sortObj)
           .skip(skip)
@@ -645,11 +649,16 @@ class AccountTypeService {
         },
         {
           path: "balances.cashBalance.currency",
+          select: "currencyCode conversionRate description ",
           select: "currencyCode description conversionRate symbol",
         },
         { path: "acDefinition.branches.branch", select: "code name" },
         { path: "createdBy", select: "name email" },
         { path: "updatedBy", select: "name email" },
+        {
+          path: "kycDetails.documentType",
+          select: "name code validationProperties",
+        },
       ]);
 
       if (!tradeDebtor) {
