@@ -364,6 +364,8 @@ const MetalTransactionSchema = new mongoose.Schema(
         "saleReturn",
         "exportSale",
         "importPurchase",
+          "exportSaleReturn",
+        "importPurchaseReturn",
       ],
       required: [true, "Transaction type is required"],
       index: true,

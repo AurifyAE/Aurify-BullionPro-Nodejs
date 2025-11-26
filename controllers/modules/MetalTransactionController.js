@@ -82,7 +82,7 @@ export const createMetalTransaction = async (req, res, next) => {
         "SALE-RETURN",
         "IMPORT-PURCHASE",
         "EXPORT-SALE",
-         "IMPORT-PURCHASE-RETURN",
+        "IMPORT-PURCHASE-RETURN",
         "EXPORT-SALE-RETURN",
       ].includes(voucherType)
     ) {

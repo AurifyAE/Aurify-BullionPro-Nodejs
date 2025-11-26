@@ -1,75 +1,93 @@
 import mongoose from "mongoose";
 
-const inventoryLogSchema = new mongoose.Schema({
+const inventoryLogSchema = new mongoose.Schema(
+  {
     code: {
-        type: String,
-        required: true,
-        index: true, // Enables faster search on code
+      type: String,
+      required: true,
+      index: true, // Enables faster search on code
     },
     transactionType: {
-        type: String,
-        enum: ['sale', 'purchase', 'transfer', 'opening', 'adjustment', "exportSale" , "importPurchase", 'initial', 'saleReturn', 'purchaseReturn', 'metalReceipt', 'metalPayment'],
-        required: true,
+      type: String,
+      enum: [
+        "sale",
+        "purchase",
+        "transfer",
+        "opening",
+        "adjustment",
+        "exportSale",
+        "importPurchase",
+        "exportSaleReturn",
+        "importPurchaseReturn",
+        "initial",
+        "saleReturn",
+        "purchaseReturn",
+        "metalReceipt",
+        "metalPayment",
+      ],
+      required: true,
     },
     party: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Account",
-        default: null,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      default: null,
     },
     pcs: {
-        type: Boolean,
-        default: false,
+      type: Boolean,
+      default: false,
     },
     stockCode: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'MetalStock',
-        required: [true, 'Stock Code is required'],
-        index: true,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MetalStock",
+      required: [true, "Stock Code is required"],
+      index: true,
     },
     voucherCode: {
-        type: String,
-        default: '',
+      type: String,
+      default: "",
     },
     voucherType: {
-        type: String,
-        default: '',
+      type: String,
+      default: "",
     },
     voucherDate: {
-        type: Date,
-        required: [true, 'Voucher date is required'],
+      type: Date,
+      required: [true, "Voucher date is required"],
     },
     grossWeight: {
-        type: Number,
-        default: 0,
-        min: [0, 'Gross Weight cannot be negative'],
+      type: Number,
+      default: 0,
+      min: [0, "Gross Weight cannot be negative"],
     },
     action: {
-        type: String,
-        enum: ['add', 'update', 'delete', 'remove'],
-        required: true,
+      type: String,
+      enum: ["add", "update", "delete", "remove"],
+      required: true,
     },
     createdBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Admin',
-        required: true,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      required: true,
     },
     updatedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Admin',
-        default: null,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null,
     },
     note: {
-        type: String,
-        default: '',
-        trim: true,
+      type: String,
+      default: "",
+      trim: true,
     },
     timestamp: {
-        type: Date,
-        default: Date.now,
-    }
-}, {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
     timestamps: true, // Adds createdAt and updatedAt fields automatically
-});
+  }
+);
 
 const InventoryLog = mongoose.model("InventoryLog", inventoryLogSchema);
 
