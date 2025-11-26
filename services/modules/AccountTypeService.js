@@ -599,7 +599,7 @@ class AccountTypeService {
           .populate([
             {
               path: "acDefinition.currencies.currency",
-              select: "currencyCode description",
+              select: "currencyCode description minRate maxRate",
             },
             {
               path: "accountType",
