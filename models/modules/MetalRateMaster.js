@@ -58,6 +58,11 @@ const MetalRateMasterSchema = new mongoose.Schema(
       required: [true, "Add On Rate is required"],
       min: [0, "Add On Rate cannot be negative"]
     },
+    range: {
+      type: String,
+      trim: true,
+      default: ""
+    },
     isDefault: {
       type: Boolean,
       default: false

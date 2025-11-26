@@ -51,6 +51,7 @@ const OrderSchema = new mongoose.Schema(
       required: [true, "Commodity is required"],
     },
     commodityValue: { type: Number, default: 0 },
+    commodityPiece: { type: Number, default: 0 },
     grossWeight: {
       type: Number,
       required: true,
@@ -70,6 +71,7 @@ const OrderSchema = new mongoose.Schema(
       ref: "CurrencyMaster",
       required: true,
     },
+    itemCurrencyRate: { type: Number, default: null },
     purity: { type: Number, required: true },
     remarks: { type: String, trim: true, default: "" },
     price: { type: Number, required: true }, // from React as string
