@@ -77,8 +77,11 @@ export const createTransaction = async (req, res, next) => {
       orders: (orders || []).map((o) => ({
         commodity: o.commodity,
         commodityValue: Number(o.commodityValue) || 0,
+        commodityPiece: Number(o.commodityPiece) || 0,
+        itemCurrencyRate: Number(o.itemCurrencyRate),
         grossWeight: Number(o.grossWeight),
         oneGramRate: Number(o.oneGramRate),
+        selectedCurrencyId: o.selectedCurrencyId||"",
         ozWeight: Number(o.ozWeight) || 0,
         currentBidValue: Number(o.currentBidValue),
         bidValue: Number(o.bidValue),
@@ -215,6 +218,8 @@ export const updateTransaction = async (req, res, next) => {
       updateData.orders = updateData.orders.map((o) => ({
         commodity: o.commodity,
         commodityValue: Number(o.commodityValue) || 0,
+        commodityPiece: Number(o.commodityPiece) || 0,
+        itemCurrencyRate: Number(o.itemCurrencyRate),
         grossWeight: Number(o.grossWeight),
         oneGramRate: Number(o.oneGramRate),
         ozWeight: Number(o.ozWeight) || 0,

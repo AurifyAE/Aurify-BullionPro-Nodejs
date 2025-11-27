@@ -249,7 +249,7 @@ class AccountTypeService {
       // 2. Process VAT/GST updates
       if (updateData.vatGstDetails) {
         const validStatuses = ["REGISTERED", "UNREGISTERED", "EXEMPTED"];
-        console.log("Update VAT/GST Details:", updateData.vatGstDetails); 
+        console.log("Update VAT/GST Details:", updateData.vatGstDetails);
         updateData.vatGstDetails.vatStatus = updateData.vatGstDetails.vatStatus
           ? validStatuses.includes(
               updateData.vatGstDetails.vatStatus.toUpperCase()
@@ -259,8 +259,6 @@ class AccountTypeService {
           : "UNREGISTERED";
         updateData.vatGstDetails.vatNumber =
           updateData.vatGstDetails.vatNumber || "";
-        updateData.vatGstDetails.documents =
-          updateData.vatGstDetails.documents || [];
 
         if (
           updateData.vatGstDetails.vatStatus === "REGISTERED" &&
@@ -273,26 +271,30 @@ class AccountTypeService {
           );
         }
 
-        // Handle document replace/remove
-        // const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
-        // if (updateData.vatGstDetails._replaceDocuments) {
-        //   updateData.vatGstDetails.documents =
-        //     updateData.vatGstDetails.documents || [];
-        // } else if (updateData._removeVatDocuments?.length) {
-        //   updateData.vatGstDetails.documents = oldDocs.filter(
-        //     (doc) =>
-        //       !updateData._removeVatDocuments.includes(doc._id?.toString())
-        //   );
-        //   updateData.vatGstDetails.documents.push(
-        //     ...(updateData.vatGstDetails.documents || [])
-        //   );
-        // } else {
-        //   updateData.vatGstDetails.documents = [
-        //     ...oldDocs,
-        //     ...(updateData.vatGstDetails.documents || []),
-        //   ];
-        // }
+        const oldDocs = tradeDebtor.vatGstDetails?.documents || [];
+        const hasDocUpdate =
+          updateData.vatGstDetails._hasDocumentUpdate ||
+          Object.prototype.hasOwnProperty.call(
+            updateData.vatGstDetails,
+            "documents"
+          );
+        const replaceDocs =
+          updateData.vatGstDetails._replaceDocuments === "true" ||
+          updateData.vatGstDetails._replaceDocuments === true;
+
+        if (hasDocUpdate) {
+          const newDocs = Array.isArray(updateData.vatGstDetails.documents)
+            ? updateData.vatGstDetails.documents
+            : [];
+          updateData.vatGstDetails.documents = replaceDocs
+            ? newDocs
+            : [...oldDocs, ...newDocs];
+        } else {
+          updateData.vatGstDetails.documents = oldDocs;
+        }
+
         delete updateData.vatGstDetails._replaceDocuments;
+        delete updateData.vatGstDetails._hasDocumentUpdate;
         delete updateData._removeVatDocuments;
       }
 
@@ -326,16 +328,35 @@ class AccountTypeService {
         updateData.kycDetails = updateData.kycDetails
           .filter((kyc) => kyc.documentType && kyc.documentNumber)
           .map((kycUpdate) => {
+            const normalizedDocId =
+              kycUpdate._id?.toString?.() ||
+              kycUpdate.id?.toString?.() ||
+              "";
+            const normalizedDocType = kycUpdate.documentType?.toString?.() || "";
+            const normalizedDocNumber =
+              kycUpdate.documentNumber?.toString?.() || "";
             const old =
-              oldKyc.find(
-                (k) =>
-                  k.documentType === kycUpdate.documentType &&
-                  k.documentNumber === kycUpdate.documentNumber
-              ) || {};
+              oldKyc.find((k) => {
+                const oldId =
+                  k._id?.toString?.() ||
+                  k.id?.toString?.() ||
+                  "";
+                if (normalizedDocId && oldId && oldId === normalizedDocId) {
+                  return true;
+                }
+                const oldDocType =
+                  k.documentType?.toString?.() || k.documentType || "";
+                const oldDocNumber =
+                  k.documentNumber?.toString?.() || k.documentNumber || "";
+                return (
+                  oldDocType === normalizedDocType &&
+                  oldDocNumber === normalizedDocNumber
+                );
+              }) || {};
             const oldDocs = old.documents || [];
 
             let finalDocs = oldDocs;
-            if (kycUpdate.documents) {
+            if (Array.isArray(kycUpdate.documents)) {
               if (kycUpdate._replaceDocuments) {
                 finalDocs = kycUpdate.documents;
               } else if (kycUpdate._removeDocuments?.length) {
