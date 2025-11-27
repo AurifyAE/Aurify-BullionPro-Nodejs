@@ -14,7 +14,8 @@ export const createMetalRate = async (req, res, next) => {
       posMarginMin,
       posMarginMax,
       addOnRate,
-      isDefault
+      isDefault,
+      range
     } = req.body;
     
     // Validation
@@ -69,7 +70,8 @@ export const createMetalRate = async (req, res, next) => {
       posMarginMin: parseFloat(posMarginMin),
       posMarginMax: parseFloat(posMarginMax),
       addOnRate: parseFloat(addOnRate),
-      isDefault: isDefault || false
+      isDefault: isDefault || false,
+      range: range?.toString().trim() || ""
     };
 
     const metalRate = await MetalRateMasterService.createMetalRate(

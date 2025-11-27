@@ -1,5 +1,16 @@
 import mongoose from "mongoose";
 
+const extractUpdateField = (update, field) => {
+  if (!update) return undefined;
+  if (Object.prototype.hasOwnProperty.call(update, field)) {
+    return update[field];
+  }
+  if (update.$set && Object.prototype.hasOwnProperty.call(update.$set, field)) {
+    return update.$set[field];
+  }
+  return undefined;
+};
+
 const CurrencyMasterSchema = new mongoose.Schema(
   {
     currencyCode: {
@@ -52,6 +63,16 @@ const CurrencyMasterSchema = new mongoose.Schema(
         },
         {
           validator: function(value) {
+            if (this instanceof mongoose.Query) {
+              const minRate = extractUpdateField(this.getUpdate(), "minRate");
+              if (minRate === undefined) {
+                return true;
+              }
+              return value >= minRate;
+            }
+            if (this.minRate === undefined) {
+              return true;
+            }
             return value >= this.minRate;
           },
           message: "Maximum rate must be greater than or equal to minimum rate"

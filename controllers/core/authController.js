@@ -45,7 +45,6 @@ export const refreshToken = async (req, res, next) => {
   try {
 
     const refreshToken = req.cookies.refreshToken
-    console.log("Refresh Token:", refreshToken);
     if (!refreshToken) {
       throw createAppError(
         "Refresh token not provided",

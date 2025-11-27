@@ -240,7 +240,7 @@ export const TransactionFixingService = {
   createTransaction: async (transactionData, adminId) => {
     const session = await mongoose.startSession();
     session.startTransaction();
-
+    console.log(transactionData,'transaction data of fixing')
     try {
       // ----- VALIDATIONS -----
       if (!mongoose.Types.ObjectId.isValid(transactionData.partyId))
