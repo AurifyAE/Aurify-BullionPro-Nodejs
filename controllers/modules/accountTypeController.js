@@ -985,7 +985,7 @@ export const getAllTradeDebtors = async (req, res, next) => {
     };
 
     const result = await AccountTypeService.getAllTradeDebtors(options);
-    console.log("result",JSON.stringify(result))
+    // console.log("result",JSON.stringify(result))
 
     res.status(200).json({
       success: true,
