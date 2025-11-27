@@ -78,6 +78,14 @@ const StockItemSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Gross Weight cannot be negative"],
     },
+    currencyCode: {
+      type: String,
+      default: "AED",
+    },
+    currencyRate: {
+      type: Number,
+      default: 1,
+    },
     purity: {
       type: Number,
       required: [true, "Purity is required"],
@@ -356,6 +364,8 @@ const MetalTransactionSchema = new mongoose.Schema(
         "saleReturn",
         "exportSale",
         "importPurchase",
+          "exportSaleReturn",
+        "importPurchaseReturn",
       ],
       required: [true, "Transaction type is required"],
       index: true,

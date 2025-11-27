@@ -13,7 +13,7 @@ const toDate = (val) => (val ? new Date(val) : null);
 // ======================== CREATE METAL TRANSACTION ========================
 export const createMetalTransaction = async (req, res, next) => {
   console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
-  
+
   try {
     const {
       transactionType,
@@ -56,9 +56,16 @@ export const createMetalTransaction = async (req, res, next) => {
     }
 
     if (
-      !["purchase", "sale", "purchaseReturn", "saleReturn" , "exportSale" , "importPurchase"].includes(
-        transactionType
-      )
+      ![
+        "purchase",
+        "sale",
+        "purchaseReturn",
+        "saleReturn",
+        "exportSale",
+        "importPurchase",
+        "exportSaleReturn",
+        "importPurchaseReturn",
+      ].includes(transactionType)
     ) {
       throw createAppError(
         "Invalid transactionType. Allowed: purchase, sale, purchaseReturn, saleReturn",
@@ -74,7 +81,9 @@ export const createMetalTransaction = async (req, res, next) => {
         "PURCHASE-RETURN",
         "SALE-RETURN",
         "IMPORT-PURCHASE",
-        "EXPORT-SALE"
+        "EXPORT-SALE",
+        "IMPORT-PURCHASE-RETURN",
+        "EXPORT-SALE-RETURN",
       ].includes(voucherType)
     ) {
       throw createAppError("Invalid voucherType", 400, "INVALID_VOUCHER_TYPE");
@@ -103,6 +112,8 @@ export const createMetalTransaction = async (req, res, next) => {
         remarks,
         FXGain,
         FXLoss,
+        currencyCode,
+        currencyRate,
       } = item;
 
       return {
@@ -121,6 +132,8 @@ export const createMetalTransaction = async (req, res, next) => {
         passPurityDiff: Boolean(item.passPurityDiff),
         vatOnMaking: Boolean(item.vatOnMaking),
         excludeVAT: Boolean(item.excludeVAT),
+        currencyCode: currencyCode ? currencyCode : "AED",
+        currencyRate: toNumber(currencyRate) ? toNumber(currencyRate) : 1,
         metalRateRequirements: {
           amount: toNumber(metalRate?.rate),
           rateInGram: toNumber(metalRate?.rateInGram),
@@ -321,6 +334,8 @@ export const updateMetalTransaction = async (req, res, next) => {
         vat,
         itemTotal,
         remarks,
+        currencyCode,
+        currencyRate,
       } = item;
 
       return {
@@ -339,6 +354,8 @@ export const updateMetalTransaction = async (req, res, next) => {
         passPurityDiff: Boolean(item.passPurityDiff),
         vatOnMaking: Boolean(item.vatOnMaking),
         excludeVAT: Boolean(item.excludeVAT),
+        currencyCode: currencyCode ? currencyCode : "AED",
+        currencyRate: toNumber(currencyRate) ? toNumber(currencyRate) : 1,
         metalRateRequirements: {
           amount: toNumber(metalRate?.rate),
           rateInGram: toNumber(metalRate?.rateInGram),
