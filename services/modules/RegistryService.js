@@ -139,250 +139,194 @@ class RegistryService {
     }
   }
   // services/RegistryService.js
-  static async generateVoucherByMetalTransaction(metalTransactionId) {
-    if (!mongoose.Types.ObjectId.isValid(metalTransactionId)) return null;
+static async generateVoucherByMetalTransaction(metalTransactionId) {
+  if (!mongoose.Types.ObjectId.isValid(metalTransactionId)) return null;
 
-    const registries = await Registry.find({
-      metalTransactionId,
-      isActive: true,
-    })
-      .populate("party", "customerName accountCode")
-      .populate("createdBy", "name")
-      .sort({ createdAt: 1 })
-      .lean();
+  const registries = await Registry.find({
+    metalTransactionId,
+    isActive: true,
+  })
+    .populate("party", "customerName accountCode")
+    .populate("createdBy", "name")
+    .sort({ createdAt: 1 })
+    .lean();
 
-    if (!registries || registries.length === 0) return null;
+  if (!registries || registries.length === 0) return null;
 
-    const main = registries[0];
-    const party = main.party;
+  const main = registries[0];
+  const party = main.party;
 
-    const lines = [];
-    const added = new Set();
+  const lines = [];
+  const added = new Set();
 
-    const ACC = {
-      PARTY: party?.accountCode || "XXXX",
-      STOCK: "STK001",
-      EXPENSE: "EXP001",
-      INCOME: "INC001",
-      LOSS: "LOSS001",
-      GAIN: "GAIN001",
-      VAT: "VAT001",
-      PREMIUM: "PRM001",
-      MAKING: "MKC001",
-      FIXING: "FIX001",
-    };
+  // PARTY
+  const PARTY_CASH_TYPES = [
+    "PARTY_CASH_BALANCE",
+    "PARTY_MAKING_CHARGES",
+    "PARTY_PREMIUM",
+    "PARTY_DISCOUNT",
+    "PARTY_VAT_AMOUNT",
+    "OTHER-CHARGE",
+  ];
 
-    const PARTY_CASH_TYPES = [
-      "PARTY_CASH_BALANCE",
-      "PARTY_MAKING_CHARGES",
-      "PARTY_PREMIUM",
-      "PARTY_DISCOUNT",
-      "PARTY_VAT_AMOUNT",
-      "OTHER-CHARGE",
-    ];
+  const PARTY_GOLD_TYPES = ["PARTY_GOLD_BALANCE"];
 
-    const PARTY_GOLD_TYPES = ["PARTY_GOLD_BALANCE"];
+  // BULLION TYPES (all)
+  const BULLION_TYPES = [
+    "PURITY_DIFFERENCE",
+    "GOLD",
+    "DISCOUNT",
+    "PREMIUM",
+    "VAT_AMOUNT",
+    "OTHER-CHARGE",
+    "FX_EXCHANGE",        // <-- normal debit/credit
+    "MAKING_CHARGES",
+    "purchase-fixing",
+    "sales-fixing",       // <-- corrected
+    "HEDGE_ENTRY",
+  ];
 
-    const BULLION_TYPES = [
-      "PURITY_DIFFERENCE",
-      "GOLD_STOCK",
-      "DISCOUNT",
-      "PREMIUM",
-      "VAT_AMOUNT",
-      "OTHER-CHARGE",
-      "FX_EXCHANGE",
-      "MAKING_CHARGES",
-      "purchase-fixing",
-      "sale-fixing",
-    ];
+  // Combined cash+gold entry types
+  const COMBINED_TYPES = [
+    "HEDGE_ENTRY",
+    "purchase-fixing",
+    "sales-fixing",
+  ];
 
-    const addLine = (
-      desc,
+  const addLine = (desc, accCode, currDr = 0, currCr = 0, goldDr = 0, goldCr = 0) => {
+    const key = `${desc}-${accCode}-${currDr}-${currCr}-${goldDr}-${goldCr}`;
+    if (added.has(key)) return;
+    added.add(key);
+
+    lines.push({
       accCode,
-      currDr = 0,
-      currCr = 0,
-      goldDr = 0,
-      goldCr = 0
-    ) => {
-      const key = `${desc}-${accCode}-${currDr}-${currCr}-${goldDr}-${goldCr}`;
-      if (added.has(key)) return;
-      added.add(key);
+      description: desc,
+      currencyDebit: Number(currDr.toFixed(2)),
+      currencyCredit: Number(currCr.toFixed(2)),
+      metalDebit: Number(goldDr.toFixed(3)),
+      metalCredit: Number(goldCr.toFixed(3)),
+    });
+  };
 
-      lines.push({
-        accCode,
-        description: desc,
-        currencyDebit: Number(currDr.toFixed(2)),
-        currencyCredit: Number(currCr.toFixed(2)),
-        metalDebit: Number(goldDr.toFixed(3)),
-        metalCredit: Number(goldCr.toFixed(3)),
-      });
-    };
+  // Supplier totals
+  let partyCurrencyDebit = 0;
+  let partyCurrencyCredit = 0;
+  let partyGoldDebit = 0;
+  let partyGoldCredit = 0;
 
-    // Totals for supplier
-    let partyCurrencyDebit = 0;
-    let partyCurrencyCredit = 0;
-    let partyGoldDebit = 0;
-    let partyGoldCredit = 0;
+  // Process entries
+  for (const reg of registries) {
+    const t = reg.type;
 
-    // === PROCESS EACH REGISTRY ===
-    for (const reg of registries) {
-      const t = reg.type;
-      const isPurchase = ["Purchase", "Purchase Return"].includes(
-        reg.transactionType
-      );
+    // Dynamic description
+    const desc = t.replace(/[_-]/g, " ").toUpperCase();
 
-      // ==============================
-      // 1️⃣ PARTY ENTRIES
-      // ==============================
-      if (PARTY_CASH_TYPES.includes(t)) {
-        // These affect supplier in currency
-        partyCurrencyDebit += reg.debit || 0;
-        partyCurrencyCredit += reg.credit || 0;
-        continue;
-      }
+    // Dynamic account code
+    const prefix = t.replace(/[^A-Za-z]/g, "").substring(0, 3).toUpperCase();
+    const accCode = prefix + "001";
 
-      if (PARTY_GOLD_TYPES.includes(t)) {
-        // These affect supplier in metal
-        partyGoldDebit += reg.debit || 0;
-        partyGoldCredit += reg.credit || 0;
-        continue;
-      }
-
-      // ==============================
-      // 2️⃣ BULLION ENTRIES
-      // ==============================
-      if (BULLION_TYPES.includes(t)) {
-        let desc = "";
-        let accCode = "";
-        let useCashGold = false;
-        let combineSingleLine = false;
-
-        switch (t) {
-          case "purchase-fixing":
-          case "sale-fixing":
-            desc = isPurchase
-              ? "PURCHASE GOLD JEWELLERY"
-              : "SALE GOLD JEWELLERY";
-            accCode = ACC.FIXING;
-            useCashGold = true;
-            combineSingleLine = true;
-            break;
-
-          case "GOLD_STOCK":
-            desc = "PHYSICAL STOCK OF GOLD JEWELLERY";
-            accCode = ACC.STOCK;
-            break;
-
-          case "PURITY_DIFFERENCE":
-            desc = "PURITY DIFFERENCE";
-            accCode = reg.debit > 0 ? ACC.LOSS : ACC.GAIN;
-            break;
-
-          case "PREMIUM":
-            desc = isPurchase ? "PURCHASE PREMIUM" : "SALE PREMIUM";
-            accCode = ACC.PREMIUM;
-            break;
-
-          case "DISCOUNT":
-            desc = isPurchase ? "PURCHASE DISCOUNT" : "SALE DISCOUNT";
-            accCode = ACC.PREMIUM;
-            break;
-
-          case "VAT_AMOUNT":
-            desc = isPurchase ? "INPUT VAT" : "OUTPUT VAT";
-            accCode = ACC.VAT;
-            break;
-
-          case "OTHER-CHARGE":
-            desc = "OTHER CHARGES";
-            accCode = ACC.EXPENSE;
-            break;
-
-          case "FX_EXCHANGE":
-            desc = "FX EXCHANGE GAIN/LOSS";
-            accCode = reg.debit > 0 ? ACC.LOSS : ACC.GAIN;
-            break;
-
-          case "MAKING_CHARGES":
-            desc = isPurchase
-              ? "PURCHASE MAKING CHARGES GOLD"
-              : "SALE MAKING CHARGES";
-            accCode = ACC.MAKING;
-            break;
-
-          default:
-            continue;
-        }
-
-        if (useCashGold && combineSingleLine) {
-          // 🟢 SINGLE combined entry for fixing
-          const currDr = reg.cashDebit || 0;
-          const currCr = reg.cashCredit || 0;
-          const goldDr = reg.goldDebit || 0;
-          const goldCr = reg.goldCredit || 0;
-          addLine(desc, accCode, currDr, currCr, goldDr, goldCr);
-        } else {
-          // 🟡 Standard bullion handling (debit/credit)
-          if (reg.debit > 0) addLine(desc, accCode, reg.debit, 0);
-          if (reg.credit > 0) addLine(desc, accCode, 0, reg.credit);
-        }
-      }
+    // 1️⃣ PARTY CASH
+    if (PARTY_CASH_TYPES.includes(t)) {
+      partyCurrencyDebit += reg.debit || 0;
+      partyCurrencyCredit += reg.credit || 0;
+      continue;
     }
 
-    // ==============================
-    // 3️⃣ SUPPLIER SUMMARY LINE
-    // ==============================
+    // 2️⃣ PARTY GOLD
+    if (PARTY_GOLD_TYPES.includes(t)) {
+      partyGoldDebit += reg.debit || 0;
+      partyGoldCredit += reg.credit || 0;
+      continue;
+    }
+
+    // 3️⃣ BULLION
+    if (BULLION_TYPES.includes(t)) {
+
+      // Combined cash + gold
+      if (COMBINED_TYPES.includes(t)) {
+        addLine(
+          desc,
+          accCode,
+          reg.cashDebit || 0,
+          reg.cashCredit || 0,
+          reg.goldDebit || 0,
+          reg.goldCredit || 0
+        );
+        continue;
+      }
+
+      // Purity difference = ONLY gold
+      if (t === "PURITY_DIFFERENCE") {
+        if (reg.goldDebit > 0) addLine(desc, accCode, 0, 0, reg.goldDebit, 0);
+        if (reg.goldCredit > 0) addLine(desc, accCode, 0, 0, 0, reg.goldCredit);
+        continue;
+      }
+
+      // FX_EXCHANGE normal debit/credit (currency only)
+      if (t === "FX_EXCHANGE") {
+        if (reg.debit > 0) addLine(desc, accCode, reg.debit, 0, 0, 0);
+        if (reg.credit > 0) addLine(desc, accCode, 0, reg.credit, 0, 0);
+        continue;
+      }
+
+      // Standard bullion (currency only)
+      if (reg.debit > 0) addLine(desc, accCode, reg.debit, 0, 0, 0);
+      if (reg.credit > 0) addLine(desc, accCode, 0, reg.credit, 0, 0);
+
+      continue;
+    }
+  }
+
+  // 4️⃣ SUPPLIER SUMMARY
+  if (party) {
     const netCurrDr = partyCurrencyDebit - partyCurrencyCredit;
     const netCurrCr = partyCurrencyCredit - partyCurrencyDebit;
     const netGoldDr = partyGoldDebit - partyGoldCredit;
     const netGoldCr = partyGoldCredit - partyGoldDebit;
 
-    if (party) {
-      addLine(
-        "SUPPLIER",
-        ACC.PARTY,
-        netCurrDr > 0 ? netCurrDr : 0,
-        netCurrCr > 0 ? netCurrCr : 0,
-        netGoldDr > 0 ? netGoldDr : 0,
-        netGoldCr > 0 ? netGoldCr : 0
-      );
-    }
-
-    // ==============================
-    // 4️⃣ TOTALS
-    // ==============================
-    const totals = lines.reduce(
-      (a, l) => {
-        a.currencyDebit += l.currencyDebit;
-        a.currencyCredit += l.currencyCredit;
-        a.metalDebit += l.metalDebit;
-        a.metalCredit += l.metalCredit;
-        return a;
-      },
-      { currencyDebit: 0, currencyCredit: 0, metalDebit: 0, metalCredit: 0 }
+    addLine(
+      "SUPPLIER",
+      party.accountCode || "SUP001",
+      netCurrDr > 0 ? netCurrDr : 0,
+      netCurrCr > 0 ? netCurrCr : 0,
+      netGoldDr > 0 ? netGoldDr : 0,
+      netGoldCr > 0 ? netGoldCr : 0
     );
-
-    // ==============================
-    // 5️⃣ FINAL RETURN
-    // ==============================
-    return {
-      metalTransactionId,
-      transactionId: main.transactionId,
-      reference: main.reference,
-      date: main.transactionDate,
-      party: {
-        name: party?.customerName || "Walk-in Customer",
-        code: ACC.PARTY,
-      },
-      entries: lines,
-      totals: {
-        currencyDebit: Number(totals.currencyDebit.toFixed(2)),
-        currencyCredit: Number(totals.currencyCredit.toFixed(2)),
-        metalDebit: Number(totals.metalDebit.toFixed(3)),
-        metalCredit: Number(totals.metalCredit.toFixed(3)),
-      },
-    };
   }
+
+  // 5️⃣ Totals
+  const totals = lines.reduce(
+    (a, l) => {
+      a.currencyDebit += l.currencyDebit;
+      a.currencyCredit += l.currencyCredit;
+      a.metalDebit += l.metalDebit;
+      a.metalCredit += l.metalCredit;
+      return a;
+    },
+    { currencyDebit: 0, currencyCredit: 0, metalDebit: 0, metalCredit: 0 }
+  );
+
+  // 6️⃣ Final return
+  return {
+    metalTransactionId,
+    transactionId: main.transactionId,
+    reference: main.reference,
+    date: main.transactionDate,
+    party: {
+      name: party?.customerName || "Walk-in Customer",
+      code: party?.accountCode || "SUP001",
+    },
+    entries: lines,
+    totals: {
+      currencyDebit: Number(totals.currencyDebit.toFixed(2)),
+      currencyCredit: Number(totals.currencyCredit.toFixed(2)),
+      metalDebit: Number(totals.metalDebit.toFixed(3)),
+      metalCredit: Number(totals.metalCredit.toFixed(3)),
+    },
+  };
+}
+
+
 
   // Update registry
   static async updateRegistry(id, updateData, adminId) {
