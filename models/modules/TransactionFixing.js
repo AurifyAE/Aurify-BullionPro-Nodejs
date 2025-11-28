@@ -50,8 +50,10 @@ const OrderSchema = new mongoose.Schema(
       ref: "Commodity",
       required: [true, "Commodity is required"],
     },
+
     commodityValue: { type: Number, default: 0 },
     commodityPiece: { type: Number, default: 0 },
+
     grossWeight: {
       type: Number,
       required: true,
@@ -62,27 +64,56 @@ const OrderSchema = new mongoose.Schema(
       required: true,
       min: [0, "Rate must be >= 0"],
     },
+
+    currencyRate: { type: Number, default: 0 },
+    currencyCode: { type: String, trim: true, default: null },
+
     ozWeight: { type: Number, default: 0 },
     currentBidValue: { type: Number, required: true },
     bidValue: { type: Number, required: true },
     pureWeight: { type: Number, required: true },
+
     selectedCurrencyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "CurrencyMaster",
       required: true,
     },
+
     itemCurrencyRate: { type: Number, default: null },
     purity: { type: Number, required: true },
     remarks: { type: String, trim: true, default: "" },
-    price: { type: Number, required: true }, // from React as string
+    price: { type: Number, required: true },
     metalType: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MetalRateMaster",
       required: true,
     },
+
+    /* ============================= NEW FOREX SCHEMA ============================= */
+    forexValue: {
+      rates: {
+        purchase: { type: Number, default: 0 },
+        sell: { type: Number, default: 0 },
+        default: { type: Number, default: 0 }
+      },
+
+      calculation: {
+        marketValue: { type: Number, default: 0 }, // From FE
+        givenValue: { type: Number, default: 0 },  // From FE
+        diff: { type: Number, default: 0 }         // Signed (+/-)
+      },
+
+      outcome: {
+        fxGain: { type: Number, default: 0 },
+        fxLoss: { type: Number, default: 0 },
+        isGain: { type: Boolean, default: false },
+        isLoss: { type: Boolean, default: false }
+      }
+    }
   },
   { _id: false }
 );
+
 
 /* ============================= MAIN SCHEMA ============================= */
 const TransactionFixingSchema = new mongoose.Schema(

@@ -506,7 +506,8 @@ export const updateTradeDebtor = async (req, res, next) => {
         .map((file) => file.key || file.filename)
         .filter(Boolean);
     }
-
+    console.log("req.body :", req.body)
+    console.log("req.files :", req.files)
     // ──────────────────────────────────────────────────────────────
     // 1. Robust JSON Parser (handles string + Multer weird empty-key)
     // ──────────────────────────────────────────────────────────────
@@ -637,12 +638,30 @@ export const updateTradeDebtor = async (req, res, next) => {
       const vat = updateData.vatGstDetails;
       const validStatuses = ["REGISTERED", "UNREGISTERED", "EXEMPTED"];
       const status = (vat.vatStatus || "UNREGISTERED").toString().trim().toUpperCase();
+      const initialDocuments = Array.isArray(vat.documents) ? vat.documents : undefined;
 
       updateData.vatGstDetails = {
         vatStatus: validStatuses.includes(status) ? status : "UNREGISTERED",
         vatNumber: vat.vatNumber?.toString().trim() || "",
-        documents: Array.isArray(vat.documents) ? vat.documents : [],
       };
+
+      if (initialDocuments !== undefined) {
+        updateData.vatGstDetails.documents = initialDocuments;
+        updateData.vatGstDetails._hasDocumentUpdate = true;
+      }
+
+      if (req.body["vatGstDetails[_replaceDocuments]"] !== undefined) {
+        updateData.vatGstDetails._replaceDocuments =
+          req.body["vatGstDetails[_replaceDocuments]"] === "true" ||
+          req.body["vatGstDetails[_replaceDocuments]"] === true;
+        if (
+          updateData.vatGstDetails._replaceDocuments &&
+          updateData.vatGstDetails.documents === undefined
+        ) {
+          updateData.vatGstDetails.documents = [];
+          updateData.vatGstDetails._hasDocumentUpdate = true;
+        }
+      }
 
       if (updateData.vatGstDetails.vatStatus === "REGISTERED" && !updateData.vatGstDetails.vatNumber) {
         throw createAppError("VAT number is required when status is REGISTERED", 400, "MISSING_VAT_NUMBER");
@@ -696,11 +715,21 @@ export const updateTradeDebtor = async (req, res, next) => {
           s3Key: f.key || null,
           uploadedAt: new Date(),
         }));
-        const replace = updateData.vatGstDetails._replaceDocuments === "true";
-        updateData.vatGstDetails.documents = replace ? processed : [...updateData.vatGstDetails.documents, ...processed];
+        const replace =
+          updateData.vatGstDetails._replaceDocuments === "true" ||
+          updateData.vatGstDetails._replaceDocuments === true;
+        if (!Array.isArray(updateData.vatGstDetails.documents)) {
+          updateData.vatGstDetails.documents = [];
+        }
+        updateData.vatGstDetails.documents = replace
+          ? processed
+          : [...updateData.vatGstDetails.documents, ...processed];
+        updateData.vatGstDetails._hasDocumentUpdate = true;
       }
     }
-    console.log("After VAT/GST document handling:", updateData.vatGstDetails.documents);
+    if (updateData.vatGstDetails?.documents) {
+      console.log("After VAT/GST document handling:", updateData.vatGstDetails.documents);
+    }
     // Handle KYC documents
     if (updateData.kycDetails) {
       let parsedKycDetails = [];
