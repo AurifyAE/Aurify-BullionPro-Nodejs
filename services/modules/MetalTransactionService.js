@@ -2368,10 +2368,10 @@ class MetalTransactionService {
           `Gold stock - Purchase from ${partyName}`,
           party._id,
           true,
-          totals.pureWeight,
+          totals.pureWeightStd,
           0,
           {
-            debit: totals.pureWeight,
+            debit: totals.pureWeightStd,
             goldCredit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
@@ -2886,27 +2886,26 @@ class MetalTransactionService {
       );
     }
 
-    // ---------------------------------------
-    // 9) GOLD INVENTORY (PURE)
-    // ---------------------------------------
+    // ------------------------------
+    // 8) GOLD INVENTORY - PURE
+    // ------------------------------
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "004",
+          "005",
           "GOLD",
-          `Gold inventory - Purchase from ${partyName}`,
+          `Gold inventory - Sale from ${partyName}`,
           null,
           true,
           totals.pureWeightStd,
-          0,
+          totals.pureWeightStd,
           {
-            debit: totals.pureWeightStd,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
             pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
@@ -2919,12 +2918,13 @@ class MetalTransactionService {
       );
     }
 
-    // ---------------------------------------
-    // 10) PURITY DIFFERENCE
-    // ---------------------------------------
+    // ------------------------------
+    // 9) PURITY DIFFERENCE — MAIN UPDATE
+    // ------------------------------
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
+      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -2933,30 +2933,24 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${diff}`,
+          `Purity difference - Purchase to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
+          } ${diff})`,
           party._id,
-          true,
-
-          // ⭐ Always store ABS value — never negative
+          isDebit,
           absDiff,
-
-          // ⭐ Credit only when positive
-          diff > 0 ? absDiff : 0,
-
+          !isDebit ? absDiff : 0,
           {
-            // ⭐ Debit only when negative
-            debit: diff < 0 ? absDiff : 0,
-
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            debit: isDebit ? absDiff : 0,
+            credit: !isDebit ? absDiff : 0,
+            goldDebit: totals.grossWeight || 0,
+            cashDebit: totals.goldValue || 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
             goldBidValue: totals.bidValue,
-
             ...FX,
           },
-
           voucherDate,
           voucherNumber,
           adminId
@@ -2964,25 +2958,24 @@ class MetalTransactionService {
       );
     }
 
-    // ---------------------------------------
-    // 11) GROSS GOLD STOCK
-    // ---------------------------------------
+    // ------------------------------
+    // 10) GOLD STOCK — GROSS
+    // ------------------------------
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "006",
           "GOLD_STOCK",
-          `Gold stock - Purchase from ${partyName}`,
-          party._id,
+          `Gold stock -  Purchase return from ${partyName}`,
+          null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
-            goldDebit: totals.grossWeight,
+            goldCredit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeightStd,
@@ -3518,28 +3511,27 @@ class MetalTransactionService {
       );
     }
 
-    // ======================
-    // 7) GOLD INVENTORY (PURE)
-    // ======================
+    // ------------------------------
+    // 8) GOLD INVENTORY - PURE
+    // ------------------------------
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "004",
+          "005",
           "GOLD",
           `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.pureWeight,
-            goldCredit: totals.grossWeight,
-            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -3551,13 +3543,13 @@ class MetalTransactionService {
       );
     }
 
-    // ======================
-    // 8) PURITY DIFFERENCE
-    // ======================
-
+    // ------------------------------
+    // 9) PURITY DIFFERENCE — MAIN UPDATE
+    // ------------------------------
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
+      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -3566,29 +3558,24 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${diff}`,
+          `Purity difference - Purchase to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
+          } ${diff})`,
           party._id,
-          true,
-
-          // ⭐ NEVER store negative value → always ABS
+          isDebit,
           absDiff,
-
-          // ⭐ If positive → credit, if negative → 0
-          diff > 0 ? absDiff : 0,
-
+          !isDebit ? absDiff : 0,
           {
-            // ⭐ If negative → debit ABS, if positive → 0
-            debit: diff < 0 ? absDiff : 0,
-
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            debit: isDebit ? absDiff : 0,
+            credit: !isDebit ? absDiff : 0,
+            goldDebit: totals.grossWeight || 0,
+            cashDebit: totals.goldValue || 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
             goldBidValue: totals.bidValue,
             ...FX,
           },
-
           voucherDate,
           voucherNumber,
           adminId
@@ -3596,28 +3583,27 @@ class MetalTransactionService {
       );
     }
 
-    // ======================
-    // 9) GOLD STOCK (GROSS)
-    // ======================
+    // ------------------------------
+    // 10) GOLD STOCK — GROSS
+    // ------------------------------
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "006",
           "GOLD_STOCK",
           `Gold stock - Purchase from ${partyName}`,
-          party._id,
+          null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -4130,9 +4116,9 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 8) GOLD INVENTORY – PURE
-    // ------------------------------
+    // ======================
+    // 7) GOLD INVENTORY (PURE)
+    // ======================
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -4141,16 +4127,17 @@ class MetalTransactionService {
           metalTransactionId,
           "004",
           "GOLD",
-          `Gold inventory - Purchase return to ${partyName}`,
+          `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          0,
           {
+            debit: totals.pureWeight,
             goldCredit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -4162,13 +4149,13 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 9) PURITY DIFFERENCE — Updated Logic
-    // ------------------------------
+    // ======================
+    // 8) PURITY DIFFERENCE
+    // ======================
+
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
-      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -4177,24 +4164,29 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase return from ${partyName} (${
-            diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          `Purity difference - Purchase from ${partyName} : ${diff}`,
           party._id,
-          isDebit,
+          true,
+
+          // ⭐ NEVER store negative value → always ABS
           absDiff,
-          !isDebit ? absDiff : 0,
+
+          // ⭐ If positive → credit, if negative → 0
+          diff > 0 ? absDiff : 0,
+
           {
-            debit: isDebit ? absDiff : 0,
-            credit: !isDebit ? absDiff : 0,
+            // ⭐ If negative → debit ABS, if positive → 0
+            debit: diff < 0 ? absDiff : 0,
+
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purity,
             goldBidValue: totals.bidValue,
             ...FX,
           },
+
           voucherDate,
           voucherNumber,
           adminId
@@ -4202,9 +4194,9 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 10) GOLD STOCK – GROSS
-    // ------------------------------
+    // ======================
+    // 9) GOLD STOCK (GROSS)
+    // ======================
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -4213,17 +4205,18 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Purchase return to ${partyName}`,
-          null,
+          `Gold stock - Purchase from ${partyName}`,
+          party._id,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          0,
           {
-            goldCredit: totals.grossWeight,
+            debit: totals.pureWeightStd,
+            goldDebit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
-            purity: totals.purity,
+            pureWeight: totals.pureWeight,
+            purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
           },
@@ -4821,27 +4814,28 @@ class MetalTransactionService {
       );
     }
 
-    // ----------------------------------------------------
-    // 8) GOLD INVENTORY (PURE)
-    // ----------------------------------------------------
+    // ======================
+    // 7) GOLD INVENTORY (PURE)
+    // ======================
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "004",
           "GOLD",
-          `Gold inventory - Purchase Return from ${partyName}`,
+          `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          0,
           {
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            debit: totals.pureWeight,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -4853,13 +4847,13 @@ class MetalTransactionService {
       );
     }
 
-    // ----------------------------------------------------
-    // 9) PURITY DIFFERENCE – Safe handling
-    // ----------------------------------------------------
+    // ======================
+    // 8) PURITY DIFFERENCE
+    // ======================
+
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
-      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -4868,16 +4862,20 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase Return from ${partyName} (${
-            diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          `Purity difference - Purchase from ${partyName} : ${diff}`,
           party._id,
-          isDebit,
+          true,
+
+          // ⭐ NEVER store negative value → always ABS
           absDiff,
-          !isDebit ? absDiff : 0,
+
+          // ⭐ If positive → credit, if negative → 0
+          diff > 0 ? absDiff : 0,
+
           {
-            debit: isDebit ? absDiff : 0,
-            credit: !isDebit ? absDiff : 0,
+            // ⭐ If negative → debit ABS, if positive → 0
+            debit: diff < 0 ? absDiff : 0,
+
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
@@ -4886,6 +4884,7 @@ class MetalTransactionService {
             goldBidValue: totals.bidValue,
             ...FX,
           },
+
           voucherDate,
           voucherNumber,
           adminId
@@ -4893,9 +4892,9 @@ class MetalTransactionService {
       );
     }
 
-    // ----------------------------------------------------
-    // 10) GOLD STOCK (GROSS)
-    // ----------------------------------------------------
+    // ======================
+    // 9) GOLD STOCK (GROSS)
+    // ======================
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -4904,16 +4903,17 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Purchase Return from ${partyName}`,
-          null,
+          `Gold stock - Purchase from ${partyName}`,
+          party._id,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          0,
           {
-            goldCredit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            debit: totals.pureWeightStd,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -5426,9 +5426,9 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 8) GOLD INVENTORY – PURE
-    // ------------------------------
+    // ======================
+    // 7) GOLD INVENTORY (PURE)
+    // ======================
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -5437,16 +5437,17 @@ class MetalTransactionService {
           metalTransactionId,
           "004",
           "GOLD",
-          `Gold inventory - Purchase return to ${partyName}`,
+          `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          0,
           {
+            debit: totals.pureWeight,
             goldCredit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -5458,13 +5459,13 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 9) PURITY DIFFERENCE — Updated Logic
-    // ------------------------------
+    // ======================
+    // 8) PURITY DIFFERENCE
+    // ======================
+
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
-      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -5473,24 +5474,29 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase return from ${partyName} (${
-            diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          `Purity difference - Purchase from ${partyName} : ${diff}`,
           party._id,
-          isDebit,
+          true,
+
+          // ⭐ NEVER store negative value → always ABS
           absDiff,
-          !isDebit ? absDiff : 0,
+
+          // ⭐ If positive → credit, if negative → 0
+          diff > 0 ? absDiff : 0,
+
           {
-            debit: isDebit ? absDiff : 0,
-            credit: !isDebit ? absDiff : 0,
+            // ⭐ If negative → debit ABS, if positive → 0
+            debit: diff < 0 ? absDiff : 0,
+
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purity,
             goldBidValue: totals.bidValue,
             ...FX,
           },
+
           voucherDate,
           voucherNumber,
           adminId
@@ -5498,9 +5504,9 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 10) GOLD STOCK – GROSS
-    // ------------------------------
+    // ======================
+    // 9) GOLD STOCK (GROSS)
+    // ======================
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -5509,17 +5515,18 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Purchase return to ${partyName}`,
-          null,
+          `Gold stock - Purchase from ${partyName}`,
+          party._id,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          0,
           {
-            goldCredit: totals.grossWeight,
+            debit: totals.pureWeightStd,
+            goldDebit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
-            purity: totals.purity,
+            pureWeight: totals.pureWeight,
+            purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
           },
@@ -6117,27 +6124,28 @@ class MetalTransactionService {
       );
     }
 
-    // ----------------------------------------------------
-    // 8) GOLD INVENTORY (PURE)
-    // ----------------------------------------------------
+    // ======================
+    // 7) GOLD INVENTORY (PURE)
+    // ======================
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "004",
           "GOLD",
-          `Gold inventory - Purchase Return from ${partyName}`,
+          `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          0,
           {
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            debit: totals.pureWeight,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -6149,13 +6157,13 @@ class MetalTransactionService {
       );
     }
 
-    // ----------------------------------------------------
-    // 9) PURITY DIFFERENCE – Safe handling
-    // ----------------------------------------------------
+    // ======================
+    // 8) PURITY DIFFERENCE
+    // ======================
+
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
-      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -6164,16 +6172,20 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase Return from ${partyName} (${
-            diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          `Purity difference - Purchase from ${partyName} : ${diff}`,
           party._id,
-          isDebit,
+          true,
+
+          // ⭐ NEVER store negative value → always ABS
           absDiff,
-          !isDebit ? absDiff : 0,
+
+          // ⭐ If positive → credit, if negative → 0
+          diff > 0 ? absDiff : 0,
+
           {
-            debit: isDebit ? absDiff : 0,
-            credit: !isDebit ? absDiff : 0,
+            // ⭐ If negative → debit ABS, if positive → 0
+            debit: diff < 0 ? absDiff : 0,
+
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
@@ -6182,6 +6194,7 @@ class MetalTransactionService {
             goldBidValue: totals.bidValue,
             ...FX,
           },
+
           voucherDate,
           voucherNumber,
           adminId
@@ -6189,9 +6202,9 @@ class MetalTransactionService {
       );
     }
 
-    // ----------------------------------------------------
-    // 10) GOLD STOCK (GROSS)
-    // ----------------------------------------------------
+    // ======================
+    // 9) GOLD STOCK (GROSS)
+    // ======================
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -6200,16 +6213,17 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Purchase Return from ${partyName}`,
-          null,
+          `Gold stock - Purchase from ${partyName}`,
+          party._id,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          0,
           {
-            goldCredit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            debit: totals.pureWeightStd,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -6808,8 +6822,8 @@ class MetalTransactionService {
           `Gold stock - Export Sale to ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
             goldCredit: totals.grossWeight,
             cashCredit: totals.goldValue,
@@ -7495,8 +7509,8 @@ class MetalTransactionService {
           `Gold stock - Export Sale Unfix return for ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
             goldDebit: totals.grossWeight,
             cashDebit: totals.goldValue,
@@ -8013,9 +8027,9 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 8) GOLD INVENTORY (PURE)
-    // ------------------------------
+    // ======================
+    // 7) GOLD INVENTORY (PURE)
+    // ======================
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -8024,15 +8038,18 @@ class MetalTransactionService {
           metalTransactionId,
           "004",
           "GOLD",
-          `Gold inventory - Sale to ${partyName}`,
+          `Gold inventory - Sale from ${partyName}`,
           null,
           true,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          0,
           {
+            debit: totals.pureWeight,
             goldCredit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
+            pureWeight: totals.pureWeight,
+            purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
           },
@@ -8043,13 +8060,13 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 9) PURITY DIFFERENCE — UPDATED LOGIC
-    // ------------------------------
+    // ======================
+    // 8) PURITY DIFFERENCE
+    // ======================
+
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
-      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -8058,24 +8075,29 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale to ${partyName} (${
-            diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          `Purity difference - Sale from ${partyName} : ${diff}`,
           party._id,
-          isDebit,
+          true,
+
+          // ⭐ NEVER store negative value → always ABS
           absDiff,
-          !isDebit ? absDiff : 0,
+
+          // ⭐ If positive → credit, if negative → 0
+          diff > 0 ? absDiff : 0,
+
           {
-            debit: isDebit ? absDiff : 0,
-            credit: !isDebit ? absDiff : 0,
-            goldDebit: totals.grossWeight || 0,
-            cashDebit: totals.goldValue || 0,
+            // ⭐ If negative → debit ABS, if positive → 0
+            debit: diff < 0 ? absDiff : 0,
+
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purity,
             goldBidValue: totals.bidValue,
             ...FX,
           },
+
           voucherDate,
           voucherNumber,
           adminId
@@ -8083,9 +8105,9 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 10) GOLD STOCK (GROSS)
-    // ------------------------------
+    // ======================
+    // 9) GOLD STOCK (GROSS)
+    // ======================
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
@@ -8094,17 +8116,18 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Sale to ${partyName}`,
-          null,
+          `Gold stock - Sale from ${partyName}`,
+          party._id,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          0,
           {
-            goldCredit: totals.grossWeight,
+            debit: totals.pureWeightStd,
+            goldDebit: totals.grossWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
-            purity: totals.purity,
+            pureWeight: totals.pureWeight,
+            purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
           },
@@ -8700,28 +8723,28 @@ class MetalTransactionService {
         )
       );
     }
-
-    // ------------------------------
-    // 8) GOLD INVENTORY - PURE
-    // ------------------------------
+    // ======================
+    // 7) GOLD INVENTORY (PURE)
+    // ======================
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "004",
           "GOLD",
-          `Gold inventory - Unfix Sale return from ${partyName}`,
+          `Gold inventory - Sale from ${partyName}`,
           null,
           true,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          0,
           {
+            debit: totals.pureWeight,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -8733,13 +8756,13 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 9) PURITY DIFFERENCE — MAIN UPDATE
-    // ------------------------------
+    // ======================
+    // 8) PURITY DIFFERENCE
+    // ======================
+
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
-      const isDebit = diff < 0;
 
       entries.push(
         this.createRegistryEntry(
@@ -8748,24 +8771,29 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale to ${partyName} (${
-            diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          `Purity difference - Sale from ${partyName} : ${diff}`,
           party._id,
-          isDebit,
+          true,
+
+          // ⭐ NEVER store negative value → always ABS
           absDiff,
-          !isDebit ? absDiff : 0,
+
+          // ⭐ If positive → credit, if negative → 0
+          diff > 0 ? absDiff : 0,
+
           {
-            debit: isDebit ? absDiff : 0,
-            credit: !isDebit ? absDiff : 0,
-            goldDebit: totals.grossWeight || 0,
-            cashDebit: totals.goldValue || 0,
+            // ⭐ If negative → debit ABS, if positive → 0
+            debit: diff < 0 ? absDiff : 0,
+
+            goldDebit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
             goldBidValue: totals.bidValue,
             ...FX,
           },
+
           voucherDate,
           voucherNumber,
           adminId
@@ -8773,27 +8801,28 @@ class MetalTransactionService {
       );
     }
 
-    // ------------------------------
-    // 10) GOLD STOCK — GROSS
-    // ------------------------------
+    // ======================
+    // 9) GOLD STOCK (GROSS)
+    // ======================
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "006",
+          "005",
           "GOLD_STOCK",
-          `Gold stock - Unfix Sale return from ${partyName}`,
-          null,
+          `Gold stock - Sale from ${partyName}`,
+          party._id,
           true,
-          totals.grossWeight,
-          totals.grossWeight,
+          totals.pureWeightStd,
+          0,
           {
-            goldCredit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            debit: totals.pureWeightStd,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeightStd,
+            pureWeight: totals.pureWeight,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -9327,28 +9356,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 7) GOLD INVENTORY (PURE)
-    // ============================================================
+    // ------------------------------
+    // 8) GOLD INVENTORY - PURE
+    // ------------------------------
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "004",
+          "005",
           "GOLD",
-          `Gold inventory - Sale return from ${partyName}`,
+          `Gold inventory - Export Sale Return from ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
+            grossWeight: totals.grossWeight,
             goldDebit: totals.grossWeight,
             cashCredit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -9360,9 +9388,9 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 8) PURITY DIFFERENCE (Always ABS value)
-    // ============================================================
+    // ------------------------------
+    // 9) PURITY DIFFERENCE — MAIN UPDATE
+    // ------------------------------
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
@@ -9375,7 +9403,7 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale return from ${partyName} (${
+          `Purity difference - Export Sale Return to ${partyName} (${
             diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
@@ -9385,8 +9413,8 @@ class MetalTransactionService {
           {
             debit: isDebit ? absDiff : 0,
             credit: !isDebit ? absDiff : 0,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            goldDebit: totals.grossWeight || 0,
+            cashDebit: totals.goldValue || 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
@@ -9400,28 +9428,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 9) GOLD STOCK (GROSS)
-    // ============================================================
+    // ------------------------------
+    // 10) GOLD STOCK — GROSS
+    // ------------------------------
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "006",
           "GOLD_STOCK",
-          `Gold stock - Sale return from ${partyName}`,
+          `Gold stock - Export Sale Return from ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -9933,28 +9960,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 8) GOLD INVENTORY (PURE WEIGHT)
-    // ============================================================
+    // ------------------------------
+    // 8) GOLD INVENTORY - PURE
+    // ------------------------------
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "004",
+          "005",
           "GOLD",
-          `Gold inventory - Sale return from ${partyName}`,
+          `Gold inventory - Export Sale Return from ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
+            grossWeight: totals.grossWeight,
             goldDebit: totals.grossWeight,
             cashCredit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -9966,9 +9992,9 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 9) PURITY DIFFERENCE — ALWAYS ABS VALUE
-    // ============================================================
+    // ------------------------------
+    // 9) PURITY DIFFERENCE — MAIN UPDATE
+    // ------------------------------
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
@@ -9981,7 +10007,7 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale return from ${partyName} (${
+          `Purity difference - Export Sale Return to ${partyName} (${
             diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
@@ -9991,8 +10017,8 @@ class MetalTransactionService {
           {
             debit: isDebit ? absDiff : 0,
             credit: !isDebit ? absDiff : 0,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            goldDebit: totals.grossWeight || 0,
+            cashDebit: totals.goldValue || 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
@@ -10006,28 +10032,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 10) GOLD STOCK (GROSS WEIGHT)
-    // ============================================================
+    // ------------------------------
+    // 10) GOLD STOCK — GROSS
+    // ------------------------------
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "006",
           "GOLD_STOCK",
-          `Gold stock - Sale return from ${partyName}`,
+          `Gold stock - Export Sale Return from ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -10561,28 +10586,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 7) GOLD INVENTORY (PURE)
-    // ============================================================
+    // ------------------------------
+    // 8) GOLD INVENTORY - PURE
+    // ------------------------------
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "004",
+          "005",
           "GOLD",
-          `Gold inventory - Sale return from ${partyName}`,
+          `Gold inventory - Sale Return from ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
+            grossWeight: totals.grossWeight,
             goldDebit: totals.grossWeight,
             cashCredit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -10594,9 +10618,9 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 8) PURITY DIFFERENCE (Always ABS value)
-    // ============================================================
+    // ------------------------------
+    // 9) PURITY DIFFERENCE — MAIN UPDATE
+    // ------------------------------
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
@@ -10609,7 +10633,7 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale return from ${partyName} (${
+          `Purity difference - Sale Return to ${partyName} (${
             diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
@@ -10619,8 +10643,8 @@ class MetalTransactionService {
           {
             debit: isDebit ? absDiff : 0,
             credit: !isDebit ? absDiff : 0,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            goldDebit: totals.grossWeight || 0,
+            cashDebit: totals.goldValue || 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
@@ -10634,28 +10658,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 9) GOLD STOCK (GROSS)
-    // ============================================================
+    // ------------------------------
+    // 10) GOLD STOCK — GROSS
+    // ------------------------------
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "006",
           "GOLD_STOCK",
-          `Gold stock - Sale return from ${partyName}`,
+          `Gold stock - Sale Return from ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -11167,28 +11190,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 8) GOLD INVENTORY (PURE WEIGHT)
-    // ============================================================
+    // ------------------------------
+    // 8) GOLD INVENTORY - PURE
+    // ------------------------------
     if (totals.pureWeightStd > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "004",
+          "005",
           "GOLD",
-          `Gold inventory - Sale return from ${partyName}`,
+          `Gold inventory - Sale Return from ${partyName}`,
           null,
           true,
-          totals.pureWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.pureWeight,
-            goldCredit: totals.grossWeight,
-            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            goldDebit: totals.grossWeight,
+            cashCredit: totals.goldValue,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
@@ -11200,9 +11222,9 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 9) PURITY DIFFERENCE — ALWAYS ABS VALUE
-    // ============================================================
+    // ------------------------------
+    // 9) PURITY DIFFERENCE — MAIN UPDATE
+    // ------------------------------
     if (totals.purityDifference !== 0) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
@@ -11215,7 +11237,7 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale return from ${partyName} (${
+          `Purity difference - Sale Return to ${partyName} (${
             diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
@@ -11225,8 +11247,8 @@ class MetalTransactionService {
           {
             debit: isDebit ? absDiff : 0,
             credit: !isDebit ? absDiff : 0,
-            goldDebit: totals.grossWeight,
-            cashDebit: totals.goldValue,
+            goldDebit: totals.grossWeight || 0,
+            cashDebit: totals.goldValue || 0,
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
@@ -11240,28 +11262,27 @@ class MetalTransactionService {
       );
     }
 
-    // ============================================================
-    // 10) GOLD STOCK (GROSS WEIGHT)
-    // ============================================================
+    // ------------------------------
+    // 10) GOLD STOCK — GROSS
+    // ------------------------------
     if (totals.grossWeight > 0) {
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
-          "005",
+          "006",
           "GOLD_STOCK",
-          `Gold stock - Sale return from ${partyName}`,
+          `Gold stock - Sale Return from ${partyName}`,
           null,
           true,
-          totals.grossWeight,
-          0,
+          totals.pureWeightStd,
+          totals.pureWeightStd,
           {
-            debit: totals.grossWeight,
-            goldDebit: totals.grossWeight,
-            cashCredit: totals.goldValue,
+            goldCredit: totals.grossWeight,
+            cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
-            pureWeight: totals.pureWeight,
+            pureWeight: totals.pureWeightStd,
             purity: totals.purityStd,
             goldBidValue: totals.bidValue,
             ...FX,
