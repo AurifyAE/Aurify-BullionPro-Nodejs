@@ -28,19 +28,20 @@ const buildRegistryEntries = ({
     (cb) => cb.currency?.toString() === currencyId
   );
   const currencyCode = cashBalance?.code || "UNKNOWN";
+
   const fmt = (n, d = 2) =>
     n.toLocaleString("en-AE", {
       minimumFractionDigits: d,
       maximumFractionDigits: d,
     });
   const fmtWeight = (n) => fmt(n, 3);
-  const fmtAed = (n) => `AED ${fmt(n, 2)}`;
 
   const metalStr = `${fmtWeight(pureWeight)}g @ ${fmt(bidValueOz, 2)}oz`;
-  const cashStr = `${currencyCode} ${totalValue}`;
+  const cashStr = `${currencyCode} ${fmt(totalValue, 2)}`;
   const isPurchase = type === "PURCHASE";
   const transactionType =
     type === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING";
+
   return [
     // 1. PARTY_GOLD_BALANCE
     {
@@ -171,9 +172,10 @@ const computeGoldDelta = (orders, type) => {
   return sign * totalWeight;
 };
 
+// CASH is tracked in AED, using price * currencyRate (or itemCurrencyRate)
 const computeCashDeltas = (orders, type) => {
-  const sign = type === "PURCHASE" ? 1 : -1; // PURCHASE: +cash, SALE: -cash (per your original logic)
-  const deltas = {}; // { currencyId: amountDelta }
+  const sign = type === "PURCHASE" ? 1 : -1; // PURCHASE: +cash (we pay party), SALE: -cash
+  const deltas = {}; // { currencyId: amountDeltaInAED }
 
   for (const order of orders) {
     const cid = order.selectedCurrencyId?.toString();
@@ -184,8 +186,13 @@ const computeCashDeltas = (orders, type) => {
         "MISSING_CURRENCY"
       );
     }
-    const amount = toNumberOrThrow(order.price, "price");
-    deltas[cid] = (deltas[cid] || 0) + sign * amount;
+
+    const price = toNumberOrThrow(order.price, "price"); // base amount (e.g. USD or AED)
+    // const rate = Number(order.currencyRate ?? order.itemCurrencyRate ?? 1) || 1; // FX rate
+
+    const amountAED = price ;
+
+    deltas[cid] = (deltas[cid] || 0) + sign * amountAED;
   }
 
   return deltas;
@@ -240,7 +247,7 @@ export const TransactionFixingService = {
   createTransaction: async (transactionData, adminId) => {
     const session = await mongoose.startSession();
     session.startTransaction();
-    console.log(transactionData,'transaction data of fixing')
+    console.log(transactionData, "transaction data of fixing");
     try {
       // ----- VALIDATIONS -----
       if (!mongoose.Types.ObjectId.isValid(transactionData.partyId))
@@ -249,7 +256,7 @@ export const TransactionFixingService = {
       const type = transactionData.type.toUpperCase();
       if (!["PURCHASE", "SALE"].includes(type))
         throw createAppError(
-          "Type must be 'PURCHASE' or 'SELL'",
+          "Type must be 'PURCHASE' or 'SALE'",
           400,
           "INVALID_TYPE"
         );
@@ -291,6 +298,11 @@ export const TransactionFixingService = {
             400,
             "INVALID_CURRENCY"
           );
+
+        // Normalize FX rates: FE sends itemCurrencyRate, we store both
+        order.itemCurrencyRate = Number(order.itemCurrencyRate) || 1;
+        order.currencyRate = Number(order.currencyRate || order.itemCurrencyRate) || 1;
+
         // Ensure weight exists and is numeric (will throw if invalid)
         resolveOrderWeight(order);
       });
@@ -342,10 +354,18 @@ export const TransactionFixingService = {
       const goldDelta = computeGoldDelta(transactionData.orders, type);
       const cashDeltas = computeCashDeltas(transactionData.orders, type);
 
+      const transactionType =
+        type === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING";
+      const partyName = account.customerName || account.accountCode || "Unknown";
+
       for (const order of transactionData.orders) {
         const regId = await Registry.generateTransactionId();
         const pureWeight = resolveOrderWeight(order);
-        const totalValue = toNumberOrThrow(order.price, "price");
+        const priceBase = toNumberOrThrow(order.price, "price");
+        const currencyRate =
+          Number(order.currencyRate ?? order.itemCurrencyRate ?? 1) || 1;
+        const totalValueAED = priceBase * currencyRate;
+
         const bidValueOz = toNumberOrThrow(order.bidValue, "bidValue");
         const currencyId = order.selectedCurrencyId.toString();
         const oneGramRate = toNumberOrThrow(order.oneGramRate, "oneGramRate");
@@ -355,11 +375,11 @@ export const TransactionFixingService = {
         );
         const voucherNumber = transaction.voucherNumber;
         const grossWeight = order.grossWeight;
+
         // FIXING PRICE
         fixingPriceEntries.push({
           transactionFix: transaction._id,
-          transactionType:
-            type === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING",
+          transactionType,
           rateInGram: oneGramRate,
           bidValue: bidValueOz,
           currentBidValue,
@@ -369,7 +389,75 @@ export const TransactionFixingService = {
           fixedAt: new Date(),
         });
 
-        // REGISTRY ENTRIES
+        // FX META
+        const fx = order.forexValue || {};
+        const FXGain = Number(fx.fxGain) || 0;
+        const FXLoss = Number(fx.fxLoss) || 0;
+
+        const FXMeta = {
+          assetType: order.currencyCode || "AED",
+          currencyRate,
+        };
+
+        // FX GAIN REGISTRY
+        if (FXGain > 0) {
+          registryEntries.push({
+            transactionId: regId,
+            transactionType,
+            fixingTransactionId: transaction._id,
+            type: "FX_EXCHANGE",
+            description: `Foreign Exchange Gain - ${
+              type === "PURCHASE" ? "Purchase from" : "Sale to"
+            } ${partyName}`,
+            party: account._id,
+            isBullion: false,
+            goldBidValue: bidValueOz,
+            value: FXGain,
+            grossWeight,
+            debit: 0,
+            credit: FXGain,
+            goldCredit: 0,
+            goldDebit: 0,
+            cashDebit: 0,
+            cashCredit: FXGain,
+            assetType: FXMeta.assetType,
+            currencyRate: FXMeta.currencyRate,
+            transactionDate: new Date(),
+            reference: voucherNumber,
+            createdBy: adminId,
+          });
+        }
+
+        // FX LOSS REGISTRY
+        if (FXLoss > 0) {
+          registryEntries.push({
+            transactionId: regId,
+            transactionType,
+            fixingTransactionId: transaction._id,
+            type: "FX_EXCHANGE",
+            description: `Foreign Exchange Loss - ${
+              type === "PURCHASE" ? "Purchase from" : "Sale to"
+            } ${partyName}`,
+            party: account._id,
+            isBullion: false,
+            goldBidValue: bidValueOz,
+            value: FXLoss,
+            grossWeight,
+            debit: FXLoss,
+            credit: 0,
+            goldCredit: 0,
+            goldDebit: 0,
+            cashDebit: FXLoss,
+            cashCredit: 0,
+            assetType: FXMeta.assetType,
+            currencyRate: FXMeta.currencyRate,
+            transactionDate: new Date(),
+            reference: voucherNumber,
+            createdBy: adminId,
+          });
+        }
+
+        // REGULAR REGISTRY ENTRIES (gold & cash)
         const entries = buildRegistryEntries({
           regId,
           fixId: transaction._id,
@@ -377,7 +465,7 @@ export const TransactionFixingService = {
           order,
           type,
           pureWeight,
-          totalValue,
+          totalValue: totalValueAED, // AED
           bidValueOz,
           currencyId,
           adminId,
@@ -445,11 +533,10 @@ export const TransactionFixingService = {
       const origType = existing.type.toUpperCase();
       const origOrders = existing.orders || [];
 
-      // THIS is the original effect that was applied when the transaction was created
       const originalGoldDelta = computeGoldDelta(origOrders, origType);
       const originalCashDeltas = computeCashDeltas(origOrders, origType);
 
-      // To reverse, we simply apply the negative of those deltas
+      // reverse deltas
       account.balances.goldBalance.totalGrams =
         (account.balances.goldBalance.totalGrams || 0) - originalGoldDelta;
 
@@ -460,7 +547,10 @@ export const TransactionFixingService = {
       applyCashDeltasToAccount(account, reversedCashDeltas);
 
       // Remove existing registry & fixing price entries for this fixing
-      console.log("Deleting existing Registry and FixingPrice entries...",existing._id);
+      console.log(
+        "Deleting existing Registry and FixingPrice entries...",
+        existing._id
+      );
       await Registry.deleteMany({ fixingTransactionId: existing._id }).session(
         session
       );
@@ -502,19 +592,31 @@ export const TransactionFixingService = {
             400,
             "INVALID_CURRENCY"
           );
+
+        order.itemCurrencyRate = Number(order.itemCurrencyRate) || 1;
+        order.currencyRate =
+          Number(order.currencyRate || order.itemCurrencyRate) || 1;
       });
 
       const registryEntries = [];
       const fixingPriceEntries = [];
 
-      // New gold & cash deltas
       const newGoldDelta = computeGoldDelta(newOrders, newType);
       const newCashDeltas = computeCashDeltas(newOrders, newType);
+
+      const transactionType =
+        newType === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING";
+      const partyName =
+        account.customerName || account.accountCode || "Unknown";
 
       for (const order of newOrders) {
         const regId = await Registry.generateTransactionId();
         const pureWeight = resolveOrderWeight(order);
-        const totalValue = toNumberOrThrow(order.price, "price");
+        const priceBase = toNumberOrThrow(order.price, "price");
+        const currencyRate =
+          Number(order.currencyRate ?? order.itemCurrencyRate ?? 1) || 1;
+        const totalValueAED = priceBase * currencyRate;
+
         const bidValueOz = toNumberOrThrow(order.bidValue, "bidValue");
         const currencyId = order.selectedCurrencyId.toString();
         const currentBidValue = toNumberOrThrow(
@@ -524,11 +626,11 @@ export const TransactionFixingService = {
         const oneGramRate = toNumberOrThrow(order.oneGramRate, "oneGramRate");
         const voucherNumber = existing.voucherNumber;
         const grossWeight = order.grossWeight;
+
         // FIXING PRICE
         fixingPriceEntries.push({
           transactionFix: existing._id,
-          transactionType:
-            newType === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING",
+          transactionType,
           rateInGram: oneGramRate,
           bidValue: bidValueOz,
           currentBidValue,
@@ -538,6 +640,74 @@ export const TransactionFixingService = {
           fixedAt: new Date(),
         });
 
+        // FX META
+        const fx = order.forexValue || {};
+        const FXGain = Number(fx.fxGain) || 0;
+        const FXLoss = Number(fx.fxLoss) || 0;
+
+        const FXMeta = {
+          assetType: order.currencyCode || "AED",
+          currencyRate,
+        };
+
+        // FX GAIN
+        if (FXGain > 0) {
+          registryEntries.push({
+            transactionId: regId,
+            transactionType,
+            fixingTransactionId: existing._id,
+            type: "FX_EXCHANGE",
+            description: `Foreign Exchange Gain - ${
+              newType === "PURCHASE" ? "Purchase from" : "Sale to"
+            } ${partyName}`,
+            party: account._id,
+            isBullion: false,
+            goldBidValue: bidValueOz,
+            value: FXGain,
+            grossWeight,
+            debit: 0,
+            credit: FXGain,
+            goldCredit: 0,
+            goldDebit: 0,
+            cashDebit: 0,
+            cashCredit: FXGain,
+            assetType: FXMeta.assetType,
+            currencyRate: FXMeta.currencyRate,
+            transactionDate: new Date(),
+            reference: voucherNumber,
+            createdBy: adminId,
+          });
+        }
+
+        // FX LOSS
+        if (FXLoss > 0) {
+          registryEntries.push({
+            transactionId: regId,
+            transactionType,
+            fixingTransactionId: existing._id,
+            type: "FX_EXCHANGE",
+            description: `Foreign Exchange Loss - ${
+              newType === "PURCHASE" ? "Purchase from" : "Sale to"
+            } ${partyName}`,
+            party: account._id,
+            isBullion: false,
+            goldBidValue: bidValueOz,
+            value: FXLoss,
+            grossWeight,
+            debit: FXLoss,
+            credit: 0,
+            goldCredit: 0,
+            goldDebit: 0,
+            cashDebit: FXLoss,
+            cashCredit: 0,
+            assetType: FXMeta.assetType,
+            currencyRate: FXMeta.currencyRate,
+            transactionDate: new Date(),
+            reference: voucherNumber,
+            createdBy: adminId,
+          });
+        }
+
         // REGISTRY ENTRIES
         const entries = buildRegistryEntries({
           regId,
@@ -546,7 +716,7 @@ export const TransactionFixingService = {
           order,
           type: newType,
           pureWeight,
-          totalValue,
+          totalValue: totalValueAED,
           bidValueOz,
           currencyId,
           adminId,
@@ -617,7 +787,6 @@ export const TransactionFixingService = {
       if (partyId && mongoose.Types.ObjectId.isValid(partyId))
         filter.partyId = partyId;
       if (metalType) {
-        // metalType lives inside orders → $elemMatch
         filter["orders.metalType"] = mongoose.Types.ObjectId(metalType);
       }
 
@@ -661,9 +830,6 @@ export const TransactionFixingService = {
         .populate("orders.metalType")
         .populate("orders.commodity")
         .populate("orders.selectedCurrencyId")
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
         .lean();
 
       if (!transaction)
@@ -677,96 +843,92 @@ export const TransactionFixingService = {
     }
   },
 
-// -----------------------------------------------------------------
-// DELETE (full reverse) - FIXED VERSION
-// -----------------------------------------------------------------
-deleteTransaction: async (id, adminId) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  // -----------------------------------------------------------------
+  // DELETE (full reverse)
+  // -----------------------------------------------------------------
+  deleteTransaction: async (id, adminId) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-  try {
-    const transaction = await TransactionFixing.findById(id).session(session);
-    if (!transaction)
-      throw createAppError("Transaction not found", 404, "NOT_FOUND");
+    try {
+      const transaction = await TransactionFixing.findById(id).session(session);
+      if (!transaction)
+        throw createAppError("Transaction not found", 404, "NOT_FOUND");
 
-    const account = await Account.findById(transaction.partyId).session(
-      session
-    );
-    if (!account)
-      throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
-
-    // Ensure account has proper balance structure
-    ensureGoldBalanceObject(account);
-    if (!Array.isArray(account.balances.cashBalance)) {
-      account.balances.cashBalance = [];
-    }
-
-    const type = transaction.type.toUpperCase();
-    
-    // FIX: Use resolveOrderWeight to get the correct weight field
-    // This will check pureWeight → quantityGm → grossWeight in priority order
-    const goldDelta = transaction.orders.reduce((sum, order) => {
-      const weight = resolveOrderWeight(order);
-      return sum + weight;
-    }, 0);
-
-    // Reverse the original effect:
-    // - If it was a PURCHASE (which reduced gold), add it back
-    // - If it was a SALE (which added gold), subtract it back
-    const reversalGoldDelta = type === "PURCHASE" ? goldDelta : -goldDelta;
-
-    // Calculate cash reversals
-    const cashDeltas = {};
-    for (const order of transaction.orders) {
-      const cid = order.selectedCurrencyId?.toString();
-      if (!cid) continue;
-      
-      const price = toNumberOrThrow(order.price, "price");
-      // Reverse the original cash effect:
-      // - If it was a PURCHASE (which added cash), subtract it back
-      // - If it was a SALE (which reduced cash), add it back
-      const delta = type === "PURCHASE" ? -price : price;
-      cashDeltas[cid] = (cashDeltas[cid] || 0) + delta;
-    }
-
-    // Apply reversals
-    console.log('Before reversal:', account.balances.goldBalance.totalGrams);
-    console.log('Reversal delta:', reversalGoldDelta);
-    
-    account.balances.goldBalance.totalGrams = 
-      (account.balances.goldBalance.totalGrams || 0) + reversalGoldDelta;
-    account.balances.goldBalance.lastUpdated = new Date();
-
-    // Apply cash reversals
-    for (const [cid, delta] of Object.entries(cashDeltas)) {
-      let bal = account.balances.cashBalance.find(
-        (cb) => cb.currency?.toString() === cid
+      const account = await Account.findById(transaction.partyId).session(
+        session
       );
-      if (bal) {
-        bal.amount = (bal.amount || 0) + delta;
-        bal.lastUpdated = new Date();
+      if (!account)
+        throw createAppError("Account not found", 404, "ACCOUNT_NOT_FOUND");
+
+      // Ensure account has proper balance structure
+      ensureGoldBalanceObject(account);
+      if (!Array.isArray(account.balances.cashBalance)) {
+        account.balances.cashBalance = [];
       }
+
+      const type = transaction.type.toUpperCase();
+
+      // Gold reversal
+      const goldDelta = transaction.orders.reduce((sum, order) => {
+        const weight = resolveOrderWeight(order);
+        return sum + weight;
+      }, 0);
+
+      const reversalGoldDelta = type === "PURCHASE" ? goldDelta : -goldDelta;
+
+      // Cash reversals (in AED)
+      const cashDeltas = {};
+      for (const order of transaction.orders) {
+        const cid = order.selectedCurrencyId?.toString();
+        if (!cid) continue;
+
+        const price = toNumberOrThrow(order.price, "price");
+        const rate =
+          Number(order.currencyRate ?? order.itemCurrencyRate ?? 1) || 1;
+        const amountAED = price * rate;
+
+        const delta = type === "PURCHASE" ? -amountAED : amountAED;
+        cashDeltas[cid] = (cashDeltas[cid] || 0) + delta;
+      }
+
+      // Apply reversals
+      console.log("Before reversal:", account.balances.goldBalance.totalGrams);
+      console.log("Reversal delta:", reversalGoldDelta);
+
+      account.balances.goldBalance.totalGrams =
+        (account.balances.goldBalance.totalGrams || 0) + reversalGoldDelta;
+      account.balances.goldBalance.lastUpdated = new Date();
+
+      for (const [cid, delta] of Object.entries(cashDeltas)) {
+        let bal = account.balances.cashBalance.find(
+          (cb) => cb.currency?.toString() === cid
+        );
+        if (bal) {
+          bal.amount = (bal.amount || 0) + delta;
+          bal.lastUpdated = new Date();
+        }
+      }
+
+      console.log("After reversal:", account.balances.goldBalance.totalGrams);
+
+      account.balances.lastBalanceUpdate = new Date();
+      await account.save({ session });
+
+      // Delete related records
+      await Registry.deleteMany({ fixingTransactionId: id }).session(session);
+      await FixingPrice.deleteMany({ transactionFix: id }).session(session);
+      await TransactionFixing.deleteOne({ _id: id }).session(session);
+
+      await session.commitTransaction();
+      return { success: true, message: "Transaction deleted successfully" };
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
     }
-
-    console.log('After reversal:', account.balances.goldBalance.totalGrams);
-
-    account.balances.lastBalanceUpdate = new Date();
-    await account.save({ session });
-
-    // Delete related records
-    await Registry.deleteMany({ fixingTransactionId: id }).session(session);
-    await FixingPrice.deleteMany({ transactionFix: id }).session(session);
-    await TransactionFixing.deleteOne({ _id: id }).session(session);
-
-    await session.commitTransaction();
-    return { success: true, message: "Transaction deleted successfully" };
-  } catch (err) {
-    await session.abortTransaction();
-    throw err;
-  } finally {
-    session.endSession();
-  }
-},
+  },
 
   // -----------------------------------------------------------------
   // CANCEL (soft)

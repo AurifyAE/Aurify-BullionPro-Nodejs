@@ -50,8 +50,10 @@ const OrderSchema = new mongoose.Schema(
       ref: "Commodity",
       required: [true, "Commodity is required"],
     },
+
     commodityValue: { type: Number, default: 0 },
     commodityPiece: { type: Number, default: 0 },
+
     grossWeight: {
       type: Number,
       required: true,
@@ -62,23 +64,40 @@ const OrderSchema = new mongoose.Schema(
       required: true,
       min: [0, "Rate must be >= 0"],
     },
+
+    currencyRate: { type: Number, default: 0 },
+    currencyCode: { type: String, trim: true, default: null },
+
     ozWeight: { type: Number, default: 0 },
     currentBidValue: { type: Number, required: true },
     bidValue: { type: Number, required: true },
     pureWeight: { type: Number, required: true },
+
     selectedCurrencyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "CurrencyMaster",
       required: true,
     },
+
     itemCurrencyRate: { type: Number, default: null },
     purity: { type: Number, required: true },
     remarks: { type: String, trim: true, default: "" },
-    price: { type: Number, required: true }, // from React as string
+    price: { type: Number, required: true },
     metalType: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MetalRateMaster",
       required: true,
+    },
+
+    /* ============================= NEW FOREX SCHEMA ============================= */
+    forexValue: {
+      purchaseRate: { type: Number, default: 0 },
+      sellRate: { type: Number, default: 0 },
+      defaultRate: { type: Number, default: 0 },
+      marketValue: { type: Number, default: 0 },
+      givenValue: { type: Number, default: 0 },
+      fxGain: { type: Number, default: 0 },
+      fxLoss: { type: Number, default: 0 },
     },
   },
   { _id: false }
@@ -105,9 +124,9 @@ const TransactionFixingSchema = new mongoose.Schema(
     voucherDate: { type: Date },
     salesman: { type: String, default: "N/A" },
     metalTransactionId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "MetalTransaction",
-      },
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MetalTransaction",
+    },
     orders: {
       type: [OrderSchema],
       validate: [(v) => v.length > 0, "At least one order is required"],

@@ -18,6 +18,8 @@ import {
   getPremiumOrDiscountRegistries,
   getStatementByParty,
   getRegistryAuditTrailById,
+  getRegistryHedgeAuditTrailById,
+  getRegistryFixingTransaction,
 } from "../../controllers/modules/RegistryController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import {
@@ -114,6 +116,6 @@ router.delete(
 
 //AuditTrail
 router.get("/transaction/:metalTransactionId", getRegistryAuditTrailById);
-
-
+router.get("/Hedge/:metalTransactionId", getRegistryHedgeAuditTrailById);
+router.get("/fixing/:fixingTransactionId", getRegistryFixingTransaction);
 export default router;

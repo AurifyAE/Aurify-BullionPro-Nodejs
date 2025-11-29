@@ -104,6 +104,46 @@ export const getRegistryAuditTrailById = async (req, res, next) => {
     next(error);
   }
 };
+
+export const getRegistryHedgeAuditTrailById = async (req, res, next) => {
+  try {
+    const { metalTransactionId } = req.params;
+
+    const registry = await RegistryService.generateHedgeVoucherByMetalTransaction(metalTransactionId);
+
+    if (!registry) {
+      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Registry audit trail retrieved successfully",
+      data: registry,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getRegistryFixingTransaction = async (req, res, next) => {
+  try {
+    const { fixingTransactionId } = req.params;
+
+    const registry = await RegistryService.generateVoucherByTransactionFix(fixingTransactionId);
+
+    if (!registry) {
+      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Registry audit trail retrieved successfully",
+      data: registry,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 // Update registry
 export const updateRegistry = async (req, res, next) => {
   try {

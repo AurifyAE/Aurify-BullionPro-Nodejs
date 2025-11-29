@@ -139,232 +139,34 @@ class RegistryService {
     }
   }
   // services/RegistryService.js
-  static async generateVoucherByMetalTransaction(metalTransactionId) {
-    if (!mongoose.Types.ObjectId.isValid(metalTransactionId)) return null;
+static async generateVoucherByMetalTransaction(metalTransactionId) {
+  if (!mongoose.Types.ObjectId.isValid(metalTransactionId)) return null;
 
-    const registries = await Registry.find({
-      metalTransactionId,
-      isActive: true,
-    })
-      .populate("party", "customerName accountCode")
-      .populate("createdBy", "name")
-      .sort({ createdAt: 1 })
-      .lean();
+  // Fetch registries
+  const registries = await Registry.find({
+    metalTransactionId,
+    isActive: true,
+  })
+    .populate("party", "customerName accountCode")
+    .populate("createdBy", "name")
+    .sort({ createdAt: 1 })
+    .lean();
 
-    if (!registries || registries.length === 0) return null;
+  if (!registries || registries.length === 0) return null;
 
-    const main = registries[0];
-    const party = main.party;
+  const main = registries[0];
+  const party = main.party;
 
-    const lines = [];
-    const added = new Set();
+  // -----------------------------------------------------
+  // 📌 FILTER OUT HEDGE REGISTRIES (reference starts with "H")
+  // -----------------------------------------------------
+  const validRegistries = registries.filter(r => {
+    const ref = String(r.reference || "");
+    return !ref.startsWith("H"); // EXCLUDE HEDGE
+  });
 
-    const ACC = {
-      PARTY: party?.accountCode || "XXXX",
-      STOCK: "STK001",
-      EXPENSE: "EXP001",
-      INCOME: "INC001",
-      LOSS: "LOSS001",
-      GAIN: "GAIN001",
-      VAT: "VAT001",
-      PREMIUM: "PRM001",
-      MAKING: "MKC001",
-      FIXING: "FIX001",
-    };
-
-    const PARTY_CASH_TYPES = [
-      "PARTY_CASH_BALANCE",
-      "PARTY_MAKING_CHARGES",
-      "PARTY_PREMIUM",
-      "PARTY_DISCOUNT",
-      "PARTY_VAT_AMOUNT",
-      "OTHER-CHARGE",
-    ];
-
-    const PARTY_GOLD_TYPES = ["PARTY_GOLD_BALANCE"];
-
-    const BULLION_TYPES = [
-      "PURITY_DIFFERENCE",
-      "GOLD_STOCK",
-      "DISCOUNT",
-      "PREMIUM",
-      "VAT_AMOUNT",
-      "OTHER-CHARGE",
-      "FX_EXCHANGE",
-      "MAKING_CHARGES",
-      "purchase-fixing",
-      "sale-fixing",
-    ];
-
-    const addLine = (
-      desc,
-      accCode,
-      currDr = 0,
-      currCr = 0,
-      goldDr = 0,
-      goldCr = 0
-    ) => {
-      const key = `${desc}-${accCode}-${currDr}-${currCr}-${goldDr}-${goldCr}`;
-      if (added.has(key)) return;
-      added.add(key);
-
-      lines.push({
-        accCode,
-        description: desc,
-        currencyDebit: Number(currDr.toFixed(2)),
-        currencyCredit: Number(currCr.toFixed(2)),
-        metalDebit: Number(goldDr.toFixed(3)),
-        metalCredit: Number(goldCr.toFixed(3)),
-      });
-    };
-
-    // Totals for supplier
-    let partyCurrencyDebit = 0;
-    let partyCurrencyCredit = 0;
-    let partyGoldDebit = 0;
-    let partyGoldCredit = 0;
-
-    // === PROCESS EACH REGISTRY ===
-    for (const reg of registries) {
-      const t = reg.type;
-      const isPurchase = ["Purchase", "Purchase Return"].includes(
-        reg.transactionType
-      );
-
-      // ==============================
-      // 1️⃣ PARTY ENTRIES
-      // ==============================
-      if (PARTY_CASH_TYPES.includes(t)) {
-        // These affect supplier in currency
-        partyCurrencyDebit += reg.debit || 0;
-        partyCurrencyCredit += reg.credit || 0;
-        continue;
-      }
-
-      if (PARTY_GOLD_TYPES.includes(t)) {
-        // These affect supplier in metal
-        partyGoldDebit += reg.debit || 0;
-        partyGoldCredit += reg.credit || 0;
-        continue;
-      }
-
-      // ==============================
-      // 2️⃣ BULLION ENTRIES
-      // ==============================
-      if (BULLION_TYPES.includes(t)) {
-        let desc = "";
-        let accCode = "";
-        let useCashGold = false;
-        let combineSingleLine = false;
-
-        switch (t) {
-          case "purchase-fixing":
-          case "sale-fixing":
-            desc = isPurchase
-              ? "PURCHASE GOLD JEWELLERY"
-              : "SALE GOLD JEWELLERY";
-            accCode = ACC.FIXING;
-            useCashGold = true;
-            combineSingleLine = true;
-            break;
-
-          case "GOLD_STOCK":
-            desc = "PHYSICAL STOCK OF GOLD JEWELLERY";
-            accCode = ACC.STOCK;
-            break;
-
-          case "PURITY_DIFFERENCE":
-            desc = "PURITY DIFFERENCE";
-            accCode = reg.debit > 0 ? ACC.LOSS : ACC.GAIN;
-            break;
-
-          case "PREMIUM":
-            desc = isPurchase ? "PURCHASE PREMIUM" : "SALE PREMIUM";
-            accCode = ACC.PREMIUM;
-            break;
-
-          case "DISCOUNT":
-            desc = isPurchase ? "PURCHASE DISCOUNT" : "SALE DISCOUNT";
-            accCode = ACC.PREMIUM;
-            break;
-
-          case "VAT_AMOUNT":
-            desc = isPurchase ? "INPUT VAT" : "OUTPUT VAT";
-            accCode = ACC.VAT;
-            break;
-
-          case "OTHER-CHARGE":
-            desc = "OTHER CHARGES";
-            accCode = ACC.EXPENSE;
-            break;
-
-          case "FX_EXCHANGE":
-            desc = "FX EXCHANGE GAIN/LOSS";
-            accCode = reg.debit > 0 ? ACC.LOSS : ACC.GAIN;
-            break;
-
-          case "MAKING_CHARGES":
-            desc = isPurchase
-              ? "PURCHASE MAKING CHARGES GOLD"
-              : "SALE MAKING CHARGES";
-            accCode = ACC.MAKING;
-            break;
-
-          default:
-            continue;
-        }
-
-        if (useCashGold && combineSingleLine) {
-          // 🟢 SINGLE combined entry for fixing
-          const currDr = reg.cashDebit || 0;
-          const currCr = reg.cashCredit || 0;
-          const goldDr = reg.goldDebit || 0;
-          const goldCr = reg.goldCredit || 0;
-          addLine(desc, accCode, currDr, currCr, goldDr, goldCr);
-        } else {
-          // 🟡 Standard bullion handling (debit/credit)
-          if (reg.debit > 0) addLine(desc, accCode, reg.debit, 0);
-          if (reg.credit > 0) addLine(desc, accCode, 0, reg.credit);
-        }
-      }
-    }
-
-    // ==============================
-    // 3️⃣ SUPPLIER SUMMARY LINE
-    // ==============================
-    const netCurrDr = partyCurrencyDebit - partyCurrencyCredit;
-    const netCurrCr = partyCurrencyCredit - partyCurrencyDebit;
-    const netGoldDr = partyGoldDebit - partyGoldCredit;
-    const netGoldCr = partyGoldCredit - partyGoldDebit;
-
-    if (party) {
-      addLine(
-        "SUPPLIER",
-        ACC.PARTY,
-        netCurrDr > 0 ? netCurrDr : 0,
-        netCurrCr > 0 ? netCurrCr : 0,
-        netGoldDr > 0 ? netGoldDr : 0,
-        netGoldCr > 0 ? netGoldCr : 0
-      );
-    }
-
-    // ==============================
-    // 4️⃣ TOTALS
-    // ==============================
-    const totals = lines.reduce(
-      (a, l) => {
-        a.currencyDebit += l.currencyDebit;
-        a.currencyCredit += l.currencyCredit;
-        a.metalDebit += l.metalDebit;
-        a.metalCredit += l.metalCredit;
-        return a;
-      },
-      { currencyDebit: 0, currencyCredit: 0, metalDebit: 0, metalCredit: 0 }
-    );
-
-    // ==============================
-    // 5️⃣ FINAL RETURN
-    // ==============================
+  // If all entries were hedges → nothing to show
+  if (validRegistries.length === 0) {
     return {
       metalTransactionId,
       transactionId: main.transactionId,
@@ -372,17 +174,564 @@ class RegistryService {
       date: main.transactionDate,
       party: {
         name: party?.customerName || "Walk-in Customer",
-        code: ACC.PARTY,
+        code: party?.accountCode || "SUP001",
       },
-      entries: lines,
+      entries: [],
       totals: {
-        currencyDebit: Number(totals.currencyDebit.toFixed(2)),
-        currencyCredit: Number(totals.currencyCredit.toFixed(2)),
-        metalDebit: Number(totals.metalDebit.toFixed(3)),
-        metalCredit: Number(totals.metalCredit.toFixed(3)),
+        currencyDebit: 0,
+        currencyCredit: 0,
+        metalDebit: 0,
+        metalCredit: 0,
       },
     };
   }
+
+  // -----------------------------------------------------
+  // 📌 1) CENTRAL TYPE RULE CONFIG
+  // -----------------------------------------------------
+  const TYPE_RULES = {
+    PARTY_CASH: {
+      types: [
+        "PARTY_CASH_BALANCE",
+        "PARTY_MAKING_CHARGES",
+        "PARTY_PREMIUM",
+        "PARTY_DISCOUNT",
+        "PARTY_VAT_AMOUNT",
+        "OTHER-CHARGE"
+      ],
+      mode: "party-cash",
+    },
+
+    PARTY_GOLD: {
+      types: ["PARTY_GOLD_BALANCE"],
+      mode: "party-gold",
+    },
+
+    BULLION_COMBINED: {
+      types: ["purchase-fixing", "sales-fixing"],
+      mode: "combined", // cash + gold
+    },
+
+    BULLION_GOLD_ONLY: {
+      types: ["PURITY_DIFFERENCE", "GOLD_STOCK"],
+      mode: "gold-only",
+    },
+
+    BULLION_CASH_ONLY: {
+      types: [
+        "DISCOUNT",
+        "PREMIUM",
+        "VAT_AMOUNT",
+        "OTHER-CHARGE",
+        "MAKING_CHARGES"
+      ],
+      mode: "cash-only",
+    },
+  };
+
+  function getTypeMode(type) {
+    for (const rule of Object.values(TYPE_RULES)) {
+      if (rule.types.includes(type)) return rule.mode;
+    }
+    return null;
+  }
+
+  // -----------------------------------------------------
+  // 📌 2) CONTAINER FOR RESULT LINES
+  // -----------------------------------------------------
+  const lines = [];
+  const addedKeySet = new Set();
+
+  const addLine = (desc, accCode, currDr = 0, currCr = 0, goldDr = 0, goldCr = 0) => {
+    const key = `${desc}-${accCode}-${currDr}-${currCr}-${goldDr}-${goldCr}`;
+    if (addedKeySet.has(key)) return;
+    addedKeySet.add(key);
+
+    lines.push({
+      accCode,
+      description: desc,
+      currencyDebit: Number(currDr.toFixed(2)),
+      currencyCredit: Number(currCr.toFixed(2)),
+      metalDebit: Number(goldDr.toFixed(3)),
+      metalCredit: Number(goldCr.toFixed(3)),
+    });
+  };
+
+  // -----------------------------------------------------
+  // 📌 3) PARTY SUMMARY ACCUMULATORS
+  // -----------------------------------------------------
+  let partyCurrencyDebit = 0;
+  let partyCurrencyCredit = 0;
+  let partyGoldDebit = 0;
+  let partyGoldCredit = 0;
+
+  // -----------------------------------------------------
+  // 📌 4) PROCESS EACH VALID (NON-HEDGE) REGISTRY
+  // -----------------------------------------------------
+  for (const reg of validRegistries) {
+    const t = reg.type;
+    const mode = getTypeMode(t);
+
+    const desc = t.replace(/[_-]/g, " ").toUpperCase();
+    const prefix = t.replace(/[^A-Za-z]/g, "").substring(0, 3).toUpperCase();
+    const accCode = prefix + "001";
+
+    switch (mode) {
+      case "party-cash":
+        partyCurrencyDebit += reg.debit || 0;
+        partyCurrencyCredit += reg.credit || 0;
+        break;
+
+      case "party-gold":
+        partyGoldDebit += reg.debit || 0;
+        partyGoldCredit += reg.credit || 0;
+        break;
+
+      case "combined":
+        addLine(
+          desc,
+          accCode,
+          reg.cashDebit || 0,
+          reg.cashCredit || 0,
+          reg.goldDebit || 0,
+          reg.goldCredit || 0
+        );
+        break;
+
+      case "gold-only":
+        if (reg.debit > 0) addLine(desc, accCode, 0, 0, reg.debit, 0);
+        if (reg.credit > 0) addLine(desc, accCode, 0, 0, 0, reg.credit);
+        break;
+
+      case "cash-only":
+        if (reg.debit > 0) addLine(desc, accCode, reg.debit, 0);
+        if (reg.credit > 0) addLine(desc, accCode, 0, reg.credit);
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  // -----------------------------------------------------
+  // 📌 5) SUPPLIER SUMMARY ENTRY
+  // -----------------------------------------------------
+  if (party) {
+    const netCurrDr = partyCurrencyDebit - partyCurrencyCredit;
+    const netCurrCr = partyCurrencyCredit - partyCurrencyDebit;
+    const netGoldDr = partyGoldDebit - partyGoldCredit;
+    const netGoldCr = partyGoldCredit - partyGoldDebit;
+
+    addLine(
+      "SUPPLIER",
+      party.accountCode || "SUP001",
+      netCurrDr > 0 ? netCurrDr : 0,
+      netCurrCr > 0 ? netCurrCr : 0,
+      netGoldDr > 0 ? netGoldDr : 0,
+      netGoldCr > 0 ? netGoldCr : 0
+    );
+  }
+
+  // -----------------------------------------------------
+  // 📌 6) TOTALS
+  // -----------------------------------------------------
+  const totals = lines.reduce(
+    (a, l) => {
+      a.currencyDebit += l.currencyDebit;
+      a.currencyCredit += l.currencyCredit;
+      a.metalDebit += l.metalDebit;
+      a.metalCredit += l.metalCredit;
+      return a;
+    },
+    { currencyDebit: 0, currencyCredit: 0, metalDebit: 0, metalCredit: 0 }
+  );
+
+  // -----------------------------------------------------
+  // 📌 7) FINAL RETURN RESPONSE
+  // -----------------------------------------------------
+  return {
+    metalTransactionId,
+    transactionId: main.transactionId,
+    reference: main.reference,
+    date: main.transactionDate,
+    party: {
+      name: party?.customerName || "Walk-in Customer",
+      code: party?.accountCode || "SUP001",
+    },
+    entries: lines,
+    totals: {
+      currencyDebit: Number(totals.currencyDebit.toFixed(2)),
+      currencyCredit: Number(totals.currencyCredit.toFixed(2)),
+      metalDebit: Number(totals.metalDebit.toFixed(3)),
+      metalCredit: Number(totals.metalCredit.toFixed(3)),
+    },
+  };
+}
+
+
+static async generateHedgeVoucherByMetalTransaction(metalTransactionId) {
+  if (!mongoose.Types.ObjectId.isValid(metalTransactionId)) return null;
+
+  // Fetch registries
+  const registries = await Registry.find({
+    metalTransactionId,
+    isActive: true,
+  })
+    .populate("party", "customerName accountCode")
+    .populate("createdBy", "name")
+    .sort({ createdAt: 1 })
+    .lean();
+
+  if (!registries || registries.length === 0) return null;
+
+  const main = registries[0];
+  const party = main.party;
+
+  // -----------------------------------------------------
+  // 📌 INCLUDE ONLY HEDGE ENTRIES (reference starts with "H")
+  // -----------------------------------------------------
+  const hedgeRegistries = registries.filter(r => {
+    const ref = String(r.reference || "");
+    return ref.startsWith("H");       // ONLY HEDGE
+  });
+
+  if (hedgeRegistries.length === 0) {
+    return {
+      metalTransactionId,
+      transactionId: main.transactionId,
+      reference: main.reference,
+      date: main.transactionDate,
+      party: {
+        name: party?.customerName || "Walk-in Customer",
+        code: party?.accountCode || "SUP001",
+      },
+      entries: [],
+      totals: {
+        currencyDebit: 0,
+        currencyCredit: 0,
+        metalDebit: 0,
+        metalCredit: 0,
+      },
+    };
+  }
+
+  // -----------------------------------------------------
+  // 📌 1) TYPE RULES FOR HEDGE VOUCHERS
+  // -----------------------------------------------------
+  const TYPE_RULES = {
+    PARTY_CASH: {
+      types: ["PARTY_CASH_BALANCE"],
+      mode: "party-cash",
+    },
+
+    PARTY_GOLD: {
+      types: ["PARTY_GOLD_BALANCE"],
+      mode: "party-gold",
+    },
+
+    BULLION_COMBINED: {
+      types: ["HEDGE_ENTRY"],    // cash+gold combined
+      mode: "combined",
+    },
+  };
+
+  function getTypeMode(type) {
+    for (const rule of Object.values(TYPE_RULES)) {
+      if (rule.types.includes(type)) return rule.mode;
+    }
+    return null;
+  }
+
+  // -----------------------------------------------------
+  // 📌 2) RESULT LINES HOLDER
+  // -----------------------------------------------------
+  const lines = [];
+  const addedKeySet = new Set();
+
+  const addLine = (desc, accCode, currDr = 0, currCr = 0, goldDr = 0, goldCr = 0) => {
+    const key = `${desc}-${accCode}-${currDr}-${currCr}-${goldDr}-${goldCr}`;
+    if (addedKeySet.has(key)) return;
+    addedKeySet.add(key);
+
+    lines.push({
+      accCode,
+      description: desc,
+      currencyDebit: Number(currDr.toFixed(2)),
+      currencyCredit: Number(currCr.toFixed(2)),
+      metalDebit: Number(goldDr.toFixed(3)),
+      metalCredit: Number(goldCr.toFixed(3)),
+    });
+  };
+
+  // -----------------------------------------------------
+  // 📌 3) PARTY SUMMARY ACCUMULATORS
+  // -----------------------------------------------------
+  let partyCurrencyDebit = 0;
+  let partyCurrencyCredit = 0;
+  let partyGoldDebit = 0;
+  let partyGoldCredit = 0;
+
+  // -----------------------------------------------------
+  // 📌 4) PROCESS EACH HEDGE REGISTRY
+  // -----------------------------------------------------
+  for (const reg of hedgeRegistries) {
+    const t = reg.type;
+    const mode = getTypeMode(t);
+
+    const desc = t.replace(/[_-]/g, " ").toUpperCase();
+    const prefix = t.replace(/[^A-Za-z]/g, "").substring(0, 3).toUpperCase();
+    const accCode = prefix + "001";
+
+    switch (mode) {
+      case "party-cash":
+        partyCurrencyDebit += reg.debit || 0;
+        partyCurrencyCredit += reg.credit || 0;
+        break;
+
+      case "party-gold":
+        partyGoldDebit += reg.debit || 0;
+        partyGoldCredit += reg.credit || 0;
+        break;
+
+      case "combined":   // HEDGE_ENTRY
+        addLine(
+          desc,
+          accCode,
+          reg.cashDebit || 0,
+          reg.cashCredit || 0,
+          reg.goldDebit || 0,
+          reg.goldCredit || 0
+        );
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  // -----------------------------------------------------
+  // 📌 5) SUPPLIER SUMMARY
+  // -----------------------------------------------------
+  if (party) {
+    const netCurrDr = partyCurrencyDebit - partyCurrencyCredit;
+    const netCurrCr = partyCurrencyCredit - partyCurrencyDebit;
+    const netGoldDr = partyGoldDebit - partyGoldCredit;
+    const netGoldCr = partyGoldCredit - partyGoldDebit;
+
+    addLine(
+      "SUPPLIER",
+      party.accountCode || "SUP001",
+      netCurrDr > 0 ? netCurrDr : 0,
+      netCurrCr > 0 ? netCurrCr : 0,
+      netGoldDr > 0 ? netGoldDr : 0,
+      netGoldCr > 0 ? netGoldCr : 0
+    );
+  }
+
+  // -----------------------------------------------------
+  // 📌 6) TOTALS
+  // -----------------------------------------------------
+  const totals = lines.reduce(
+    (a, l) => {
+      a.currencyDebit += l.currencyDebit;
+      a.currencyCredit += l.currencyCredit;
+      a.metalDebit += l.metalDebit;
+      a.metalCredit += l.metalCredit;
+      return a;
+    },
+    { currencyDebit: 0, currencyCredit: 0, metalDebit: 0,  metalCredit: 0 }
+  );
+
+  // -----------------------------------------------------
+  // 📌 7) FINAL RETURN
+  // -----------------------------------------------------
+  return {
+    metalTransactionId,
+    transactionId: main.transactionId,
+    reference: main.reference,
+    date: main.transactionDate,
+    party: {
+      name: party?.customerName || "Walk-in Customer",
+      code: party?.accountCode || "SUP001",
+    },
+    entries: lines,
+    totals: {
+      currencyDebit: Number(totals.currencyDebit.toFixed(2)),
+      currencyCredit: Number(totals.currencyCredit.toFixed(2)),
+      metalDebit: Number(totals.metalDebit.toFixed(3)),
+      metalCredit: Number(totals.metalCredit.toFixed(3)),
+    },
+  };
+}
+
+
+static async generateVoucherByTransactionFix(fixingTransactionId) {
+  if (!mongoose.Types.ObjectId.isValid(fixingTransactionId)) return null;
+
+  // Fetch registries linked to fixing transaction
+  const registries = await Registry.find({
+    fixingTransactionId,
+    isActive: true,
+  })
+    .populate("party", "customerName accountCode")
+    .populate("createdBy", "name")
+    .sort({ createdAt: 1 })
+    .lean();
+
+  if (!registries || registries.length === 0) return null;
+
+  const main = registries[0];
+  const party = main.party;
+
+  // -----------------------------------------------------
+  // 📌 1) TYPE RULES SPECIFIC FOR FIXING TRANSACTIONS
+  // -----------------------------------------------------
+  const TYPE_RULES = {
+    PARTY_CASH: {
+      types: ["PARTY_CASH_BALANCE"],
+      mode: "party-cash",
+    },
+
+    PARTY_GOLD: {
+      types: ["PARTY_GOLD_BALANCE"],
+      mode: "party-gold",
+    },
+
+    BULLION_COMBINED: {
+      types: ["purchase-fixing", "sales-fixing"],
+      mode: "combined", // cash + gold
+    }
+  };
+
+  function getTypeMode(type) {
+    for (const rule of Object.values(TYPE_RULES)) {
+      if (rule.types.includes(type)) return rule.mode;
+    }
+    return null;
+  }
+
+  // -----------------------------------------------------
+  // 📌 2) RESULT LINES
+  // -----------------------------------------------------
+  const lines = [];
+  const addedKeySet = new Set();
+
+  const addLine = (desc, accCode, currDr = 0, currCr = 0, goldDr = 0, goldCr = 0) => {
+    const key = `${desc}-${accCode}-${currDr}-${currCr}-${goldDr}-${goldCr}`;
+    if (addedKeySet.has(key)) return;
+    addedKeySet.add(key);
+
+    lines.push({
+      accCode,
+      description: desc,
+      currencyDebit: Number(currDr.toFixed(2)),
+      currencyCredit: Number(currCr.toFixed(2)),
+      metalDebit: Number(goldDr.toFixed(3)),
+      metalCredit: Number(goldCr.toFixed(3)),
+    });
+  };
+
+  // -----------------------------------------------------
+  // 📌 3) PARTY SUMMARY TOTALS
+  // -----------------------------------------------------
+  let partyCurrencyDebit = 0;
+  let partyCurrencyCredit = 0;
+  let partyGoldDebit = 0;
+  let partyGoldCredit = 0;
+
+  // -----------------------------------------------------
+  // 📌 4) PROCESS REGISTRIES
+  // -----------------------------------------------------
+  for (const reg of registries) {
+    const t = reg.type;
+    const mode = getTypeMode(t);
+
+    const desc = t.replace(/[_-]/g, " ").toUpperCase();
+    const prefix = t.replace(/[^A-Za-z]/g, "").substring(0, 3).toUpperCase();
+    const accCode = prefix + "001";
+
+    switch (mode) {
+      case "party-cash":
+        partyCurrencyDebit += reg.debit || 0;
+        partyCurrencyCredit += reg.credit || 0;
+        break;
+
+      case "party-gold":
+        partyGoldDebit += reg.debit || 0;
+        partyGoldCredit += reg.credit || 0;
+        break;
+
+      case "combined": // purchase-fixing & sales-fixing
+        addLine(
+          desc,
+          accCode,
+          reg.cashDebit || 0,
+          reg.cashCredit || 0,
+          reg.goldDebit || 0,
+          reg.goldCredit || 0
+        );
+        break;
+
+      default:
+        break; // ignore other types
+    }
+  }
+
+  // -----------------------------------------------------
+  // 📌 5) SUPPLIER SUMMARY
+  // -----------------------------------------------------
+  if (party) {
+    const netCurrDr = partyCurrencyDebit - partyCurrencyCredit;
+    const netCurrCr = partyCurrencyCredit - partyCurrencyDebit;
+    const netGoldDr = partyGoldDebit - partyGoldCredit;
+    const netGoldCr = partyGoldCredit - partyGoldDebit;
+
+    addLine(
+      "SUPPLIER",
+      party.accountCode || "SUP001",
+      netCurrDr > 0 ? netCurrDr : 0,
+      netCurrCr > 0 ? netCurrCr : 0,
+      netGoldDr > 0 ? netGoldDr : 0,
+      netGoldCr > 0 ? netGoldCr : 0
+    );
+  }
+
+  // -----------------------------------------------------
+  // 📌 6) TOTALS
+  // -----------------------------------------------------
+  const totals = lines.reduce(
+    (a, l) => {
+      a.currencyDebit += l.currencyDebit;
+      a.currencyCredit += l.currencyCredit;
+      a.metalDebit += l.metalDebit;
+      a.metalCredit += l.metalCredit;
+      return a;
+    },
+    { currencyDebit: 0, currencyCredit: 0, metalDebit: 0, metalCredit: 0 }
+  );
+
+  // -----------------------------------------------------
+  // 📌 7) FINAL OUTPUT
+  // -----------------------------------------------------
+  return {
+    fixingTransactionId,  // different from metalTransactionId
+    transactionId: main.transactionId,
+    reference: main.reference,
+    date: main.transactionDate,
+    party: {
+      name: party?.customerName || "Walk-in Customer",
+      code: party?.accountCode || "SUP001",
+    },
+    entries: lines,
+    totals: {
+      currencyDebit: Number(totals.currencyDebit.toFixed(2)),
+      currencyCredit: Number(totals.currencyCredit.toFixed(2)),
+      metalDebit: Number(totals.metalDebit.toFixed(3)),
+      metalCredit: Number(totals.metalCredit.toFixed(3)),
+    },
+  };
+}
+
 
   // Update registry
   static async updateRegistry(id, updateData, adminId) {

@@ -6,6 +6,41 @@ const DEFAULT_PREFIX = "PF";
 const DEFAULT_SALESMAN = "N/A";
 const DEFAULT_PAYMENT_TERMS = "Cash";
 
+/* ---------------------------------------------------------
+   FX LOGIC — MARKET VALUE & GIVEN VALUE ALREADY COMING
+   FROM FRONTEND. HERE WE ONLY CALCULATE GAIN / LOSS.
+----------------------------------------------------------*/
+const buildForexValue = (txnType = "", raw = {}) => {
+  const upperType = txnType.toUpperCase();
+
+  const purchaseRate = Number(raw.purchaseRate) || 0;
+  const sellRate = Number(raw.sellRate) || 0;
+  const defaultRate = Number(raw.defaultRate) || 0;
+  const marketValue = Number(raw.marketValue) || 0; // already from FE
+  const givenValue = Number(raw.givenValue) || 0; // already from FE
+
+  let diff = 0;
+
+  if (upperType.startsWith("PURCHASE")) {
+    diff = marketValue - givenValue; // purchase logic
+  } else if (upperType.startsWith("SALE")) {
+    diff = givenValue - marketValue; // sale logic
+  }
+
+  return {
+    purchaseRate,
+    sellRate,
+    defaultRate,
+    marketValue,
+    givenValue,
+    fxGain: diff > 0 ? diff : 0,
+    fxLoss: diff < 0 ? Math.abs(diff) : 0,
+  };
+};
+
+/* ---------------------------------------------------------
+   VALIDATION
+----------------------------------------------------------*/
 const validateTransactionData = (data, isUpdate = false) => {
   if (!isUpdate && !data.partyId) {
     throw createAppError(
@@ -34,15 +69,22 @@ const validateTransactionData = (data, isUpdate = false) => {
   data.orders?.forEach((o, i) => {
     if (!o.commodity)
       throw createAppError(`Order ${i + 1}: commodity required`, 400);
-    if (isNaN(o.grossWeight) || o.grossWeight <= 0)
-      throw createAppError(`Order ${i + 1}: grossWeight must be >0`, 400);
-    if (isNaN(o.oneGramRate) || o.oneGramRate <= 0)
-      throw createAppError(`Order ${i + 1}: oneGramRate must be >0`, 400);
-    if (isNaN(o.price) || o.price <= 0)
-      throw createAppError(`Order ${i + 1}: price must be >0`, 400);
+
+    if (!o.forexValue)
+      throw createAppError(`Order ${i + 1}: forexValue required`, 400);
+
+    if (isNaN(o.forexValue.marketValue) || isNaN(o.forexValue.givenValue)) {
+      throw createAppError(
+        `Order ${i + 1}: marketValue and givenValue must be numbers`,
+        400
+      );
+    }
   });
 };
 
+/* ---------------------------------------------------------
+   CREATE TRANSACTION
+----------------------------------------------------------*/
 export const createTransaction = async (req, res, next) => {
   try {
     const {
@@ -61,9 +103,31 @@ export const createTransaction = async (req, res, next) => {
       orders,
     } = req.body;
 
+    const upperType = type?.toUpperCase();
+
+    const formattedOrders = (orders || []).map((o) => ({
+      commodity: o.commodity,
+      commodityValue: Number(o.commodityValue) || 0,
+      commodityPiece: Number(o.commodityPiece) || 0,
+      itemCurrencyRate: Number(o.itemCurrencyRate),
+      grossWeight: Number(o.grossWeight),
+      oneGramRate: Number(o.oneGramRate),
+      ozWeight: Number(o.ozWeight) || 0,
+      currentBidValue: Number(o.currentBidValue),
+      currencyCode:o.currencyCode,
+      bidValue: Number(o.bidValue),
+      pureWeight: Number(o.pureWeight),
+      selectedCurrencyId: o.selectedCurrencyId || "",
+      purity: Number(o.purity),
+      remarks: o.remarks?.trim() || "",
+      price: +o.price,
+      metalType: o.metalType,
+      forexValue: buildForexValue(upperType, o.forexValue || {}),
+    }));
+
     const transactionData = {
       partyId: partyId?.trim(),
-      type: type?.toUpperCase(),
+      type: upperType,
       referenceNumber: referenceNumber?.trim(),
       invoiceReferenceNumber: invoiceReferenceNumber?.trim(),
       invoiceDate: invoiceDate ? new Date(invoiceDate) : null,
@@ -74,28 +138,13 @@ export const createTransaction = async (req, res, next) => {
       partyPhone: partyPhone?.trim() || "N/A",
       partyEmail: partyEmail?.trim() || "N/A",
       salesman: salesman?.trim() || DEFAULT_SALESMAN,
-      orders: (orders || []).map((o) => ({
-        commodity: o.commodity,
-        commodityValue: Number(o.commodityValue) || 0,
-        commodityPiece: Number(o.commodityPiece) || 0,
-        itemCurrencyRate: Number(o.itemCurrencyRate),
-        grossWeight: Number(o.grossWeight),
-        oneGramRate: Number(o.oneGramRate),
-        selectedCurrencyId: o.selectedCurrencyId||"",
-        ozWeight: Number(o.ozWeight) || 0,
-        currentBidValue: Number(o.currentBidValue),
-        bidValue: Number(o.bidValue),
-        pureWeight: Number(o.pureWeight),
-        selectedCurrencyId: o.selectedCurrencyId,
-        purity: Number(o.purity),
-        remarks: o.remarks?.trim() || "",
-        price: +o.price,
-        metalType: o.metalType,
-      })),
+      orders: formattedOrders,
     };
 
     validateTransactionData(transactionData);
 
+    console.log(transactionData)
+    console.log(transactionData.orders[0].forexValue)
     const transaction = await TransactionFixingService.createTransaction(
       transactionData,
       req.admin.id
@@ -204,18 +253,22 @@ export const updateTransaction = async (req, res, next) => {
 
     fields.forEach((f) => {
       if (payload[f] !== undefined) {
-        if (f === "invoiceDate" || f === "voucherDate") {
-          updateData[f] = payload[f] ? new Date(payload[f]) : null;
-        } else {
-          updateData[f] = payload[f];
-          if (typeof payload[f] === "string") updateData[f] = payload[f].trim();
-        }
+        updateData[f] =
+          f === "invoiceDate" || f === "voucherDate"
+            ? payload[f]
+              ? new Date(payload[f])
+              : null
+            : typeof payload[f] === "string"
+            ? payload[f].trim()
+            : payload[f];
       }
     });
 
-    // Normalise orders the same way as create
     if (updateData.orders) {
+      const txnType = updateData.type || payload.type;
+
       updateData.orders = updateData.orders.map((o) => ({
+        ...o,
         commodity: o.commodity,
         commodityValue: Number(o.commodityValue) || 0,
         commodityPiece: Number(o.commodityPiece) || 0,
@@ -231,10 +284,13 @@ export const updateTransaction = async (req, res, next) => {
         remarks: o.remarks?.trim() || "",
         price: o.price?.toString(),
         metalType: o.metalType,
+
+        forexValue: buildForexValue(txnType, o.forexValue || {}),
       }));
     }
 
     validateTransactionData(updateData, true);
+
     if (Object.keys(updateData).length === 0)
       throw createAppError("No fields to update", 400, "NO_UPDATE_FIELDS");
 
