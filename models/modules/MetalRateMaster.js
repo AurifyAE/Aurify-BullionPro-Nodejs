@@ -101,13 +101,12 @@ MetalRateMasterSchema.index({ metal: 1, rateType: 1 });
 
 // Pre-save middleware for validation and business logic
 MetalRateMasterSchema.pre('save', async function(next) {
-  // Ensure only one default metal rate per division and rate type
+  // Ensure only one default metal rate exists globally (across all metal rate types)
   if (this.isDefault && this.isModified('isDefault')) {
     await this.constructor.updateMany(
       { 
-        metal: this.metal, 
-        rateType: this.rateType,
-        _id: { $ne: this._id }
+        _id: { $ne: this._id },
+        isDefault: true
       },
       { isDefault: false }
     );
