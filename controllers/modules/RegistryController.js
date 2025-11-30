@@ -9,7 +9,10 @@ export const createRegistry = async (req, res, next) => {
     const registryData = req.body;
     const adminId = req.user.id;
 
-    const registry = await RegistryService.createRegistry(registryData, adminId);
+    const registry = await RegistryService.createRegistry(
+      registryData,
+      adminId
+    );
 
     res.status(201).json({
       success: true,
@@ -24,9 +27,19 @@ export const createRegistry = async (req, res, next) => {
 // Get all registries with filters and search
 export const getAllRegistries = async (req, res, next) => {
   try {
-    let { page = 1, limit = 50, search, costCenter, status, startDate, endDate, sortBy = 'transactionDate', sortOrder = 'desc' } = req.query;
+    let {
+      page = 1,
+      limit = 50,
+      search,
+      costCenter,
+      status,
+      startDate,
+      endDate,
+      sortBy = "transactionDate",
+      sortOrder = "desc",
+    } = req.query;
 
-    let type = req.query.type || req.query['type[]']; 
+    let type = req.query.type || req.query["type[]"];
 
     const filters = {};
     //  Handle multiple types
@@ -56,7 +69,7 @@ export const getAllRegistries = async (req, res, next) => {
       message: "Registries retrieved successfully",
       data: result.registries,
       pagination: result.pagination,
-      summary: result.summary
+      summary: result.summary,
     });
   } catch (error) {
     console.error("Error in getAllRegistries controller:", error);
@@ -72,7 +85,11 @@ export const getRegistryById = async (req, res, next) => {
     const registry = await RegistryService.getRegistryById(id);
 
     if (!registry) {
-      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
     }
 
     res.status(200).json({
@@ -89,10 +106,16 @@ export const getRegistryAuditTrailById = async (req, res, next) => {
   try {
     const { metalTransactionId } = req.params;
 
-    const registry = await RegistryService.generateVoucherByMetalTransaction(metalTransactionId);
+    const registry = await RegistryService.generateVoucherByMetalTransaction(
+      metalTransactionId
+    );
 
     if (!registry) {
-      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
     }
 
     res.status(200).json({
@@ -109,10 +132,43 @@ export const getRegistryHedgeAuditTrailById = async (req, res, next) => {
   try {
     const { metalTransactionId } = req.params;
 
-    const registry = await RegistryService.generateHedgeVoucherByMetalTransaction(metalTransactionId);
+    const registry =
+      await RegistryService.generateHedgeVoucherByMetalTransaction(
+        metalTransactionId
+      );
 
     if (!registry) {
-      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Registry audit trail retrieved successfully",
+      data: registry,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getRegistryFixingTransaction = async (req, res, next) => {
+  try {
+    const { fixingTransactionId } = req.params;
+
+    const registry = await RegistryService.generateVoucherByTransactionFix(
+      fixingTransactionId
+    );
+
+    if (!registry) {
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
     }
 
     res.status(200).json({
@@ -131,10 +187,18 @@ export const updateRegistry = async (req, res, next) => {
     const updateData = req.body;
     const adminId = req.user.id;
 
-    const registry = await RegistryService.updateRegistry(id, updateData, adminId);
+    const registry = await RegistryService.updateRegistry(
+      id,
+      updateData,
+      adminId
+    );
 
     if (!registry) {
-      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
     }
 
     res.status(200).json({
@@ -150,7 +214,6 @@ export const updateRegistry = async (req, res, next) => {
 // Soft delete registry
 export const deleteRegistry = async (req, res, next) => {
   try {
-
     const { id } = req.params;
 
     const adminId = req.user.id;
@@ -158,7 +221,11 @@ export const deleteRegistry = async (req, res, next) => {
     const registry = await RegistryService.deleteRegistry(id, adminId);
 
     if (!registry) {
-      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
     }
 
     res.status(200).json({
@@ -171,8 +238,6 @@ export const deleteRegistry = async (req, res, next) => {
   }
 };
 
-
-
 // Permanent delete registry
 export const permanentDeleteRegistry = async (req, res, next) => {
   try {
@@ -181,7 +246,11 @@ export const permanentDeleteRegistry = async (req, res, next) => {
     const result = await RegistryService.permanentDeleteRegistry(id);
 
     if (!result) {
-      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
     }
 
     res.status(200).json({
@@ -203,8 +272,8 @@ export const getRegistriesByType = async (req, res, next) => {
       startDate,
       endDate,
       costCenter,
-      sortBy = 'transactionDate',
-      sortOrder = 'desc'
+      sortBy = "transactionDate",
+      sortOrder = "desc",
     } = req.query;
 
     const filters = { type };
@@ -224,7 +293,7 @@ export const getRegistriesByType = async (req, res, next) => {
       message: `${type} registries retrieved successfully`,
       data: result.registries,
       pagination: result.pagination,
-      summary: result.summary
+      summary: result.summary,
     });
   } catch (error) {
     next(error);
@@ -241,8 +310,8 @@ export const getRegistriesByCostCenter = async (req, res, next) => {
       type,
       startDate,
       endDate,
-      sortBy = 'transactionDate',
-      sortOrder = 'desc'
+      sortBy = "transactionDate",
+      sortOrder = "desc",
     } = req.query;
 
     const filters = { costCenter: costCenter.toUpperCase() };
@@ -262,7 +331,7 @@ export const getRegistriesByCostCenter = async (req, res, next) => {
       message: `Registries for cost center ${costCenter} retrieved successfully`,
       data: result.registries,
       pagination: result.pagination,
-      summary: result.summary
+      summary: result.summary,
     });
   } catch (error) {
     next(error);
@@ -272,12 +341,7 @@ export const getRegistriesByCostCenter = async (req, res, next) => {
 // Get registry statistics
 export const getRegistryStatistics = async (req, res, next) => {
   try {
-    const {
-      startDate,
-      endDate,
-      type,
-      costCenter
-    } = req.query;
+    const { startDate, endDate, type, costCenter } = req.query;
 
     const filters = {};
     if (type) filters.type = type;
@@ -304,10 +368,18 @@ export const updateRegistryStatus = async (req, res, next) => {
     const { status } = req.body;
     const adminId = req.user.id;
 
-    const registry = await RegistryService.updateRegistryStatus(id, status, adminId);
+    const registry = await RegistryService.updateRegistryStatus(
+      id,
+      status,
+      adminId
+    );
 
     if (!registry) {
-      throw createAppError("Registry entry not found", 404, "REGISTRY_NOT_FOUND");
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
     }
 
     res.status(200).json({
@@ -326,15 +398,18 @@ export const getRegistryBalance = async (req, res, next) => {
     const { costCenter } = req.params;
     const { type } = req.query;
 
-    const balance = await RegistryService.getRegistryBalance(costCenter.toUpperCase(), type);
+    const balance = await RegistryService.getRegistryBalance(
+      costCenter.toUpperCase(),
+      type
+    );
 
     res.status(200).json({
       success: true,
       message: `Balance for cost center ${costCenter} retrieved successfully`,
       data: {
         costCenter: costCenter.toUpperCase(),
-        type: type || 'all',
-        balance: balance
+        type: type || "all",
+        balance: balance,
       },
     });
   } catch (error) {
@@ -345,7 +420,7 @@ export const getRegistryBalance = async (req, res, next) => {
 // getting registry type is stock balance
 export const getRegistryStockBalance = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
+    const { page = 1, limit = 10, search = "" } = req.query;
 
     const { registries, totalItems, totalPages, summary } =
       await RegistryService.getStockBalanceRegistries({
@@ -375,7 +450,7 @@ export const getRegistryStockBalance = async (req, res, next) => {
 
 export const getRegistryPremiumDiscount = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
+    const { page = 1, limit = 10, search = "" } = req.query;
 
     const { registries, totalItems, totalPages, summary } =
       await RegistryService.getPremiumDiscountRegistries({
@@ -401,10 +476,9 @@ export const getRegistryPremiumDiscount = async (req, res, next) => {
   }
 };
 
-
 export const getMakingChargesRegistries = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
+    const { page = 1, limit = 10, search = "" } = req.query;
 
     const { registries, totalItems, totalPages, summary } =
       await RegistryService.getMakingChargesRegistries({
@@ -430,7 +504,7 @@ export const getMakingChargesRegistries = async (req, res, next) => {
   }
 };
 
-// get registry by partyId 
+// get registry by partyId
 
 export const getRegistriesByPartyId = async (req, res, next) => {
   try {
@@ -439,10 +513,16 @@ export const getRegistriesByPartyId = async (req, res, next) => {
     const limit = parseInt(req.query.limit, 5000000) || 5000000;
 
     if (!partyId) {
-      return res.status(400).json({ success: false, message: 'Party ID is required' });
+      return res
+        .status(400)
+        .json({ success: false, message: "Party ID is required" });
     }
 
-    const result = await RegistryService.getRegistriesByPartyId(partyId, page, limit);
+    const result = await RegistryService.getRegistriesByPartyId(
+      partyId,
+      page,
+      limit
+    );
 
     res.status(200).json({
       success: true,
@@ -454,7 +534,6 @@ export const getRegistriesByPartyId = async (req, res, next) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 // Get registries by type "PREMIUM" or "DISCOUNT" (case-insensitive)
 export const getPremiumOrDiscountRegistries = async (req, res, next) => {
@@ -476,7 +555,6 @@ export const getPremiumOrDiscountRegistries = async (req, res, next) => {
   }
 };
 
-
 export const getStatementByParty = async (req, res) => {
   try {
     const { partyId } = req.params;
@@ -491,12 +569,18 @@ export const getStatementByParty = async (req, res) => {
     } = req.query;
 
     if (!partyId) {
-      return res.status(400).json({ success: false, message: "Party ID is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Party ID is required" });
     }
 
-    const account = await Account.findById(partyId).populate("acDefinition.currencies.currency");
+    const account = await Account.findById(partyId).populate(
+      "acDefinition.currencies.currency"
+    );
     if (!account) {
-      return res.status(404).json({ success: false, message: "Party not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Party not found" });
     }
 
     // Build filter
@@ -548,15 +632,18 @@ export const getStatementByParty = async (req, res) => {
       openingFilter.transactionDate = { $lt: new Date(startDate) };
     }
 
-    const openingTxns = await Registry.find(openingFilter)
-      .sort({ transactionDate: 1, createdAt: 1 });
+    const openingTxns = await Registry.find(openingFilter).sort({
+      transactionDate: 1,
+      createdAt: 1,
+    });
 
     let openingCash = 0;
     let openingGold = 0;
 
-    openingTxns.forEach(t => {
+    openingTxns.forEach((t) => {
       if (t.type === "PARTY_GOLD_BALANCE") {
-        openingGold += (t.goldCredit || t.credit || 0) - (t.goldDebit || t.debit || 0);
+        openingGold +=
+          (t.goldCredit || t.credit || 0) - (t.goldDebit || t.debit || 0);
       } else {
         openingCash += (t.credit || 0) - (t.debit || 0);
       }
@@ -566,9 +653,11 @@ export const getStatementByParty = async (req, res) => {
     let runningCash = openingCash;
     let runningGold = openingGold;
 
-    const processedData = registries.map(t => {
-      let cashDebit = 0, cashCredit = 0;
-      let goldDebit = 0, goldCredit = 0;
+    const processedData = registries.map((t) => {
+      let cashDebit = 0,
+        cashCredit = 0;
+      let goldDebit = 0,
+        goldCredit = 0;
 
       if (t.type === "PARTY_GOLD_BALANCE") {
         goldCredit = t.goldCredit || t.credit || 0;
@@ -597,19 +686,29 @@ export const getStatementByParty = async (req, res) => {
     // Apply metal-only filter on processed data
     let finalData = processedData;
     if (metalOnly === "true") {
-      finalData = processedData.filter(t => t.goldDebit > 0 || t.goldCredit > 0);
+      finalData = processedData.filter(
+        (t) => t.goldDebit > 0 || t.goldCredit > 0
+      );
     }
 
     // Currency conversion logic (frontend will use this rate)
     const currencies = account.acDefinition?.currencies || [];
-    const defaultCur = currencies.find(c => c.isDefault) || currencies[0];
-    const foreignCur = currencies.find(c => (c.currency?.currencyCode || c.currencyCode) === foreignCurrency) || defaultCur;
-    const localCur = currencies.find(c => (c.currency?.currencyCode || c.currencyCode) === localCurrency) || defaultCur;
+    const defaultCur = currencies.find((c) => c.isDefault) || currencies[0];
+    const foreignCur =
+      currencies.find(
+        (c) => (c.currency?.currencyCode || c.currencyCode) === foreignCurrency
+      ) || defaultCur;
+    const localCur =
+      currencies.find(
+        (c) => (c.currency?.currencyCode || c.currencyCode) === localCurrency
+      ) || defaultCur;
 
-    const conversionRate = foreignCur && localCur
-      ? (foreignCur.currency?.conversionRate || foreignCur.conversionRate || 1) /
-        (localCur.convertRate || 1)
-      : 1;
+    const conversionRate =
+      foreignCur && localCur
+        ? (foreignCur.currency?.conversionRate ||
+            foreignCur.conversionRate ||
+            1) / (localCur.convertRate || 1)
+        : 1;
 
     res.status(200).json({
       success: true,

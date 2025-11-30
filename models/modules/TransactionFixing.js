@@ -91,29 +91,17 @@ const OrderSchema = new mongoose.Schema(
 
     /* ============================= NEW FOREX SCHEMA ============================= */
     forexValue: {
-      rates: {
-        purchase: { type: Number, default: 0 },
-        sell: { type: Number, default: 0 },
-        default: { type: Number, default: 0 }
-      },
-
-      calculation: {
-        marketValue: { type: Number, default: 0 }, // From FE
-        givenValue: { type: Number, default: 0 },  // From FE
-        diff: { type: Number, default: 0 }         // Signed (+/-)
-      },
-
-      outcome: {
-        fxGain: { type: Number, default: 0 },
-        fxLoss: { type: Number, default: 0 },
-        isGain: { type: Boolean, default: false },
-        isLoss: { type: Boolean, default: false }
-      }
-    }
+      purchaseRate: { type: Number, default: 0 },
+      sellRate: { type: Number, default: 0 },
+      defaultRate: { type: Number, default: 0 },
+      marketValue: { type: Number, default: 0 },
+      givenValue: { type: Number, default: 0 },
+      fxGain: { type: Number, default: 0 },
+      fxLoss: { type: Number, default: 0 },
+    },
   },
   { _id: false }
 );
-
 
 /* ============================= MAIN SCHEMA ============================= */
 const TransactionFixingSchema = new mongoose.Schema(
@@ -136,9 +124,9 @@ const TransactionFixingSchema = new mongoose.Schema(
     voucherDate: { type: Date },
     salesman: { type: String, default: "N/A" },
     metalTransactionId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "MetalTransaction",
-      },
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MetalTransaction",
+    },
     orders: {
       type: [OrderSchema],
       validate: [(v) => v.length > 0, "At least one order is required"],
