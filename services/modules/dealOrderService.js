@@ -261,6 +261,11 @@ class DealOrderService {
       historyEntry.status = payload.status;
     }
 
+    if (payload.cancellationReason) {
+      update.cancellationReason = payload.cancellationReason;
+      historyEntry.note = payload.cancellationReason;
+    }
+
     if (payload.note) {
       historyEntry.note = payload.note;
     }

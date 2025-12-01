@@ -338,8 +338,13 @@ const DealOrderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["draft", "pending", "inProgress", "completed", "cancelled"],
+      enum: ["draft", "pending", "inProgress", "onHold", "completed", "cancelled"],
       default: "draft",
+    },
+    cancellationReason: {
+      type: String,
+      trim: true,
+      default: null,
     },
     progress: {
       currentStage: {

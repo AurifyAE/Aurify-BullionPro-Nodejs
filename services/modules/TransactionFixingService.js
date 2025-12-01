@@ -22,6 +22,8 @@ const buildRegistryEntries = ({
   adminId,
   voucherNumber,
   grossWeight,
+  assetType,
+  currencyRate,
 }) => {
   const partyName = account.customerName || account.accountCode || "Unknown";
   const cashBalance = account.balances.cashBalance.find(
@@ -48,6 +50,8 @@ const buildRegistryEntries = ({
       transactionId: regId,
       transactionType,
       fixingTransactionId: fixId,
+      assetType: assetType,  
+      currencyRate: currencyRate,
       type: "PARTY_GOLD_BALANCE",
       description: `Gold: ${metalStr} – ${
         isPurchase ? "Debited from" : "Credited to"
@@ -70,6 +74,8 @@ const buildRegistryEntries = ({
       transactionId: regId,
       transactionType,
       fixingTransactionId: fixId,
+      assetType: assetType,  
+      currencyRate: currencyRate,
       type: isPurchase ? "purchase-fixing" : "sales-fixing",
       description: `Fixing: ${metalStr} – ${
         isPurchase ? "Purchase from" : "Sale to"
@@ -94,6 +100,8 @@ const buildRegistryEntries = ({
       transactionId: regId,
       transactionType,
       fixingTransactionId: fixId,
+      assetType: assetType,  
+      currencyRate: currencyRate,
       type: "PARTY_CASH_BALANCE",
       description: `Cash: ${cashStr} – ${metalStr} – ${
         isPurchase ? "Purchase from" : "Sale to"
@@ -302,6 +310,20 @@ export const TransactionFixingService = {
         // Normalize FX rates: FE sends itemCurrencyRate, we store both
         order.itemCurrencyRate = Number(order.itemCurrencyRate) || 1;
         order.currencyRate = Number(order.currencyRate || order.itemCurrencyRate) || 1;
+        
+        // Normalize party currency fields
+        if (order.partyCurrencyId) {
+          if (!mongoose.Types.ObjectId.isValid(order.partyCurrencyId)) {
+            throw createAppError(
+              `Order ${i + 1}: Invalid partyCurrencyId`,
+              400,
+              "INVALID_PARTY_CURRENCY"
+            );
+          }
+        }
+        order.partyCurrencyRate = order.partyCurrencyRate !== null && order.partyCurrencyRate !== undefined 
+          ? Number(order.partyCurrencyRate) 
+          : null;
 
         // Ensure weight exists and is numeric (will throw if invalid)
         resolveOrderWeight(order);
@@ -471,6 +493,8 @@ export const TransactionFixingService = {
           adminId,
           voucherNumber,
           grossWeight,
+          assetType: order.currencyCode,
+          currencyRate: order.itemCurrencyRate,
         });
         registryEntries.push(...entries);
       }
