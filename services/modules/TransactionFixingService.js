@@ -43,24 +43,38 @@ const buildRegistryEntries = ({
     type === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING";
 
   return [
-    // 1. PARTY_GOLD_BALANCE
     {
       transactionId: regId,
       transactionType,
       fixingTransactionId: fixId,
-      type: "PARTY_GOLD_BALANCE",
-      description: `Gold: ${metalStr} – ${
-        isPurchase ? "Debited from" : "Credited to"
+      type: isPurchase ? "PARTY_PURCHASE_FIX" : "PARTY_SALE_FIX",
+      description: `${metalStr} — ${
+        isPurchase ? "Purchase from" : "Sale to"
       } ${partyName}`,
       party: account._id,
       isBullion: false,
-      goldBidValue: bidValueOz,
+
+      // Metal details
       value: pureWeight,
       grossWeight: grossWeight,
-      debit: isPurchase ? pureWeight : 0,
-      credit: isPurchase ? 0 : pureWeight,
-      goldCredit: isPurchase ? pureWeight : 0,
-      goldDebit: isPurchase ? 0 : pureWeight,
+      goldBidValue: bidValueOz,
+
+      // =========================================
+      // GOLD EFFECTS
+      // =========================================
+      goldDebit: isPurchase ? pureWeight : 0, // Purchase → Gold goes OUT
+      goldCredit: isPurchase ? 0 : pureWeight, // Sale → Gold comes IN
+
+      // =========================================
+      // CASH EFFECTS
+      // =========================================
+      cashCredit: isPurchase ? totalValue : 0, // Purchase → Cash comes IN
+      cashDebit: isPurchase ? 0 : totalValue, // Sale → Cash goes OUT
+
+      // Optional debit/credit fields (if needed)
+      debit: 0,
+      credit: 0,
+
       transactionDate: new Date(),
       reference: voucherNumber,
       createdBy: adminId,
@@ -85,28 +99,6 @@ const buildRegistryEntries = ({
       goldDebit: isPurchase ? 0 : pureWeight,
       cashCredit: isPurchase ? 0 : totalValue,
       cashDebit: isPurchase ? totalValue : 0,
-      transactionDate: new Date(),
-      reference: voucherNumber,
-      createdBy: adminId,
-    },
-    // 3. PARTY_CASH_BALANCE
-    {
-      transactionId: regId,
-      transactionType,
-      fixingTransactionId: fixId,
-      type: "PARTY_CASH_BALANCE",
-      description: `Cash: ${cashStr} – ${metalStr} – ${
-        isPurchase ? "Purchase from" : "Sale to"
-      } ${partyName}`,
-      party: account._id,
-      isBullion: false,
-      goldBidValue: bidValueOz,
-      value: totalValue,
-      grossWeight: grossWeight,
-      debit: isPurchase ? 0 : totalValue,
-      credit: isPurchase ? totalValue : 0,
-      cashDebit: isPurchase ? totalValue : 0,
-      cashCredit: isPurchase ? totalValue : 0,
       transactionDate: new Date(),
       reference: voucherNumber,
       createdBy: adminId,
@@ -172,7 +164,6 @@ const computeGoldDelta = (orders, type) => {
   return sign * totalWeight;
 };
 
-// CASH is tracked in AED, using price * currencyRate (or itemCurrencyRate)
 const computeCashDeltas = (orders, type) => {
   const sign = type === "PURCHASE" ? 1 : -1; // PURCHASE: +cash (we pay party), SALE: -cash
   const deltas = {}; // { currencyId: amountDeltaInAED }
@@ -188,9 +179,8 @@ const computeCashDeltas = (orders, type) => {
     }
 
     const price = toNumberOrThrow(order.price, "price"); // base amount (e.g. USD or AED)
-    // const rate = Number(order.currencyRate ?? order.itemCurrencyRate ?? 1) || 1; // FX rate
 
-    const amountAED = price ;
+    const amountAED = price;
 
     deltas[cid] = (deltas[cid] || 0) + sign * amountAED;
   }
@@ -301,7 +291,8 @@ export const TransactionFixingService = {
 
         // Normalize FX rates: FE sends itemCurrencyRate, we store both
         order.itemCurrencyRate = Number(order.itemCurrencyRate) || 1;
-        order.currencyRate = Number(order.currencyRate || order.itemCurrencyRate) || 1;
+        order.currencyRate =
+          Number(order.currencyRate || order.itemCurrencyRate) || 1;
 
         // Ensure weight exists and is numeric (will throw if invalid)
         resolveOrderWeight(order);
@@ -356,7 +347,8 @@ export const TransactionFixingService = {
 
       const transactionType =
         type === "PURCHASE" ? "PURCHASE-FIXING" : "SALE-FIXING";
-      const partyName = account.customerName || account.accountCode || "Unknown";
+      const partyName =
+        account.customerName || account.accountCode || "Unknown";
 
       for (const order of transactionData.orders) {
         const regId = await Registry.generateTransactionId();

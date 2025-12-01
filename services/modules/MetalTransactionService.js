@@ -1791,36 +1791,37 @@ class MetalTransactionService {
     // ============================================================
     // 1) HEDGE ENTRY (UNFIX REVERSAL)
     // ============================================================
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged`,
-          party._id,
-          false,
-          totals.pureWeight,
-          totals.pureWeight,
-          {
-            goldCredit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged`,
+            party._id,
+            false,
+            totals.pureWeight,
+            totals.pureWeight,
+            {
+              goldCredit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
     }
-
     // ============================================================
     // 2) HEDGE REVERSAL – ONLY IF hedge = true
     // ============================================================
-    if (hedge) {
+    if (hedge && totals.pureWeight > 0) {
       // Gold fixing reversal
       if (totals.pureWeightStd > 0) {
         entries.push(
@@ -1850,29 +1851,27 @@ class MetalTransactionService {
         );
       }
 
-      // Hedge reversal – debit side
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Hedge reversal entry - Purchase from ${partyName}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          0,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            debit: totals.goldValue,
             goldCredit: totals.pureWeight,
-            cashCredit: totals.goldValue,
+            cashDebit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          hedgeVoucherNo,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -2973,7 +2972,7 @@ class MetalTransactionService {
           `Gold stock -  Purchase return from ${partyName}`,
           null,
           true,
-        totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -3020,39 +3019,38 @@ class MetalTransactionService {
       currencyRate: totals.currencyRate || 1,
     };
 
-    // ======================
-    // 1) Hedge Gold Balance (Unfix start)
-    // ======================
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
-          party._id,
-          false,
-          totals.pureWeight,
-          totals.pureWeight,
-          {
-            goldCredit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
+            party._id,
+            false,
+            totals.pureWeight,
+            totals.pureWeight,
+            {
+              goldCredit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
     }
 
     // ======================
     // 2) Hedge reversal (if hedge applied)
     // ======================
-    if (hedge) {
+    if (hedge && totals.pureWeight > 0) {
       if (totals.pureWeightStd > 0) {
         entries.push(
           this.createRegistryEntry(
@@ -3082,29 +3080,27 @@ class MetalTransactionService {
         );
       }
 
-      // Cash Debit (Hedge reversal)
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Party cash balance debited — Hedge reversal entry for gold purchase from ${partyName}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          0,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            debit: totals.goldValue,
             goldCredit: totals.pureWeight,
-            cashCredit: totals.goldValue,
+            cashDebit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          hedgeVoucherNo,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -3527,7 +3523,7 @@ class MetalTransactionService {
           `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -4134,7 +4130,7 @@ class MetalTransactionService {
           `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-           totals.pureWeightStd,
+          totals.pureWeightStd,
           totals.pureWeightStd,
           {
             goldCredit: totals.grossWeight,
@@ -4260,37 +4256,38 @@ class MetalTransactionService {
     // ----------------------------------------------------
     // 1) PARTY GOLD BALANCE (hedge entry)
     // ----------------------------------------------------
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue}`,
-          party._id,
-          false,
-          totals.pureWeight,
-          0,
-          {
-            debit: totals.pureWeight,
-            goldDebit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue}`,
+            party._id,
+            false,
+            totals.pureWeight,
+            0,
+            {
+              debit: totals.pureWeight,
+              goldDebit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
     }
-
     // ----------------------------------------------------
     // 2) HEDGE LOGIC
     // ----------------------------------------------------
-    if (hedge) {
+    if (hedge && totals.pureWeight > 0) {
       if (totals.pureWeightStd > 0) {
         // sales-fixing style entry
         entries.push(
@@ -4328,21 +4325,21 @@ class MetalTransactionService {
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Party cash balance debited — Hedge reversal for Purchase Return from ${partyName}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          totals.goldValue,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            cashCredit: totals.goldValue,
             goldDebit: totals.pureWeight,
+            cashCredit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          hedgeVoucherNo,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -4830,7 +4827,7 @@ class MetalTransactionService {
           `Gold inventory - Purchase from ${partyName}`,
           null,
           true,
-           totals.pureWeightStd,
+          totals.pureWeightStd,
           totals.pureWeightStd,
           {
             goldCredit: totals.grossWeight,
@@ -5566,33 +5563,35 @@ class MetalTransactionService {
     // ----------------------------------------------------
     // 1) PARTY GOLD BALANCE (hedge entry)
     // ----------------------------------------------------
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue}`,
-          party._id,
-          false,
-          totals.pureWeight,
-          0,
-          {
-            debit: totals.pureWeight,
-            goldDebit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
-    }
 
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue}`,
+            party._id,
+            false,
+            totals.pureWeight,
+            0,
+            {
+              debit: totals.pureWeight,
+              goldDebit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
+    }
     // ----------------------------------------------------
     // 2) HEDGE LOGIC
     // ----------------------------------------------------
@@ -5660,22 +5659,21 @@ class MetalTransactionService {
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Party cash balance credited — Purchase Return from ${partyName} at bid ${totals.bidValue}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          0,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            debit: totals.goldValue,
-            goldCredit: totals.pureWeight,
-            cashDebit: totals.goldValue,
+            goldDebit: totals.pureWeight,
+            cashCredit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          voucherNumber,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -6213,7 +6211,7 @@ class MetalTransactionService {
           `Gold stock - Purchase from ${partyName}`,
           party._id,
           true,
-         totals.pureWeightStd,
+          totals.pureWeightStd,
           totals.pureWeightStd,
           {
             goldCredit: totals.grossWeight,
@@ -6869,37 +6867,39 @@ class MetalTransactionService {
     // =====================================================
     // 1) Hedge entry (pureWeight)
     // =====================================================
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged at bid ${totals.bidValue}`,
-          party._id,
-          false,
-          totals.pureWeight,
-          0,
-          {
-            debit: totals.pureWeight,
-            goldDebit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
-    }
 
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged at bid ${totals.bidValue}`,
+            party._id,
+            false,
+            totals.pureWeight,
+            0,
+            {
+              debit: totals.pureWeight,
+              goldDebit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
+    }
     // =====================================================
     // 2) If hedge reversal triggered
     // =====================================================
-    if (hedge) {
+    if (hedge && totals.pureWeight > 0) {
       // reverse pure weight STD
       if (totals.pureWeightStd > 0) {
         entries.push(
@@ -6936,21 +6936,21 @@ class MetalTransactionService {
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Party cash balance debited — Hedge reversal for Export Sale of ${partyName}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          totals.goldValue,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            cashCredit: totals.goldValue,
             goldDebit: totals.pureWeight,
+            cashCredit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          hedgeVoucherNo,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -7435,7 +7435,7 @@ class MetalTransactionService {
           `Gold inventory - Export Sale Unfix return for ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -8167,37 +8167,39 @@ class MetalTransactionService {
     // ------------------------------
     // 1) PARTY GOLD BALANCE (initial)
     // ------------------------------
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue}`,
-          party._id,
-          false,
-          totals.pureWeight,
-          0,
-          {
-            debit: totals.pureWeight,
-            goldDebit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
-    }
 
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue}`,
+            party._id,
+            false,
+            totals.pureWeight,
+            0,
+            {
+              debit: totals.pureWeight,
+              goldDebit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
+    }
     // ------------------------------
     // 2) HEDGE REVERSAL BLOCK
     // ------------------------------
-    if (hedge) {
+    if (hedge && totals.pureWeight > 0) {
       // PARTY GOLD debit-reversal
       if (totals.pureWeightStd > 0) {
         entries.push(
@@ -8228,29 +8230,27 @@ class MetalTransactionService {
         );
       }
 
-      // Hedge reversal CASH debit
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Party cash balance debited — Hedge reversal entry for gold sale from ${partyName}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          totals.goldValue,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            debit: 0,
             goldDebit: totals.pureWeight,
-            cashCredit: totals.goldValue,
+            cashCredit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          hedgeVoucherNo,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -8861,36 +8861,38 @@ class MetalTransactionService {
     // ============================================================
     // 1) Hedge Entry – PARTY GOLD BALANCE
     // ============================================================
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged at bid ${totals.bidValue}`,
-          party._id,
-          false,
-          totals.pureWeight,
-          totals.pureWeight,
-          {
-            goldCredit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged at bid ${totals.bidValue}`,
+            party._id,
+            false,
+            totals.pureWeight,
+            totals.pureWeight,
+            {
+              goldCredit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
     }
 
     // ============================================================
     // 2) Hedge Reversal Background Logic
     // ============================================================
-    if (hedge) {
+    if (hedge && totals.pureWeight > 0) {
       if (totals.pureWeightStd > 0) {
         // PARTY-GOLD reverse entry
         entries.push(
@@ -8919,28 +8921,27 @@ class MetalTransactionService {
         );
       }
 
-      // Cash side – Debit entry
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Party cash balance debited — Hedge reversal for Sale return of ${partyName}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          totals.goldValue,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            cashCredit: totals.goldValue,
-            goldDebit: totals.pureWeight,
+            goldCredit: totals.pureWeight,
+            cashDebit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          hedgeVoucherNo,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -9366,7 +9367,7 @@ class MetalTransactionService {
           `Gold inventory - Export Sale Return from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -9439,7 +9440,7 @@ class MetalTransactionService {
           `Gold stock - Export Sale Return from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -9972,7 +9973,7 @@ class MetalTransactionService {
           `Gold inventory - Export Sale Return from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -10045,7 +10046,7 @@ class MetalTransactionService {
           `Gold stock - Export Sale Return from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -10095,36 +10096,37 @@ class MetalTransactionService {
     // ============================================================
     // 1) Hedge Entry – PARTY GOLD BALANCE
     // ============================================================
-    if (totals.pureWeight > 0) {
-      entries.push(
-        this.createRegistryEntry(
-          transactionType,
-          baseTransactionId,
-          metalTransactionId,
-          "001",
-          "PARTY_GOLD_BALANCE",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged at bid ${totals.bidValue}`,
-          party._id,
-          false,
-          totals.pureWeight,
-          totals.pureWeight,
-          {
-            goldCredit: totals.pureWeight,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
-          voucherDate,
-          hedge ? hedgeVoucherNo : voucherNumber,
-          adminId
-        )
-      );
+    if (!hedge) {
+      if (totals.pureWeight > 0) {
+        entries.push(
+          this.createRegistryEntry(
+            transactionType,
+            baseTransactionId,
+            metalTransactionId,
+            "001",
+            "PARTY_GOLD_BALANCE",
+            `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g hedged at bid ${totals.bidValue}`,
+            party._id,
+            false,
+            totals.pureWeight,
+            totals.pureWeight,
+            {
+              goldCredit: totals.pureWeight,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
+            voucherDate,
+            hedge ? hedgeVoucherNo : voucherNumber,
+            adminId
+          )
+        );
+      }
     }
-
     // ============================================================
     // 2) Hedge Reversal Background Logic
     // ============================================================
-    if (hedge) {
+    if (hedge && totals.pureWeight > 0) {
       if (totals.pureWeightStd > 0) {
         // PARTY-GOLD reverse entry
         entries.push(
@@ -10154,27 +10156,28 @@ class MetalTransactionService {
       }
 
       // Cash side – Debit entry
+
       entries.push(
         this.createRegistryEntry(
           transactionType,
           baseTransactionId,
           metalTransactionId,
           "001",
-          "PARTY_CASH_BALANCE",
-          `Party cash balance debited — Hedge reversal for Sale return of ${partyName}`,
+          "PARTY_HEDGE_ENTRY",
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.goldValue,
-          totals.goldValue,
+          totals.pureWeight, // pure weight
+          totals.goldValue, // cash amount
           {
-            cashCredit: totals.goldValue,
-            goldDebit: totals.pureWeight,
+            goldCredit: totals.pureWeight,
+            cashDebit: totals.goldValue, // <-- combined hedge cash debit
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
             ...FX,
           },
           voucherDate,
-          hedgeVoucherNo,
+          hedgeVoucherNo, // hedge voucher number
           adminId
         )
       );
@@ -10600,7 +10603,7 @@ class MetalTransactionService {
           `Gold inventory - Sale Return from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -11206,7 +11209,7 @@ class MetalTransactionService {
           `Gold inventory - Sale Return from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
@@ -11279,7 +11282,7 @@ class MetalTransactionService {
           `Gold stock - Sale Return from ${partyName}`,
           null,
           true,
-         totals.pureWeight,
+          totals.pureWeight,
           0,
           {
             debit: totals.pureWeight,
