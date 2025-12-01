@@ -26,6 +26,14 @@ class MetalRateMasterService {
         );
       }
 
+      // If setting as default, unset all other default rates
+      if (metalRateData.isDefault === true) {
+        await MetalRateMaster.updateMany(
+          { isDefault: true },
+          { isDefault: false }
+        );
+      }
+
       const metalRate = new MetalRateMaster({
         ...metalRateData,
         createdBy: adminId,
@@ -161,6 +169,14 @@ class MetalRateMasterService {
             "METAL_RATE_EXISTS"
           );
         }
+      }
+
+      // If setting as default, unset all other default rates (except the current one)
+      if (updateData.isDefault === true) {
+        await MetalRateMaster.updateMany(
+          { _id: { $ne: id }, isDefault: true },
+          { isDefault: false }
+        );
       }
 
       // Update metal rate
