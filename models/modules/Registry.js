@@ -17,6 +17,12 @@ const RegistrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "MetalTransaction",
     },
+    dealOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DealOrder",
+      default: null,
+      index: true,
+    },
     InventoryLogID: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "InventoryLog",

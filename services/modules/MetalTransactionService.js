@@ -10,6 +10,7 @@ import InventoryService from "./inventoryService.js";
 import FixingPrice from "../../models/modules/FixingPrice.js";
 import { generateHedgeVoucherNumber } from "../../utils/hedgeVoucher.js";
 import TransactionFixing from "../../models/modules/TransactionFixing.js";
+import DealOrderService from "./dealOrderService.js";
 
 const generateUniqueTransactionId = async (prefix) => {
   let id, exists;
@@ -40,6 +41,24 @@ class MetalTransactionService {
           this.createRegistryEntries(metalTransaction, party, adminId, session),
           this.updateAccountBalances(party, metalTransaction, session),
         ]);
+
+        // Update deal order status if dealOrderId is provided
+        if (transactionData.dealOrderId) {
+          try {
+            await DealOrderService.updateOrderStatus(
+              transactionData.dealOrderId,
+              {
+                status: "completed",
+                stage: "completed",
+                note: `Order completed via ${transactionData.transactionType} transaction`,
+              },
+              { id: adminId }
+            );
+          } catch (error) {
+            console.error("Failed to update deal order status:", error);
+            // Don't throw - transaction should still succeed
+          }
+        }
 
         return metalTransaction;
       });
@@ -251,6 +270,7 @@ class MetalTransactionService {
       partyCurrency,
       otherCharges = [],
       itemCurrency,
+      dealOrderId,
     } = transaction;
     let hedgeVoucherNo = transaction.hedgeVoucherNumber;
 
@@ -293,7 +313,8 @@ class MetalTransactionService {
             totalSummary,
             otherCharges,
             hedgeVoucherNo,
-            itemCurrency
+            itemCurrency,
+            dealOrderId
           );
 
           entries.push(...(purchaseEntries || []));
@@ -315,7 +336,8 @@ class MetalTransactionService {
             totalSummary,
             otherCharges,
             hedgeVoucherNo,
-            itemCurrency
+            itemCurrency,
+            dealOrderId
           );
           entries.push(...(saleEntries || []));
           break;
@@ -336,7 +358,8 @@ class MetalTransactionService {
             totalSummary,
             otherCharges,
             hedgeVoucherNo,
-            itemCurrency
+            itemCurrency,
+            dealOrderId
           );
           entries.push(...(purchaseReturnEntries || []));
           break;
@@ -357,7 +380,8 @@ class MetalTransactionService {
             totalSummary,
             otherCharges,
             hedgeVoucherNo,
-            itemCurrency
+            itemCurrency,
+            dealOrderId
           );
           entries.push(...(saleReturnEntries || []));
           break;
@@ -534,7 +558,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     hedgeVoucherNo,
-    itemCurrency
+    itemCurrency,
+    dealOrderId = null
   ) {
     console.log(itemCurrency);
     let transactionType = "Purchase";
@@ -581,7 +606,8 @@ class MetalTransactionService {
           partyCurrency,
           totalSummary,
           otherCharges,
-          transactionType
+          transactionType,
+          dealOrderId
         )
       : this.buildPurchaseUnfixEntries(
           hedgeVoucherNo, // 1
@@ -597,7 +623,8 @@ class MetalTransactionService {
           partyCurrency, // 11
           totalSummary, // 12
           otherCharges, // 13
-          transactionType
+          transactionType,
+          dealOrderId
         );
   }
 
@@ -778,7 +805,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     hedgeVoucherNo,
-    itemCurrency
+    itemCurrency,
+    dealOrderId = null
   ) {
     let transactionType = "Sale";
     if (mode === "fix") {
@@ -823,7 +851,8 @@ class MetalTransactionService {
           partyCurrency,
           totalSummary,
           otherCharges,
-          transactionType
+          transactionType,
+          dealOrderId
         )
       : this.buildSaleUnfixEntries(
           hedgeVoucherNo,
@@ -839,7 +868,8 @@ class MetalTransactionService {
           partyCurrency,
           totalSummary,
           otherCharges,
-          transactionType
+          transactionType,
+          dealOrderId
         );
   }
 
@@ -1019,7 +1049,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     hedgeVoucherNo,
-    itemCurrency
+    itemCurrency,
+    dealOrderId = null
   ) {
     let transactionType = "Purchase-Return";
     if (mode === "fix") {
@@ -1063,7 +1094,8 @@ class MetalTransactionService {
           partyCurrency,
           totalSummary,
           otherCharges,
-          transactionType
+          transactionType,
+          dealOrderId
         )
       : this.buildPurchaseReturnUnfixEntries(
           hedgeVoucherNo,
@@ -1079,7 +1111,8 @@ class MetalTransactionService {
           partyCurrency,
           totalSummary,
           otherCharges,
-          transactionType
+          transactionType,
+          dealOrderId
         );
   }
 
@@ -1098,7 +1131,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     hedgeVoucherNo,
-    itemCurrency
+    itemCurrency,
+    dealOrderId = null
   ) {
     console.log(itemCurrency);
     let transactionType = "Sale-Return";
@@ -1145,7 +1179,8 @@ class MetalTransactionService {
           partyCurrency,
           totalSummary,
           otherCharges,
-          transactionType
+          transactionType,
+          dealOrderId
         )
       : this.buildSaleReturnUnfixEntries(
           hedgeVoucherNo, // 1
@@ -1161,7 +1196,8 @@ class MetalTransactionService {
           partyCurrency, // 11
           totalSummary, // 12
           otherCharges, // 13
-          transactionType
+          transactionType,
+          dealOrderId
         );
   }
 
@@ -1186,6 +1222,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ============================================================
@@ -1786,6 +1823,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ============================================================
@@ -2401,7 +2439,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges,
-    transactionType
+    transactionType,
+    dealOrderId = null
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -2409,6 +2448,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ---------------------------------------
@@ -3008,7 +3048,8 @@ class MetalTransactionService {
     partyCurrency, // 11
     totalSummary, // 12
     otherCharges, // 13
-    transactionType
+    transactionType,
+    dealOrderId = null
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -3017,6 +3058,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     if (!hedge) {
@@ -4935,7 +4977,8 @@ class MetalTransactionService {
     adminId,
     item,
     otherCharges = [],
-    transactionType = "Purchase-Return"
+    transactionType = "Purchase-Return",
+    dealOrderId = null
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -4944,6 +4987,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ------------------------------
@@ -5549,7 +5593,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges = [],
-    transactionType = "Purchase-Return-Unfix"
+    transactionType = "Purchase-Return-Unfix",
+    dealOrderId = null
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -5558,6 +5603,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ----------------------------------------------------
@@ -8153,7 +8199,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges,
-    transactionType
+    transactionType,
+    dealOrderId = null
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -8162,6 +8209,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ------------------------------
@@ -10082,7 +10130,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges = [],
-    transactionType
+    transactionType,
+    dealOrderId = null
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -10091,6 +10140,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ============================================================
@@ -10710,7 +10760,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges = [],
-    transactionType
+    transactionType,
+    dealOrderId = null
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -10719,6 +10770,7 @@ class MetalTransactionService {
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
+      dealOrderId: dealOrderId || null,
     };
 
     // ============================================================
@@ -11436,6 +11488,7 @@ class MetalTransactionService {
       // NEW: optional incoming currency
       assetType,
       currencyRate,
+      dealOrderId,
     } = fields;
 
     // We detect totals auto and insert the values
@@ -11484,6 +11537,7 @@ class MetalTransactionService {
       transactionDate: voucherDate || new Date(),
       reference,
       createdBy: adminId,
+      dealOrderId: dealOrderId || null,
       createdAt: new Date(),
 
       grossWeight: grossWeight ?? 0,

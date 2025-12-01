@@ -3,7 +3,13 @@ import fs from 'fs';
 
 // Use createRequire to import CommonJS module in ES module context
 const require = createRequire(import.meta.url);
-const pdf = require('pdf-parse');
+const pdfParseModule = require('pdf-parse');
+
+// pdf-parse is a CommonJS module that exports the function directly
+// In ES modules, it might be wrapped, so we check for default or use directly
+const pdf = (typeof pdfParseModule === 'function') 
+  ? pdfParseModule 
+  : (pdfParseModule.default || pdfParseModule);
 
 /**
  * Parse Gold Test Certificate PDF and extract all relevant fields
