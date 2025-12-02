@@ -456,6 +456,12 @@ const MetalTransactionSchema = new mongoose.Schema(
       ref: "CurrencyMaster",
       default: null,
     },
+    dealOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DealOrder",
+      default: null,
+      index: true,
+    },
 
     // MULTIPLE STOCK ITEMS
     stockItems: {

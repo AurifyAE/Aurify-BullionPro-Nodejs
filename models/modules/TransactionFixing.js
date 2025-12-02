@@ -80,6 +80,14 @@ const OrderSchema = new mongoose.Schema(
     },
 
     itemCurrencyRate: { type: Number, default: null },
+    
+    partyCurrencyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CurrencyMaster",
+      default: null,
+    },
+    
+    partyCurrencyRate: { type: Number, default: null },
     purity: { type: Number, required: true },
     remarks: { type: String, trim: true, default: "" },
     price: { type: Number, required: true },

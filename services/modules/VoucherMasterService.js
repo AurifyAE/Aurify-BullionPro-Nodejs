@@ -170,6 +170,77 @@ class VoucherMasterService {
         return count;
       }
 
+      // Draft Metal module - Get last voucher number instead of counting
+      // This prevents duplicate numbers when drafts are deleted
+      if (moduleLC === "draft-metal") {
+        console.log(`[getTransactionCount] Using model: Drafting - Getting last voucher number`);
+
+        const { default: Drafting } = await import("../../models/modules/Drafting.js");
+        
+        // Get voucher config first to know the prefix
+        const voucher = await this.getVoucherConfig(module);
+        const prefix = voucher.prefix;
+        
+        // Build query to find drafts with voucherCode matching the prefix
+        const matchQuery = { 
+          voucherCode: { 
+            $exists: true, 
+            $ne: null, 
+            $ne: "",
+            $regex: `^${prefix}` // Match voucher codes starting with the prefix
+          } 
+        };
+        if (transactionType) {
+          matchQuery.voucherType = { $regex: `^${transactionType}$`, $options: "i" };
+        }
+
+        // Use aggregation to extract numeric parts and find the maximum
+        const result = await Drafting.aggregate([
+          { $match: matchQuery },
+          {
+            $project: {
+              voucherCode: 1,
+              // Extract numeric part after prefix
+              numericPart: {
+                $substr: [
+                  "$voucherCode",
+                  prefix.length,
+                  { $strLenCP: "$voucherCode" }
+                ]
+              }
+            }
+          },
+          {
+            $project: {
+              voucherCode: 1,
+              number: {
+                $convert: {
+                  input: "$numericPart",
+                  to: "int",
+                  onError: 0,
+                  onNull: 0
+                }
+              }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              maxNumber: { $max: "$number" }
+            }
+          }
+        ]);
+
+        if (!result || result.length === 0 || !result[0].maxNumber) {
+          console.log(`[getTransactionCount] No drafts with valid voucherCode found, returning 0`);
+          return 0;
+        }
+
+        const maxNumber = result[0].maxNumber;
+        console.log(`[getTransactionCount] Maximum voucher number found: ${maxNumber}, returning ${maxNumber}`);
+        return maxNumber;
+      }
+
 
       console.warn(`[getTransactionCount] No matching model for module="${module}". Returning 0.`);
       return 0;

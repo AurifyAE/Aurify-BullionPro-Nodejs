@@ -437,13 +437,8 @@ class RegistryService {
     // -----------------------------------------------------
     const TYPE_RULES = {
       PARTY_CASH: {
-        types: ["PARTY_CASH_BALANCE"],
-        mode: "party-cash",
-      },
-
-      PARTY_GOLD: {
-        types: ["PARTY_GOLD_BALANCE"],
-        mode: "party-gold",
+        types: ["PARTY_HEDGE_ENTRY"],
+        mode: "party",
       },
 
       BULLION_COMBINED: {
@@ -510,14 +505,11 @@ class RegistryService {
       const accCode = prefix + "001";
 
       switch (mode) {
-        case "party-cash":
-          partyCurrencyDebit += reg.debit || 0;
-          partyCurrencyCredit += reg.credit || 0;
-          break;
-
-        case "party-gold":
-          partyGoldDebit += reg.debit || 0;
-          partyGoldCredit += reg.credit || 0;
+        case "party":
+          partyCurrencyDebit += reg.cashDebit || 0;
+          partyCurrencyCredit += reg.cashCredit || 0;
+          partyGoldDebit += reg.goldDebit || 0;
+          partyGoldCredit += reg.goldCredit || 0;
           break;
 
         case "combined": // HEDGE_ENTRY
@@ -621,14 +613,9 @@ class RegistryService {
     // 📌 1) TYPE RULES SPECIFIC FOR FIXING TRANSACTIONS
     // -----------------------------------------------------
     const TYPE_RULES = {
-      PARTY_CASH: {
-        types: ["PARTY_CASH_BALANCE"],
-        mode: "party-cash",
-      },
-
-      PARTY_GOLD: {
-        types: ["PARTY_GOLD_BALANCE"],
-        mode: "party-gold",
+      COMBINED_PARTY_CASH: {
+        types: ["PARTY_PURCHASE_FIX", "PARTY_SALE_FIX"],
+        mode: "party",
       },
 
       BULLION_COMBINED: {
@@ -695,14 +682,11 @@ class RegistryService {
       const accCode = prefix + "001";
 
       switch (mode) {
-        case "party-cash":
-          partyCurrencyDebit += reg.debit || 0;
-          partyCurrencyCredit += reg.credit || 0;
-          break;
-
-        case "party-gold":
-          partyGoldDebit += reg.debit || 0;
-          partyGoldCredit += reg.credit || 0;
+        case "party":
+          partyCurrencyDebit += reg.cashDebit || 0;
+          partyCurrencyCredit += reg.cashCredit || 0;
+          partyGoldDebit += reg.goldDebit || 0;
+          partyGoldCredit += reg.goldCredit || 0;
           break;
 
         case "combined": // purchase-fixing & sales-fixing

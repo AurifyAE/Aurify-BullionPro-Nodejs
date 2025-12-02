@@ -38,6 +38,7 @@ export const createMetalTransaction = async (req, res, next) => {
       salesman,
       status = "draft",
       notes,
+      dealOrderId,
     } = req.body;
 
     // === VALIDATION ===
@@ -240,6 +241,7 @@ export const createMetalTransaction = async (req, res, next) => {
       salesman: trim(salesman),
       status,
       notes: trim(notes),
+      dealOrderId: dealOrderId ? trim(dealOrderId) : null,
     };
 
     // === CREATE IN SERVICE ===
