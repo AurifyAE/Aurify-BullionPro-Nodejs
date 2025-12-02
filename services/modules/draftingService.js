@@ -1,4 +1,6 @@
 import Drafting from "../../models/modules/Drafting.js";
+import AccountType from "../../models/modules/AccountType.js";
+import MetalStock from "../../models/modules/MetalStock.js";
 
 class DraftingService {
   // Create a new draft
@@ -17,7 +19,15 @@ class DraftingService {
       });
 
       await draft.save();
-      return draft;
+      
+      // Populate and return the draft
+      const populatedDraft = await Drafting.findById(draft._id)
+        .populate("createdBy", "name email")
+        .populate("partyId", "customerName accountCode name")
+        .populate("stockId", "stockCode description standardPurity purity")
+        .lean();
+      
+      return populatedDraft;
     } catch (error) {
       console.error("Error creating draft:", error);
       throw error;
@@ -33,10 +43,12 @@ class DraftingService {
       // Add search functionality
       if (search) {
         query.$or = [
+          { transactionId: { $regex: search, $options: "i" } },
           { draftNumber: { $regex: search, $options: "i" } },
           { partyName: { $regex: search, $options: "i" } },
           { itemCode: { $regex: search, $options: "i" } },
           { certificateNumber: { $regex: search, $options: "i" } },
+          { voucherCode: { $regex: search, $options: "i" } },
         ];
       }
 
@@ -45,6 +57,8 @@ class DraftingService {
         .skip(skip)
         .limit(limit)
         .populate("createdBy", "name email")
+        .populate("partyId", "customerName accountCode name")
+        .populate("stockId", "stockCode description standardPurity purity")
         .lean();
 
       const totalDrafts = await Drafting.countDocuments(query);
@@ -67,6 +81,8 @@ class DraftingService {
     try {
       const draft = await Drafting.findById(id)
         .populate("createdBy", "name email")
+        .populate("partyId", "customerName accountCode name")
+        .populate("stockId", "stockCode description standardPurity purity")
         .lean();
 
       return draft;
@@ -89,6 +105,8 @@ class DraftingService {
         { new: true, runValidators: true }
       )
         .populate("createdBy", "name email")
+        .populate("partyId", "customerName accountCode name")
+        .populate("stockId", "stockCode description standardPurity purity")
         .lean();
 
       return draft;

@@ -22,8 +22,8 @@ export const createMetalTransaction = async (req, res, next) => {
       hedge,
       partyCode,
       partyCurrency,
+      partyCurrencyRate,
       itemCurrency,
-      partyCurrencyRate = 1,
       voucherType,
       voucherDate,
       voucherNumber,
@@ -40,6 +40,8 @@ export const createMetalTransaction = async (req, res, next) => {
       notes,
       dealOrderId,
     } = req.body;
+
+    console.log("CREATE METAL TRANSACTION BODY:", JSON.stringify(req.body, null, 2));
 
     // === VALIDATION ===
     if (
@@ -141,6 +143,11 @@ export const createMetalTransaction = async (req, res, next) => {
           currentBidValue: toNumber(metalRate?.currentBidValue),
           bidValue: toNumber(metalRate?.bidValue),
         },
+        metalRateUnit: {
+          rateType: metalRateUnit ? trim(metalRateUnit.rateType) : null,
+          rate: metalRateUnit ? toNumber(metalRateUnit.rate) : null,
+          rateInGram: metalRateUnit ? toNumber(metalRateUnit.rateInGram) : null,
+        },
         metalAmount: toNumber(itemTotal?.baseAmount),
         FXGain: toNumber(FXGain),
         FXLoss: toNumber(FXLoss),
@@ -192,12 +199,12 @@ export const createMetalTransaction = async (req, res, next) => {
         },
         vatDetails: charge.vatDetails
           ? {
-              vatNo: trim(charge.vatDetails.vatNo) || "",
-              invoiceNo: trim(charge.vatDetails.invoiceNo),
-              invoiceDate: toDate(charge.vatDetails.invoiceDate),
-              vatRate: toNumber(charge.vatDetails.vatRate),
-              vatAmount: toNumber(charge.vatDetails.vatAmount),
-            }
+            vatNo: trim(charge.vatDetails.vatNo) || "",
+            invoiceNo: trim(charge.vatDetails.invoiceNo),
+            invoiceDate: toDate(charge.vatDetails.invoiceDate),
+            vatRate: toNumber(charge.vatDetails.vatRate),
+            vatAmount: toNumber(charge.vatDetails.vatAmount),
+          }
           : null,
         remarks: trim(charge.remarks) || "",
       };
@@ -220,10 +227,10 @@ export const createMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       metalRateUnit: metalRateUnit
         ? {
-            rateType: trim(metalRateUnit.rateType),
-            rate: toNumber(metalRateUnit.rate),
-            rateInGram: toNumber(metalRateUnit.rateInGram),
-          }
+          rateType: trim(metalRateUnit.rateType),
+          rate: toNumber(metalRateUnit.rate),
+          rateInGram: toNumber(metalRateUnit.rateInGram),
+        }
         : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,
@@ -413,12 +420,12 @@ export const updateMetalTransaction = async (req, res, next) => {
         },
         vatDetails: charge.vatDetails
           ? {
-              vatNo: trim(charge.vatDetails.vatNo) || "",
-              invoiceNo: trim(charge.vatDetails.invoiceNo),
-              invoiceDate: toDate(charge.vatDetails.invoiceDate),
-              vatRate: toNumber(charge.vatDetails.vatRate),
-              vatAmount: toNumber(charge.vatDetails.vatAmount),
-            }
+            vatNo: trim(charge.vatDetails.vatNo) || "",
+            invoiceNo: trim(charge.vatDetails.invoiceNo),
+            invoiceDate: toDate(charge.vatDetails.invoiceDate),
+            vatRate: toNumber(charge.vatDetails.vatRate),
+            vatAmount: toNumber(charge.vatDetails.vatAmount),
+          }
           : null,
         remarks: trim(charge.remarks) || "",
       };
@@ -441,10 +448,10 @@ export const updateMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       metalRateUnit: metalRateUnit
         ? {
-            rateType: trim(metalRateUnit.rateType),
-            rate: toNumber(metalRateUnit.rate),
-            rateInGram: toNumber(metalRateUnit.rateInGram),
-          }
+          rateType: trim(metalRateUnit.rateType),
+          rate: toNumber(metalRateUnit.rate),
+          rateInGram: toNumber(metalRateUnit.rateInGram),
+        }
         : null,
       stockItems: mappedStockItems,
       otherCharges: mappedOtherCharges,

@@ -364,7 +364,7 @@ const MetalTransactionSchema = new mongoose.Schema(
         "saleReturn",
         "exportSale",
         "importPurchase",
-          "exportSaleReturn",
+        "exportSaleReturn",
         "importPurchaseReturn",
       ],
       required: [true, "Transaction type is required"],
@@ -420,10 +420,33 @@ const MetalTransactionSchema = new mongoose.Schema(
       ref: "CurrencyMaster",
       required: [true, "Party Currency is required"],
     },
+    // metalRate unit is a object iwth
+    // metalRateUnit: {
+    //     rateType: formData.metalRateid || "GOZ",
+    //     rate: formData.rate || "",
+    //     rateInGrams: Number(ratePerGram) || "", // need to edit
+    //   }, this is sending from backend
+    metalRateUnit: {
+      rateType: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "MetalRateMaster",
+      },
+      rate: {
+        type: Number,
+      },
+      rateInGrams: {
+        type: Number,
+      }
+    },
     itemCurrency: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "CurrencyMaster",
       default: null,
+    },
+    partyCurrencyRate: {
+      type: Number,
+      default: 1,
+      min: [0, "Party Currency Rate cannot be negative"],
     },
     subLedger: {
       type: String,
