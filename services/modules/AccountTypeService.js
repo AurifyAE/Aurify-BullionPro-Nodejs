@@ -10,6 +10,7 @@ import {
 } from "../../utils/passwordUtils.js";
 import AccountMode from "../../models/modules/AccountMode.js";
 import Registry from "../../models/modules/Registry.js";
+import CurrencyMaster from "../../models/modules/CurrencyMaster.js";
 import mongoose from "mongoose";
 
 class AccountTypeService {
@@ -384,22 +385,78 @@ class AccountTypeService {
           });
       }
 
-      // 5. Re-init cash balances if currencies changed
+      // 5. Update cash balances if currencies changed (PRESERVE EXISTING BALANCES)
       if (updateData.acDefinition?.currencies?.length > 0) {
+        const existingCashBalance = tradeDebtor.balances?.cashBalance || [];
+        const existingGoldBalance = tradeDebtor.balances?.goldBalance || {
+          totalGrams: 0,
+          totalValue: 0,
+          lastUpdated: new Date(),
+        };
+        const existingTotalOutstanding = tradeDebtor.balances?.totalOutstanding || 0;
+
+        // Fetch currency codes for all currencies in the update
+        const currencyIds = updateData.acDefinition.currencies.map(
+          (c) => c.currency?._id || c.currency
+        ).filter(Boolean);
+        
+        const currencies = await CurrencyMaster.find({
+          _id: { $in: currencyIds }
+        }).select('_id currencyCode').lean();
+        
+        // Create a map of currencyId -> currencyCode for quick lookup
+        const currencyCodeMap = {};
+        currencies.forEach((curr) => {
+          currencyCodeMap[curr._id.toString()] = curr.currencyCode;
+        });
+
+        // Build new cashBalance array preserving existing amounts
+        const newCashBalance = updateData.acDefinition.currencies.map((c) => {
+          const currencyId = c.currency?._id || c.currency;
+          const currencyIdStr = currencyId?.toString();
+          
+          // Get currency code from map or existing balance
+          const currencyCode = currencyCodeMap[currencyIdStr] || null;
+          
+          // Find existing balance for this currency
+          const existingBalance = existingCashBalance.find(
+            (cb) => {
+              const cbCurrencyId = cb.currency?.toString?.() || cb.currency?.toString() || '';
+              return cbCurrencyId === currencyIdStr;
+            }
+          );
+
+          if (existingBalance) {
+            // Preserve existing balance data, only update isDefault if changed
+            return {
+              currency: currencyId, // Keep as ObjectId reference
+              code: existingBalance.code || currencyCode || null, // Use fetched code if existing doesn't have one
+              amount: existingBalance.amount || 0, // PRESERVE EXISTING AMOUNT
+              isDefault: !!c.isDefault,
+              lastUpdated: existingBalance.lastUpdated || new Date(),
+            };
+          } else {
+            // New currency - initialize with 0 amount
+            return {
+              currency: currencyId, // Keep as ObjectId reference
+              code: currencyCode || null, // Use fetched currency code
+              amount: 0,
+              isDefault: !!c.isDefault,
+              lastUpdated: new Date(),
+            };
+          }
+        });
+
+        // Preserve existing balances structure
         updateData.balances = {
-          cashBalance: updateData.acDefinition.currencies.map((c) => ({
-            currency: c.currency?._id || c.currency,
-            amount: 0,
-            isDefault: !!c.isDefault,
-            lastUpdated: new Date(),
-          })),
+          cashBalance: newCashBalance,
           goldBalance: {
-            totalGrams: 0,
-            totalValue: 0,
-            lastUpdated: new Date(),
+            totalGrams: existingGoldBalance.totalGrams || 0,
+            totalValue: existingGoldBalance.totalValue || 0,
+            lastUpdated: existingGoldBalance.lastUpdated || new Date(),
           },
-          totalOutstanding: 0,
-          lastBalanceUpdate: new Date(),
+          totalOutstanding: existingTotalOutstanding,
+          lastBalanceUpdate: tradeDebtor.balances?.lastBalanceUpdate || new Date(),
         };
       }
 

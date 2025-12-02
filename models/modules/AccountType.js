@@ -611,7 +611,7 @@ AccountSchema.methods.setDefaultCurrencies = function (currencyIds) {
 AccountSchema.methods.addOrUpdateCurrencyBalance = function (
   currencyId,
   amount,
-  isDefault = falsex
+  isDefault = false
 ) {
   const currencyIdStr = currencyId.toString();
   const existingBalance = this.balances.cashBalance.find(
