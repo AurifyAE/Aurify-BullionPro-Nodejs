@@ -194,6 +194,15 @@ const StockItemSchema = new mongoose.Schema(
         type: Number,
         default: 0,
       },
+      usd: {
+        type: Number,
+        default: 0,
+      },
+      type: {
+        type: String,
+        enum: ["premium", "discount"],
+        default: "premium",
+      },
     },
     vat: {
       percentage: {
