@@ -110,31 +110,7 @@ const buildRegistryEntries = ({
       transactionDate: new Date(),
       reference: voucherNumber,
       createdBy: adminId,
-    },
-    // 3. PARTY_CASH_BALANCE
-    {
-      transactionId: regId,
-      transactionType,
-      fixingTransactionId: fixId,
-      assetType: assetType,  
-      currencyRate: currencyRate,
-      type: "PARTY_CASH_BALANCE",
-      description: `Cash: ${cashStr} – ${metalStr} – ${
-        isPurchase ? "Purchase from" : "Sale to"
-      } ${partyName}`,
-      party: account._id,
-      isBullion: false,
-      goldBidValue: bidValueOz,
-      value: totalValue,
-      grossWeight: grossWeight,
-      debit: isPurchase ? 0 : totalValue,
-      credit: isPurchase ? totalValue : 0,
-      cashDebit: isPurchase ? totalValue : 0,
-      cashCredit: isPurchase ? totalValue : 0,
-      transactionDate: new Date(),
-      reference: voucherNumber,
-      createdBy: adminId,
-    },
+    }
   ];
 };
 
