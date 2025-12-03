@@ -1342,10 +1342,14 @@ class RegistryService {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Fetch all transactions before today (up to yesterday end of day)
+      // Fetch all transactions before today (up to yesterday end of day) - exclude drafts
       const previousTransactions = await Registry.find({
         party: partyId,
         isActive: true,
+        $or: [
+          { isDraft: { $ne: true } }, // Not a draft
+          { isDraft: { $exists: false } }, // Old entries without isDraft field
+        ],
         transactionDate: { $lt: today }, // All transactions before today
       }).sort({ transactionDate: 1, createdAt: 1 }); // Sort chronologically
 
@@ -1383,7 +1387,23 @@ class RegistryService {
 
   static async getRegistriesByPartyId(partyId, page = 1, limit = 10) {
     try {
-      const filter = { party: partyId, isActive: true };
+      // Filter for non-draft entries (for balance calculation)
+      const filter = { 
+        party: partyId, 
+        isActive: true,
+        $or: [
+          { isDraft: { $ne: true } }, // Not a draft
+          { isDraft: { $exists: false } }, // Old entries without isDraft field
+        ],
+      };
+      
+      // Separate filter for drafts (to show but not calculate)
+      const draftFilter = {
+        party: partyId,
+        isActive: true,
+        isDraft: true,
+      };
+
       const skip = (page - 1) * limit;
 
       const openingBalanceResult = await this.getOpeningBalanceByPartyId(
@@ -1392,7 +1412,9 @@ class RegistryService {
       const openingBalance = openingBalanceResult.openingBalance;
 
       const totalItems = await Registry.countDocuments(filter);
+      const draftTotalItems = await Registry.countDocuments(draftFilter);
 
+      // Fetch non-draft registries (for balance calculation)
       const registries = await Registry.find(filter)
         .populate("party", "name code")
         .populate("createdBy", "name email")
@@ -1401,11 +1423,21 @@ class RegistryService {
         .skip(skip)
         .limit(limit);
 
+      // Fetch drafts separately (to show but not calculate)
+      const drafts = await Registry.find(draftFilter)
+        .populate("party", "name code")
+        .populate("createdBy", "name email")
+        .populate("draftId", "draftNumber transactionId status")
+        .sort({ transactionDate: -1 })
+        .limit(50); // Limit drafts to avoid too many
+
       const totalPages = Math.ceil(totalItems / limit);
       return {
         data: registries,
+        drafts: drafts, // Separate drafts array
         openingBalance,
         totalItems,
+        draftTotalItems,
         totalPages,
         currentPage: page,
       };

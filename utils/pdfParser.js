@@ -3,13 +3,56 @@ import fs from 'fs';
 
 // Use createRequire to import CommonJS module in ES module context
 const require = createRequire(import.meta.url);
-const pdfParseModule = require('pdf-parse');
 
 // pdf-parse is a CommonJS module that exports the function directly
-// In ES modules, it might be wrapped, so we check for default or use directly
-const pdf = (typeof pdfParseModule === 'function') 
-  ? pdfParseModule 
-  : (pdfParseModule.default || pdfParseModule);
+
+// Load pdf-parse module
+let pdfParseModule;
+try {
+  pdfParseModule = require('pdf-parse');
+} catch (error) {
+  console.error('Error requiring pdf-parse:', error);
+  throw new Error('Failed to load pdf-parse module. Make sure pdf-parse is installed: npm install pdf-parse');
+}
+
+// Extract the pdf-parse function
+// pdf-parse exports the function directly: module.exports = function() {...}
+// With createRequire, it should return the function directly, but handle all cases
+let pdf;
+
+if (typeof pdfParseModule === 'function') {
+  // Direct function export (most common case)
+  pdf = pdfParseModule;
+} else if (pdfParseModule && typeof pdfParseModule.default === 'function') {
+  // Wrapped in default property
+  pdf = pdfParseModule.default;
+} else if (pdfParseModule && typeof pdfParseModule.pdfParse === 'function') {
+  // Named export
+  pdf = pdfParseModule.pdfParse;
+} else if (pdfParseModule && typeof pdfParseModule === 'object') {
+  // Search for any function in the object
+  const funcKey = Object.keys(pdfParseModule).find(key => typeof pdfParseModule[key] === 'function');
+  if (funcKey) {
+    pdf = pdfParseModule[funcKey];
+  } else {
+    // Log detailed error for debugging
+    console.error('pdf-parse module structure:', {
+      type: typeof pdfParseModule,
+      keys: Object.keys(pdfParseModule),
+      hasDefault: !!pdfParseModule?.default,
+      defaultType: typeof pdfParseModule?.default
+    });
+    throw new Error('Could not find pdf-parse function. Module type: ' + typeof pdfParseModule + ', Keys: ' + Object.keys(pdfParseModule || {}).join(', '));
+  }
+} else {
+  throw new Error('pdf-parse module is not a function or object. Type: ' + typeof pdfParseModule);
+}
+
+// Final verification
+if (typeof pdf !== 'function') {
+  console.error('pdf-parse extraction failed. Final pdf type:', typeof pdf);
+  throw new Error('pdf-parse function extraction failed. Extracted type: ' + typeof pdf);
+}
 
 /**
  * Parse Gold Test Certificate PDF and extract all relevant fields
@@ -18,8 +61,27 @@ const pdf = (typeof pdfParseModule === 'function')
  */
 export const parseGoldCertificatePDF = async (pdfPath) => {
   try {
+    // Verify pdf function is available and callable
+    if (typeof pdf !== 'function') {
+      console.error('pdf-parse extraction failed. Module structure:', {
+        pdfType: typeof pdf,
+        moduleType: typeof pdfParseModule,
+        moduleKeys: pdfParseModule ? Object.keys(pdfParseModule) : 'null/undefined',
+        moduleDefault: pdfParseModule?.default,
+        modulePdfParse: pdfParseModule?.pdfParse,
+        moduleValue: pdfParseModule
+      });
+      throw new Error(`pdf-parse function is not available. Extracted type: ${typeof pdf}, Module type: ${typeof pdfParseModule}`);
+    }
+
     // Read PDF file
     const dataBuffer = fs.readFileSync(pdfPath);
+    
+    // Ensure we have a valid buffer
+    if (!dataBuffer || !Buffer.isBuffer(dataBuffer)) {
+      throw new Error('Invalid PDF file buffer');
+    }
+    
     const data = await pdf(dataBuffer);
 
     // Extract text from PDF

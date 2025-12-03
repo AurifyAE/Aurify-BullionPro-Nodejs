@@ -81,6 +81,7 @@ const AccountSchema = new mongoose.Schema(
         totalGrams: { type: Number, default: 0 },
         totalValue: { type: Number, default: 0 },
         lastUpdated: { type: Date, default: Date.now },
+        draftBalance: { type: Number, default: 0 },
       },
       cashBalance: {
         type: [

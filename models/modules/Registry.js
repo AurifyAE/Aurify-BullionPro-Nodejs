@@ -157,6 +157,16 @@ const RegistrySchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    isDraft: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    draftId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Drafting",
+      default: null,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",

@@ -12,6 +12,7 @@ export const createMetalStock = async (req, res, next) => {
       description,
       branch,
       karat,
+      standardPurity,
       pcs,
       // pcsCount,
       totalValue,
@@ -58,6 +59,7 @@ export const createMetalStock = async (req, res, next) => {
       description: description.trim(),
       branch: branch || null,
       karat: karat.trim(),
+      standardPurity: standardPurity !== undefined && standardPurity !== null ? parseFloat(standardPurity) : null,
       pcs: Boolean(pcs),
       // pcsCount: pcs ? parseInt(pcsCount) : 0,
       totalValue: pcs ? parseFloat(totalValue) : 0,
@@ -157,6 +159,7 @@ export const updateMetalStock = async (req, res, next) => {
       description,
       branch,
       karat,
+      standardPurity,
       pcs,
       // pcsCount,
       totalValue,
@@ -199,6 +202,7 @@ export const updateMetalStock = async (req, res, next) => {
     if (description) cleanedUpdateData.description = description.trim();
     if (branch !== undefined) cleanedUpdateData.branch = branch || null;
     if (karat) cleanedUpdateData.karat = karat.trim();
+    if (standardPurity !== undefined) cleanedUpdateData.standardPurity = standardPurity !== null ? parseFloat(standardPurity) : null;
     if (pcs !== undefined) cleanedUpdateData.pcs = Boolean(pcs);
     if (pcs) {
       // if (pcsCount !== undefined) cleanedUpdateData.pcsCount = parseInt(pcsCount);
