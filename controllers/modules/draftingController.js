@@ -1,5 +1,5 @@
 import DraftingService from "../../services/modules/draftingService.js";
-import { parseGoldCertificatePDF } from "../../utils/pdfParser.js";
+// import { parseGoldCertificatePDF } from "../../utils/pdfParser.js";
 import fs from "fs";
 import path from "path";
 
@@ -27,7 +27,7 @@ class DraftingController {
       }
 
       // Parse PDF
-      const parsedData = await parseGoldCertificatePDF(req.file.path);
+      // const parsedData = await parseGoldCertificatePDF(req.file.path);
 
       // Clean up temporary file after parsing
       if (req.file.path) {
@@ -37,7 +37,7 @@ class DraftingController {
       return res.status(200).json({
         success: true,
         message: "PDF parsed successfully",
-        data: parsedData,
+        data: null ,
       });
     } catch (error) {
       console.error("Error parsing PDF:", error);
