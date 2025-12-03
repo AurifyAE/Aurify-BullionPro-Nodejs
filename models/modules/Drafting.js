@@ -168,8 +168,7 @@ DraftingSchema.pre("save", async function (next) {
 });
 
 // Indexes for better query performance
-DraftingSchema.index({ transactionId: 1 });
-DraftingSchema.index({ draftNumber: 1 });
+
 DraftingSchema.index({ partyId: 1 });
 DraftingSchema.index({ status: 1 });
 DraftingSchema.index({ createdAt: -1 });
