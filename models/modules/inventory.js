@@ -35,6 +35,16 @@ const InventorySchema = new mongoose.Schema(
             enum: ["active", "sold", "reserved", "damaged"],
             default: "active",
         },
+        isDraft: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
+        draftId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Drafting",
+            default: null,
+        },
         remarks: {
             type: String,
             trim: true,

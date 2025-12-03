@@ -16,6 +16,7 @@ const inventoryLogSchema = new mongoose.Schema(
         "opening",
         "adjustment",
         "exportSale",
+        "draft",
         "importPurchase",
         "exportSaleReturn",
         "importPurchaseReturn",
@@ -82,6 +83,16 @@ const inventoryLogSchema = new mongoose.Schema(
     timestamp: {
       type: Date,
       default: Date.now,
+    },
+    isDraft: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    draftId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Drafting",
+      default: null,
     },
   },
   {

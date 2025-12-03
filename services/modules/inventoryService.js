@@ -195,10 +195,14 @@ class InventoryService {
   static async fetchInventoryById(inventoryId) {
     try {
       const logs = await InventoryLog.aggregate([
-        // 🎯 Step 1: Match only logs for that stockId
+        // 🎯 Step 1: Match only logs for that stockId (exclude drafts from balance calculation)
         {
           $match: {
-            stockCode: new mongoose.Types.ObjectId(inventoryId), // or just stockId if it's already ObjectId
+            stockCode: new mongoose.Types.ObjectId(inventoryId),
+            $or: [
+              { isDraft: { $ne: true } }, // Not a draft
+              { isDraft: { $exists: false } }, // Old entries without isDraft field
+            ],
           },
         },
 
@@ -296,7 +300,22 @@ class InventoryService {
         },
       ]);
 
-      return logs?.[0] || null;
+      // Also fetch draft logs separately (to show but not calculate)
+      const draftLogs = await InventoryLog.find({
+        stockCode: new mongoose.Types.ObjectId(inventoryId),
+        isDraft: true,
+      })
+        .populate("draftId", "draftNumber transactionId status")
+        .populate("party", "customerName accountCode")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const result = logs?.[0] || null;
+      if (result) {
+        result.draftLogs = draftLogs || []; // Add drafts separately
+      }
+
+      return result;
     } catch (err) {
       throw createAppError(
         "Failed to fetch inventory",

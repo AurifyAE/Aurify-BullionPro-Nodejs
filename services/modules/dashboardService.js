@@ -79,6 +79,10 @@ export class DashboardService {
           $match: {
             isActive: true,
             type: 'PARTY_GOLD_BALANCE',
+            $or: [
+              { isDraft: { $ne: true } }, // Not a draft
+              { isDraft: { $exists: false } }, // Old entries without isDraft field
+            ],
           },
         },
         {
@@ -133,6 +137,10 @@ export class DashboardService {
         $match: {
           isActive: true,
           type: 'GOLD_STOCK',
+          $or: [
+            { isDraft: { $ne: true } }, // Not a draft
+            { isDraft: { $exists: false } }, // Old entries without isDraft field
+          ],
         },
       },
       {

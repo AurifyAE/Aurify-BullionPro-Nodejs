@@ -38,6 +38,12 @@ const MetalStockSchema = new mongoose.Schema(
       ref: "KaratMaster",
       required: [true, "Karat is required"],
     },
+    standardPurity: {
+      type: Number,
+      min: [0, "Standard purity cannot be negative"],
+      max: [1, "Standard purity cannot exceed 1"],
+      default: null,
+    },
     pcs: {
       type: Boolean,
       default: false,
@@ -205,15 +211,17 @@ MetalStockSchema.pre("save", async function (next) {
       this.code = this.code.toUpperCase();
     }
 
-    // Sync standardPurity with KaratMaster
-    if (this.isModified("karat")) {
+    // Sync standardPurity with KaratMaster only if not manually set
+    if (this.isModified("karat") && !this.isModified("standardPurity")) {
       const KaratMaster = mongoose.model("KaratMaster");
       const karat = await KaratMaster.findById(this.karat);
       if (!karat) {
         return next(new Error("Invalid karat ID"));
       }
-      this.standardPurity = karat.standardPurity;
+      // Convert from percentage (0-100) to decimal (0-1) for MetalStock
+      this.standardPurity = karat.standardPurity !== undefined && karat.standardPurity !== null ? karat.standardPurity / 100 : null;
     }
+    // If standardPurity is manually set, it will be kept as is (already in decimal format 0-1)
 
     // Enforce pcsCount and totalValue to 0 when pcs is false
     if (!this.pcs) {

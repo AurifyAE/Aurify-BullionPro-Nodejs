@@ -583,10 +583,14 @@ export const getStatementByParty = async (req, res) => {
         .json({ success: false, message: "Party not found" });
     }
 
-    // Build filter
+    // Build filter - exclude drafts from balance calculations
     const filter = {
       party: partyId,
       isActive: true,
+      $or: [
+        { isDraft: { $ne: true } }, // Not a draft
+        { isDraft: { $exists: false } }, // Old entries without isDraft field
+      ],
       type: {
         $in: [
           "PARTY_GOLD_BALANCE",
@@ -602,16 +606,37 @@ export const getStatementByParty = async (req, res) => {
       },
     };
 
+    // Separate filter for drafts (to show but not calculate)
+    const draftFilter = {
+      party: partyId,
+      isActive: true,
+      isDraft: true,
+      type: {
+        $in: [
+          "PARTY_GOLD_BALANCE",
+          "PARTY_CASH_BALANCE",
+          "GOLD_STOCK",
+        ],
+      },
+    };
+
     // Date range filter
     if (startDate || endDate) {
       filter.transactionDate = {};
-      if (startDate) filter.transactionDate.$gte = new Date(startDate);
-      if (endDate) filter.transactionDate.$lte = new Date(endDate);
+      draftFilter.transactionDate = {};
+      if (startDate) {
+        filter.transactionDate.$gte = new Date(startDate);
+        draftFilter.transactionDate.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        filter.transactionDate.$lte = new Date(endDate);
+        draftFilter.transactionDate.$lte = new Date(endDate);
+      }
     }
 
     const skip = (page - 1) * limit;
 
-    // Fetch transactions
+    // Fetch transactions (excluding drafts for balance calculation)
     const registries = await Registry.find(filter)
       .populate("createdBy", "name email")
       .populate("party", "customerName accountCode")
@@ -619,12 +644,23 @@ export const getStatementByParty = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit));
 
+    // Fetch drafts separately (to show but not calculate in balance)
+    const drafts = await Registry.find(draftFilter)
+      .populate("createdBy", "name email")
+      .populate("party", "customerName accountCode")
+      .populate("draftId", "draftNumber transactionId status")
+      .sort({ transactionDate: 1, createdAt: 1 });
+
     const totalItems = await Registry.countDocuments(filter);
 
-    // Calculate opening balance (before start date)
+    // Calculate opening balance (before start date) - exclude drafts
     const openingFilter = {
       party: partyId,
       isActive: true,
+      $or: [
+        { isDraft: { $ne: true } },
+        { isDraft: { $exists: false } },
+      ],
       type: { $in: filter.type.$in },
     };
 
@@ -683,6 +719,22 @@ export const getStatementByParty = async (req, res) => {
       };
     });
 
+    // Process drafts separately (mark as draft, don't include in balance)
+    const processedDrafts = drafts.map((t) => ({
+      ...t.toObject(),
+      _id: t._id,
+      docDate: t.transactionDate.toLocaleDateString("en-GB"),
+      formattedDate: t.formattedDate,
+      cashDebit: 0,
+      cashCredit: 0,
+      goldDebit: t.goldDebit || t.debit || 0,
+      goldCredit: t.goldCredit || t.credit || 0,
+      cashBalance: null, // Drafts don't affect balance
+      goldBalance: null, // Drafts don't affect balance
+      isDraft: true,
+      draftInfo: t.draftId,
+    }));
+
     // Apply metal-only filter on processed data
     let finalData = processedData;
     if (metalOnly === "true") {
@@ -690,6 +742,11 @@ export const getStatementByParty = async (req, res) => {
         (t) => t.goldDebit > 0 || t.goldCredit > 0
       );
     }
+
+    // Append drafts at the end (they're shown but don't affect balance)
+    finalData = [...finalData, ...processedDrafts].sort(
+      (a, b) => new Date(a.transactionDate || a.docDate) - new Date(b.transactionDate || b.docDate)
+    );
 
     // Currency conversion logic (frontend will use this rate)
     const currencies = account.acDefinition?.currencies || [];
