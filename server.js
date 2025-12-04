@@ -110,7 +110,7 @@ app.use("/api/v1/draftings", draftingRoutes);
 // Global error handling middleware
 app.use(errorHandler);
 
-app.listen(port, () => {
+app.listen(port,() => {
   console.log("Server running !!!!!");
   console.log(`http://localhost:${port}`);
 });
