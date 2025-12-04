@@ -7,6 +7,47 @@ import Inventory from "../../models/modules/inventory.js";
 import mongoose from "mongoose";
 
 class DraftingService {
+  // Generate unique draft number with retry logic to handle duplicates
+  static async generateUniqueDraftNumber(maxRetries = 10) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // Get the highest draft number
+        const lastDraft = await Drafting.findOne(
+          { draftNumber: { $regex: /^DRF\d+$/ } },
+          { draftNumber: 1 }
+        )
+          .sort({ draftNumber: -1 })
+          .lean();
+
+        let nextNumber = 1;
+        if (lastDraft && lastDraft.draftNumber) {
+          // Extract number from last draft number (e.g., "DRF003" -> 3)
+          const lastNumber = parseInt(lastDraft.draftNumber.replace("DRF", ""), 10);
+          if (!isNaN(lastNumber)) {
+            nextNumber = lastNumber + 1;
+          }
+        }
+
+        const draftNumber = `DRF${String(nextNumber).padStart(3, "0")}`;
+
+        // Check if this draft number already exists (double-check)
+        const exists = await Drafting.findOne({ draftNumber }).lean();
+        if (!exists) {
+          return draftNumber;
+        }
+
+        // If exists, try next number
+        nextNumber++;
+      } catch (error) {
+        console.error(`Error generating draft number (attempt ${attempt + 1}):`, error);
+        if (attempt === maxRetries - 1) {
+          throw new Error("Failed to generate unique draft number after multiple attempts");
+        }
+      }
+    }
+    throw new Error("Failed to generate unique draft number");
+  }
+
   // Create a new draft
   static async createDraft(draftData, adminId) {
     const session = await mongoose.startSession();
@@ -15,29 +56,91 @@ class DraftingService {
     try {
       // Generate draft number if not provided
       if (!draftData.draftNumber) {
-        const count = await Drafting.countDocuments();
-        draftData.draftNumber = `DRF${String(count + 1).padStart(3, "0")}`;
+        draftData.draftNumber = await this.generateUniqueDraftNumber();
       }
 
-      const draft = new Drafting({
-        ...draftData,
-        createdBy: adminId,
-        status: draftData.status || "draft",
-      });
-
-      await draft.save({ session });
-
-      // Calculate pure weight
-      // Handle both percentage (0-100) and decimal (0-1) formats
+      // Calculate purity, karat, and pureWeight
       const grossWeight = parseFloat(draftData.grossWeight) || 0;
+      
+      // Get purity from draftData or calculate from goldAuPercent
       let purity = parseFloat(draftData.purity) || parseFloat(draftData.goldAuPercent) || 0;
       
-      // If purity is > 1, it's in percentage format, convert to decimal
+      // If purity is > 1, it's in percentage format, convert to decimal for calculation
+      let purityForCalculation = purity;
       if (purity > 1) {
-        purity = purity / 100;
+        purityForCalculation = purity / 100;
       }
       
-      const pureWeight = grossWeight * purity;
+      // Get karat from draftData or from stock
+      let karat = null;
+      if (draftData.karat) {
+        karat = parseFloat(draftData.karat);
+      } else if (draftData.resultKarat) {
+        karat = parseFloat(draftData.resultKarat);
+      } else if (draftData.stockId) {
+        // Try to get karat from stock
+        const stock = await MetalStock.findById(draftData.stockId)
+          .populate("karat", "karatCode standardPurity")
+          .session(session);
+        if (stock?.karat?.karatCode) {
+          karat = parseFloat(stock.karat.karatCode);
+        }
+      }
+      
+      // Calculate pure weight
+      const pureWeight = grossWeight * purityForCalculation;
+
+      // Normalize purity to decimal format (0-1) for storage
+      // Frontend may send it as percentage (0-100), but we always store as decimal (0-1)
+      const normalizedPurity = purityForCalculation;
+
+      // Save draft with retry logic for duplicate key errors
+      let draft = null;
+      let retryCount = 0;
+      const maxRetries = 5;
+
+      while (!draft && retryCount < maxRetries) {
+        try {
+          // If retry, generate a new draft number
+          if (retryCount > 0) {
+            draftData.draftNumber = await this.generateUniqueDraftNumber();
+            console.log(`Retrying with new draft number: ${draftData.draftNumber} (attempt ${retryCount + 1})`);
+          }
+
+          // Create new draft object with current draftData
+          draft = new Drafting({
+            ...draftData,
+            purity: normalizedPurity, // Always store as decimal (0-1)
+            karat: karat,
+            pureWeight: pureWeight,
+            createdBy: adminId,
+            status: draftData.status || "draft",
+          });
+
+          await draft.save({ session });
+        } catch (saveError) {
+          // Check if it's a duplicate key error for draftNumber
+          if (saveError.code === 11000 && saveError.keyPattern?.draftNumber) {
+            retryCount++;
+            if (retryCount >= maxRetries) {
+              throw new Error(
+                `Failed to create draft: Unable to generate a unique draft number after ${maxRetries} attempts. Please try again.`
+              );
+            }
+            // Reset draft to null so we can try again
+            draft = null;
+            // Generate a new draft number for next attempt
+            draftData.draftNumber = await this.generateUniqueDraftNumber();
+          } else {
+            // For other errors, throw immediately
+            throw saveError;
+          }
+        }
+      }
+
+      if (!draft) {
+        throw new Error("Failed to create draft: Unable to save after multiple attempts.");
+      }
     
       // Only create entries if status is "draft" and we have required data
       if (draft.status === "draft" && draftData.partyId && draftData.stockId && pureWeight > 0) {
@@ -60,11 +163,11 @@ class DraftingService {
           party: draftData.partyId,
           metalId: draftData.stockId,
           value: pureWeight,
-          goldCredit: pureWeight,
-          credit: pureWeight,
+          goldDebit: pureWeight,
+          debit: pureWeight,
           pureWeight: pureWeight,
           grossWeight: grossWeight,
-          purity: purity,
+          purity: purityForCalculation, // Use decimal format for registry
           costCenter: "DRAFT",
           reference: draft.voucherCode || draft.transactionId,
           isDraft: true,
@@ -99,7 +202,7 @@ class DraftingService {
 
       await session.commitTransaction();
       
-      // Populate and return the draft
+      // Populate and return the draft (after commit to avoid transaction errors)
       const populatedDraft = await Drafting.findById(draft._id)
         .populate("createdBy", "name email")
         .populate("partyId", "customerName accountCode name")
@@ -108,9 +211,26 @@ class DraftingService {
       
       return populatedDraft;
     } catch (error) {
-      await session.abortTransaction();
+      // Only abort if transaction hasn't been committed yet
+      if (session.inTransaction()) {
+        await session.abortTransaction();
+      }
       console.error("Error creating draft:", error);
-      throw error;
+      
+      // Handle specific MongoDB duplicate key errors
+      if (error.code === 11000) {
+        const field = error.keyPattern ? Object.keys(error.keyPattern)[0] : 'field';
+        const value = error.keyValue ? Object.values(error.keyValue)[0] : 'value';
+        throw new Error(
+          `A draft with this ${field} (${value}) already exists. Please try again or use a different value.`
+        );
+      }
+      
+      // Handle other errors
+      if (error.message) {
+        throw error;
+      }
+      throw new Error(error.message || "Failed to create draft. Please try again.");
     } finally {
       session.endSession();
     }
@@ -202,27 +322,94 @@ class DraftingService {
       const oldStatus = existingDraft.status;
       const newStatus = draftData.status || existingDraft.status;
 
+      // Calculate purity, karat, and pureWeight if relevant fields are provided
+      const grossWeight = parseFloat(draftData.grossWeight) !== undefined 
+        ? parseFloat(draftData.grossWeight) 
+        : parseFloat(existingDraft.grossWeight) || 0;
+      
+      // Get purity from draftData or use existing - only use if it's a valid positive number
+      let purity = 0;
+      if (draftData.purity !== undefined && draftData.purity !== null && parseFloat(draftData.purity) > 0) {
+        purity = parseFloat(draftData.purity);
+      } else if (draftData.goldAuPercent !== undefined && draftData.goldAuPercent !== null && parseFloat(draftData.goldAuPercent) > 0) {
+        purity = parseFloat(draftData.goldAuPercent);
+      } else if (existingDraft.purity !== undefined && existingDraft.purity !== null && parseFloat(existingDraft.purity) > 0) {
+        purity = parseFloat(existingDraft.purity);
+      } else if (existingDraft.goldAuPercent !== undefined && existingDraft.goldAuPercent !== null && parseFloat(existingDraft.goldAuPercent) > 0) {
+        purity = parseFloat(existingDraft.goldAuPercent);
+      }
+      
+      // If purity is > 1, it's in percentage format, convert to decimal for calculation
+      let purityForCalculation = purity;
+      if (purity > 1) {
+        purityForCalculation = purity / 100;
+      }
+      
+      // Get karat from draftData or from stock or use existing
+      let karat = null;
+      if (draftData.karat !== undefined && draftData.karat !== null && draftData.karat !== "") {
+        karat = parseFloat(draftData.karat);
+      } else if (draftData.resultKarat !== undefined && draftData.resultKarat !== null && draftData.resultKarat !== "") {
+        karat = parseFloat(draftData.resultKarat);
+      } else if (existingDraft.karat !== undefined && existingDraft.karat !== null) {
+        karat = existingDraft.karat;
+      } else if (existingDraft.resultKarat !== undefined && existingDraft.resultKarat !== null) {
+        karat = existingDraft.resultKarat;
+      } else if (draftData.stockId || existingDraft.stockId) {
+        // Try to get karat from stock
+        const stockId = draftData.stockId || existingDraft.stockId;
+        const stock = await MetalStock.findById(stockId)
+          .populate("karat", "karatCode standardPurity")
+          .session(session);
+        if (stock?.karat?.karatCode) {
+          karat = parseFloat(stock.karat.karatCode);
+        }
+      }
+      
+      // Calculate pure weight - only if we have valid purity
+      let pureWeight = 0;
+      if (purity > 0 && grossWeight > 0) {
+        pureWeight = grossWeight * purityForCalculation;
+      } else if (existingDraft.pureWeight !== undefined && existingDraft.pureWeight !== null && parseFloat(existingDraft.pureWeight) > 0) {
+        // Use existing pureWeight if available
+        pureWeight = parseFloat(existingDraft.pureWeight);
+      }
+
+      // Remove purity, karat, and pureWeight from draftData to prevent overriding our calculated values
+      const { purity: _, karat: __, pureWeight: ___, ...draftDataWithoutCalculatedFields } = draftData;
+
+      // Normalize purity to decimal format (0-1) for storage
+      // Frontend may send it as percentage (0-100), but we always store as decimal (0-1)
+      const normalizedPurity = purityForCalculation;
+
       // Update draft document FIRST with any provided data (including partyId, stockId, etc.)
       // This ensures required fields are available when confirming
-      const draft = await Drafting.findByIdAndUpdate(
+      await Drafting.findByIdAndUpdate(
         id,
         {
-          ...draftData,
+          ...draftDataWithoutCalculatedFields,
+          purity: normalizedPurity, // Always store as decimal (0-1)
+          karat: karat,
+          pureWeight: pureWeight,
           updatedBy: adminId,
           updatedAt: new Date(),
         },
         { new: true, runValidators: true, session }
-      )
+      );
+
+      // Reload the draft document to ensure we have the latest values (especially for float fields)
+      const draft = await Drafting.findById(id)
+        .session(session)
         .populate("createdBy", "name email")
         .populate("partyId", "customerName accountCode name")
-        .populate("stockId", "stockCode description standardPurity purity")
-        .lean();
+        .populate("stockId", "stockCode description standardPurity purity");
 
       // Handle status changes AFTER updating the draft document
       // This ensures required fields (partyId, stockId, etc.) are available
       if (oldStatus === "draft" && newStatus === "confirmed") {
         // Confirm draft - move from draft to confirmed
-        await this.confirmDraft(id, adminId, session);
+        // Pass the updated draft document to avoid refetching
+        await this.confirmDraft(id, adminId, session, draft);
       } else if (oldStatus === "draft" && newStatus === "rejected") {
         // Reject draft - remove draft entries
         await this.rejectDraft(id, adminId, session);
@@ -232,9 +419,21 @@ class DraftingService {
       }
 
       await session.commitTransaction();
-      return draft;
+      
+      // Fetch the draft again with lean() after commit to get plain object
+      // (don't use session since transaction is committed)
+      const result = await Drafting.findById(id)
+        .populate("createdBy", "name email")
+        .populate("partyId", "customerName accountCode name")
+        .populate("stockId", "stockCode description standardPurity purity")
+        .lean();
+      
+      return result;
     } catch (error) {
-      await session.abortTransaction();
+      // Only abort if transaction hasn't been committed yet
+      if (session.inTransaction()) {
+        await session.abortTransaction();
+      }
       console.error("Error updating draft:", error);
       throw error;
     } finally {
@@ -243,9 +442,14 @@ class DraftingService {
   }
 
   // Confirm draft - move from draft to confirmed
-  static async confirmDraft(draftId, adminId, session = null) {
+  static async confirmDraft(draftId, adminId, session = null, draftDocument = null) {
     try {
-      const draft = await Drafting.findById(draftId).session(session);
+      // Use provided draft document if available (from updateDraft), otherwise fetch it
+      let draft = draftDocument;
+      if (!draft) {
+        draft = await Drafting.findById(draftId).session(session);
+      }
+      
       if (!draft) throw new Error("Draft not found");
 
       // Log draft data for debugging
@@ -254,6 +458,8 @@ class DraftingService {
         stockId: draft.stockId,
         grossWeight: draft.grossWeight,
         purity: draft.purity,
+        pureWeight: draft.pureWeight,
+        karat: draft.karat,
         goldAuPercent: draft.goldAuPercent,
         status: draft.status
       });
@@ -274,47 +480,63 @@ class DraftingService {
         throw new Error(`Cannot confirm draft: Invalid grossWeight (${grossWeight})`);
       }
 
-      // Get stock to retrieve cost center and standardPurity
-      const stock = await MetalStock.findById(draft.stockId).populate("costCenter", "code").populate("karat", "standardPurity").session(session);
-      if (!stock) {
-        console.error(`Cannot confirm draft ${draftId}: Stock not found`);
-        throw new Error("Cannot confirm draft: Stock not found");
+      // Use stored pureWeight from draft, or calculate if missing (for backward compatibility)
+      // Handle float values properly - check if value exists and is > 0
+      let pureWeight = 0;
+      if (draft.pureWeight !== undefined && draft.pureWeight !== null) {
+        const parsedPureWeight = parseFloat(draft.pureWeight);
+        if (!isNaN(parsedPureWeight) && parsedPureWeight > 0) {
+          pureWeight = parsedPureWeight;
+        }
+      }
+      
+      // If pureWeight is still 0, try to calculate from purity
+      if (pureWeight <= 0) {
+        let purityValue = 0;
+        if (draft.purity !== undefined && draft.purity !== null) {
+          const parsedPurity = parseFloat(draft.purity);
+          if (!isNaN(parsedPurity) && parsedPurity > 0) {
+            purityValue = parsedPurity;
+          }
+        }
+        
+        if (purityValue <= 0 && draft.goldAuPercent !== undefined && draft.goldAuPercent !== null) {
+          const parsedGoldAu = parseFloat(draft.goldAuPercent);
+          if (!isNaN(parsedGoldAu) && parsedGoldAu > 0) {
+            purityValue = parsedGoldAu;
+          }
+        }
+        
+        // Convert to decimal if percentage format
+        if (purityValue > 1) {
+          purityValue = purityValue / 100;
+        }
+        
+        if (purityValue > 0 && grossWeight > 0) {
+          pureWeight = grossWeight * purityValue;
+          console.log(`Calculated pureWeight from purity: ${pureWeight} (purity: ${purityValue}, grossWeight: ${grossWeight})`);
+        } else {
+          console.error(`Cannot confirm draft ${draftId}: Invalid pureWeight (${pureWeight}) and cannot calculate from purity (${purityValue})`);
+          throw new Error(`Cannot confirm draft: Invalid pureWeight (${pureWeight})`);
+        }
       }
 
-      // Calculate purity with fallback to stock's standardPurity
-      // Try in order: draft.purity, draft.goldAuPercent, stock.karat.standardPurity, stock.standardPurity, stock.purity
+      // Get purity for registry (convert to decimal if needed)
       let purity = parseFloat(draft.purity) || parseFloat(draft.goldAuPercent) || 0;
-      
-      // If purity is still 0, try to get it from stock
-      if (purity <= 0) {
-        // Try stock's karat standardPurity (0-100 percentage)
-        if (stock.karat?.standardPurity) {
-          purity = parseFloat(stock.karat.standardPurity);
-        }
-        // Try stock's standardPurity (could be 0-1 decimal or 0-100 percentage)
-        else if (stock.standardPurity) {
-          purity = parseFloat(stock.standardPurity);
-        }
-        // Try stock's purity field
-        else if (stock.purity) {
-          purity = parseFloat(stock.purity);
-        }
-      }
-      
-      // If purity is > 1, it's in percentage format, convert to decimal
+      // If purity is > 1, it's in percentage format, convert to decimal for registry
       if (purity > 1) {
         purity = purity / 100;
       }
-      
-      const pureWeight = grossWeight * purity;
-
-      if (purity <= 0) {
-        console.error(`Cannot confirm draft ${draftId}: Invalid purity (${purity}) - checked draft.purity, draft.goldAuPercent, stock.karat.standardPurity, stock.standardPurity, stock.purity`);
-        throw new Error(`Cannot confirm draft: Invalid purity (${purity})`);
+      // If purity is still 0, calculate from pureWeight and grossWeight
+      if (purity <= 0 && grossWeight > 0) {
+        purity = pureWeight / grossWeight;
       }
-      if (pureWeight <= 0) {
-        console.error(`Cannot confirm draft ${draftId}: Invalid pureWeight (${pureWeight}) - grossWeight: ${grossWeight}, purity: ${purity}`);
-        throw new Error(`Cannot confirm draft: Invalid pureWeight (${pureWeight})`);
+
+      // Get stock to retrieve cost center
+      const stock = await MetalStock.findById(draft.stockId).populate("costCenter", "code").session(session);
+      if (!stock) {
+        console.error(`Cannot confirm draft ${draftId}: Stock not found`);
+        throw new Error("Cannot confirm draft: Stock not found");
       }
       const costCenterCode = stock?.costCenter?.code || stock?.costCenter || "GOLD_STOCK";
       
@@ -430,9 +652,13 @@ class DraftingService {
         const oldPureWeight = inventory.pureWeight || 0;
         inventory.grossWeight = oldGrossWeight + grossWeight;
         inventory.pureWeight = oldPureWeight + pureWeight;
-        // Update purity if not set or if it's different
-        if (!inventory.purity || inventory.purity !== purity) {
-          inventory.purity = purity;
+        // Update purity if not set (use stored purity from draft, convert to decimal if needed)
+        if (!inventory.purity) {
+          let draftPurity = parseFloat(draft.purity) || 0;
+          if (draftPurity > 1) {
+            draftPurity = draftPurity / 100;
+          }
+          inventory.purity = draftPurity;
         }
         inventory.updatedBy = adminId;
         await inventory.save({ session });
@@ -442,13 +668,18 @@ class DraftingService {
         console.log(`Creating new inventory for stock ${draft.stockId}...`);
         const stock = await MetalStock.findById(draft.stockId).session(session);
         if (stock) {
+          // Use stored purity from draft (convert to decimal if needed)
+          let draftPurity = parseFloat(draft.purity) || 0;
+          if (draftPurity > 1) {
+            draftPurity = draftPurity / 100;
+          }
           inventory = new Inventory({
             metal: draft.stockId,
             pcs: stock.pcs || false,
             pcsCount: stock.pcs ? (grossWeight / (stock.totalValue || 1)) : 0,
             grossWeight: grossWeight,
             pureWeight: pureWeight,
-            purity: purity,
+            purity: draftPurity,
             status: "active",
             createdBy: adminId,
           });
@@ -470,15 +701,8 @@ class DraftingService {
       const draft = await Drafting.findById(draftId).session(session);
       if (!draft) throw new Error("Draft not found");
 
-      const grossWeight = parseFloat(draft.grossWeight) || 0;
-      let purity = parseFloat(draft.purity) || parseFloat(draft.goldAuPercent) || 0;
-      
-      // If purity is > 1, it's in percentage format, convert to decimal
-      if (purity > 1) {
-        purity = purity / 100;
-      }
-      
-      const pureWeight = grossWeight * purity;
+      // Use stored pureWeight from draft (optimized - no recalculation needed)
+      const pureWeight = parseFloat(draft.pureWeight) || 0;
 
       if (!draft.partyId || !draft.stockId || pureWeight <= 0) {
         return; // No entries to reject
@@ -517,14 +741,8 @@ class DraftingService {
       if (!draft) throw new Error("Draft not found");
 
       const grossWeight = parseFloat(draft.grossWeight) || 0;
-      let purity = parseFloat(draft.purity) || parseFloat(draft.goldAuPercent) || 0;
-      
-      // If purity is > 1, it's in percentage format, convert to decimal
-      if (purity > 1) {
-        purity = purity / 100;
-      }
-      
-      const pureWeight = grossWeight * purity;
+      // Use stored pureWeight from draft (optimized - no recalculation needed)
+      const pureWeight = parseFloat(draft.pureWeight) || 0;
 
       if (!draft.partyId || !draft.stockId || pureWeight <= 0) {
         return;
@@ -589,14 +807,8 @@ class DraftingService {
       if (!draft) throw new Error("Draft not found");
 
       const grossWeight = parseFloat(draft.grossWeight) || 0;
-      let purity = parseFloat(draft.purity) || parseFloat(draft.goldAuPercent) || 0;
-      
-      // If purity is > 1, it's in percentage format, convert to decimal
-      if (purity > 1) {
-        purity = purity / 100;
-      }
-      
-      const pureWeight = grossWeight * purity;
+      // Use stored pureWeight from draft (optimized - no recalculation needed)
+      const pureWeight = parseFloat(draft.pureWeight) || 0;
 
       if (!draft.partyId || !draft.stockId || pureWeight <= 0) {
         console.warn(`Cannot reverse draft ${draftId}: Missing required data`);
@@ -681,7 +893,10 @@ class DraftingService {
       console.log(`Successfully deleted draft ${id} with status ${draft.status}`);
       return draft;
     } catch (error) {
-      await session.abortTransaction();
+      // Only abort if transaction hasn't been committed yet
+      if (session.inTransaction()) {
+        await session.abortTransaction();
+      }
       console.error("Error deleting draft:", error);
       throw error;
     } finally {

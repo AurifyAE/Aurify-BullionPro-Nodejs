@@ -29,6 +29,15 @@ const DraftingSchema = new mongoose.Schema(
     grossWeight: {
       type: Number,
     },
+    purity: {
+      type: Number,
+    },
+    karat: {
+      type: Number,
+    },
+    pureWeight: {
+      type: Number,
+    },
     // PDF Parsed Fields
     laboratoryName: {
       type: String,
@@ -120,7 +129,16 @@ const DraftingSchema = new mongoose.Schema(
     },
     // PDF file reference (if saved)
     pdfFile: {
-      type: String, // Path or S3 key
+      type: String, // Path or S3 key (for certificate PDF)
+    },
+    // Lab report PDF file reference (from step 1)
+    labReportPdf: {
+      url: {
+        type: String, // Path or S3 URL
+      },
+      key: {
+        type: String, // S3 key or filename
+      },
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
