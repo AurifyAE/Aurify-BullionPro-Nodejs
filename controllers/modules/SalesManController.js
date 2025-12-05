@@ -1,5 +1,5 @@
 // src/controllers/SalesmanController.js
-import SalesmanService from "../../services/modules/SalesmanService.js";
+import SalesmanService from "../../services/modules/SalesManService.js";
 import { createAppError } from "../../utils/errorHandler.js";
 
 export class SalesmanController {
