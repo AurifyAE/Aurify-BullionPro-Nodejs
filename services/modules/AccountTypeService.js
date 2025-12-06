@@ -158,7 +158,7 @@ class AccountTypeService {
           isDefault: !!c.isDefault,
           lastUpdated: new Date(),
         }));
-  
+
         debtorData.balances = {
           goldBalance: {
             totalGrams: 0,
@@ -184,6 +184,14 @@ class AccountTypeService {
         {
           path: "acDefinition.branches.branch",
           select: "branchCode branchName address",
+        },
+        {
+          path: "bankDetails.pdcIssue",
+          select: "_id accountCode customerName",
+        },
+        {
+          path: "bankDetails.pdcReceipt",
+          select: "_id accountCode customerName",
         },
         {
           path: "balances.cashBalance.currency",
@@ -232,7 +240,8 @@ class AccountTypeService {
 
       if (
         normalizedCustomerName &&
-        normalizedCustomerName !== (tradeDebtor.customerName || "").toUpperCase()
+        normalizedCustomerName !==
+          (tradeDebtor.customerName || "").toUpperCase()
       ) {
         const nameExists = await AccountType.isCustomerNameExists(
           normalizedCustomerName,
@@ -330,18 +339,14 @@ class AccountTypeService {
           .filter((kyc) => kyc.documentType && kyc.documentNumber)
           .map((kycUpdate) => {
             const normalizedDocId =
-              kycUpdate._id?.toString?.() ||
-              kycUpdate.id?.toString?.() ||
-              "";
-            const normalizedDocType = kycUpdate.documentType?.toString?.() || "";
+              kycUpdate._id?.toString?.() || kycUpdate.id?.toString?.() || "";
+            const normalizedDocType =
+              kycUpdate.documentType?.toString?.() || "";
             const normalizedDocNumber =
               kycUpdate.documentNumber?.toString?.() || "";
             const old =
               oldKyc.find((k) => {
-                const oldId =
-                  k._id?.toString?.() ||
-                  k.id?.toString?.() ||
-                  "";
+                const oldId = k._id?.toString?.() || k.id?.toString?.() || "";
                 if (normalizedDocId && oldId && oldId === normalizedDocId) {
                   return true;
                 }
@@ -393,17 +398,20 @@ class AccountTypeService {
           totalValue: 0,
           lastUpdated: new Date(),
         };
-        const existingTotalOutstanding = tradeDebtor.balances?.totalOutstanding || 0;
+        const existingTotalOutstanding =
+          tradeDebtor.balances?.totalOutstanding || 0;
 
         // Fetch currency codes for all currencies in the update
-        const currencyIds = updateData.acDefinition.currencies.map(
-          (c) => c.currency?._id || c.currency
-        ).filter(Boolean);
-        
+        const currencyIds = updateData.acDefinition.currencies
+          .map((c) => c.currency?._id || c.currency)
+          .filter(Boolean);
+
         const currencies = await CurrencyMaster.find({
-          _id: { $in: currencyIds }
-        }).select('_id currencyCode').lean();
-        
+          _id: { $in: currencyIds },
+        })
+          .select("_id currencyCode")
+          .lean();
+
         // Create a map of currencyId -> currencyCode for quick lookup
         const currencyCodeMap = {};
         currencies.forEach((curr) => {
@@ -414,17 +422,16 @@ class AccountTypeService {
         const newCashBalance = updateData.acDefinition.currencies.map((c) => {
           const currencyId = c.currency?._id || c.currency;
           const currencyIdStr = currencyId?.toString();
-          
+
           // Get currency code from map or existing balance
           const currencyCode = currencyCodeMap[currencyIdStr] || null;
-          
+
           // Find existing balance for this currency
-          const existingBalance = existingCashBalance.find(
-            (cb) => {
-              const cbCurrencyId = cb.currency?.toString?.() || cb.currency?.toString() || '';
-              return cbCurrencyId === currencyIdStr;
-            }
-          );
+          const existingBalance = existingCashBalance.find((cb) => {
+            const cbCurrencyId =
+              cb.currency?.toString?.() || cb.currency?.toString() || "";
+            return cbCurrencyId === currencyIdStr;
+          });
 
           if (existingBalance) {
             // Preserve existing balance data, only update isDefault if changed
@@ -456,7 +463,8 @@ class AccountTypeService {
             lastUpdated: existingGoldBalance.lastUpdated || new Date(),
           },
           totalOutstanding: existingTotalOutstanding,
-          lastBalanceUpdate: tradeDebtor.balances?.lastBalanceUpdate || new Date(),
+          lastBalanceUpdate:
+            tradeDebtor.balances?.lastBalanceUpdate || new Date(),
         };
       }
 

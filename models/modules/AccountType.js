@@ -302,10 +302,14 @@ const AccountSchema = new mongoose.Schema(
           isPrimary: { type: Boolean, default: false },
           // New PDC related fields
           pdcIssue: {
-            type: String,
-            trim: true,
-            // enum: ['Bank', 'Customer', 'Supplier', 'Vendor', ''],
-            default: "",
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Account",
+            default: null,
+          },
+          pdcReceipt: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Account",
+            default: null,
           },
           maturityDate: {
             type: Date,
