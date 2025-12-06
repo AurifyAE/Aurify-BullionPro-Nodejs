@@ -152,9 +152,16 @@ class RegistryService {
       .sort({ createdAt: 1 })
       .lean();
 
+
     if (!registries || registries.length === 0) return null;
 
-    const main = registries[0];
+    let main = null;
+    const infoRegistries = registries.filter((r) => { 
+      if (r.type === "PARTY_CASH_BALANCE" || r.type === "PARTY_GOLD_BALANCE") {
+        main = r;
+      }
+    })   
+  
     const party = main.party;
 
     // -----------------------------------------------------
@@ -326,21 +333,30 @@ class RegistryService {
     // -----------------------------------------------------
     // 📌 5) SUPPLIER SUMMARY ENTRY
     // -----------------------------------------------------
-    if (party) {
-      const netCurrDr = partyCurrencyDebit - partyCurrencyCredit;
-      const netCurrCr = partyCurrencyCredit - partyCurrencyDebit;
-      const netGoldDr = partyGoldDebit - partyGoldCredit;
-      const netGoldCr = partyGoldCredit - partyGoldDebit;
+    // -----------------------------------------------------
+// 📌 5) SUPPLIER SUMMARY ENTRY (ALWAYS SHOW)
+// -----------------------------------------------------
+if (party) {
+  const netCurr = partyCurrencyDebit - partyCurrencyCredit;
+  const netGold = partyGoldDebit - partyGoldCredit;
 
-      addLine(
-        "SUPPLIER",
-        party.accountCode || "SUP001",
-        netCurrDr > 0 ? netCurrDr : 0,
-        netCurrCr > 0 ? netCurrCr : 0,
-        netGoldDr > 0 ? netGoldDr : 0,
-        netGoldCr > 0 ? netGoldCr : 0
-      );
-    }
+  const currencyDebit = netCurr > 0 ? netCurr : 0;
+  const currencyCredit = netCurr < 0 ? Math.abs(netCurr) : 0;
+
+  const metalDebit = netGold > 0 ? netGold : 0;
+  const metalCredit = netGold < 0 ? Math.abs(netGold) : 0;
+
+  // Supplier entry must ALWAYS be added – bypass duplicate prevention
+  lines.push({
+    accCode: party.accountCode || "SUP001",
+    description: "SUPPLIER",
+    currencyDebit: Number(currencyDebit.toFixed(2)),
+    currencyCredit: Number(currencyCredit.toFixed(2)),
+    metalDebit: Number(metalDebit.toFixed(3)),
+    metalCredit: Number(metalCredit.toFixed(3)),
+  });
+}
+
 
     // -----------------------------------------------------
     // 📌 6) TOTALS
@@ -401,7 +417,12 @@ class RegistryService {
 
     if (!registries || registries.length === 0) return null;
 
-    const main = registries[0];
+      let main = null;
+    const infoRegistries = registries.filter((r) => { 
+      if (r.type === "PARTY_CASH_BALANCE" || r.type === "PARTY_GOLD_BALANCE") {
+        main = r;
+      }
+    }) 
     const party = main.party;
 
     // -----------------------------------------------------
@@ -606,7 +627,12 @@ class RegistryService {
 
     if (!registries || registries.length === 0) return null;
 
-    const main = registries[0];
+      let main = null;
+    const infoRegistries = registries.filter((r) => { 
+      if (r.type === "PARTY_CASH_BALANCE" || r.type === "PARTY_GOLD_BALANCE") {
+        main = r;
+      }
+    }) 
     const party = main.party;
 
     // -----------------------------------------------------
