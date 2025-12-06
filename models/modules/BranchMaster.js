@@ -131,12 +131,19 @@ const BranchSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    
+
     enableMobileApp: {
       type: Boolean,
       default: false,
     },
-
+    negativeStockControl: {
+      type: Boolean,
+      default: true,
+    },
+    vatControl: {
+      type: Boolean,
+      default: true,
+    },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",

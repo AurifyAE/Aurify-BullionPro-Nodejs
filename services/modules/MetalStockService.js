@@ -2,19 +2,25 @@ import MetalStock from "../../models/modules/MetalStock.js";
 import Registry from "../../models/modules/Registry.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import InventoryService from "./inventoryService.js";
-
-
+import MetalTransaction from "../../models/modules/MetalTransaction.js";
 class MetalStockService {
   // Helper method to create Registry entries for stock operations
-  static async createRegistryEntries(metalStock, operation, adminId, previousValues = null) {
+  static async createRegistryEntries(
+    metalStock,
+    operation,
+    adminId,
+    previousValues = null
+  ) {
     try {
       const registryEntries = [];
-      
+
       // Get the populated metal stock data
-      const populatedMetalStock = await MetalStock.findById(metalStock._id).populate([
+      const populatedMetalStock = await MetalStock.findById(
+        metalStock._id
+      ).populate([
         { path: "karat", select: "standardPurity karatCode" },
         { path: "costCenter", select: "code" },
-        { path: "metalType", select: "code description" }
+        { path: "metalType", select: "code description" },
       ]);
 
       if (!populatedMetalStock) {
@@ -22,15 +28,17 @@ class MetalStockService {
       }
 
       const standardPurity = populatedMetalStock.karat?.standardPurity || 0;
-      
+
       // Check if standard purity is valid (> 0)
       if (standardPurity <= 0) {
-        console.warn(`Skipping registry creation - Invalid standard purity: ${standardPurity} for stock: ${populatedMetalStock.code}`);
+        console.warn(
+          `Skipping registry creation - Invalid standard purity: ${standardPurity} for stock: ${populatedMetalStock.code}`
+        );
         return [];
       }
 
       const costCenterCode = populatedMetalStock.costCenter?.code || "DEFAULT";
-      
+
       // Calculate values based on operation type
       let stockValue = 0;
       let goldValue = 0;
@@ -52,15 +60,20 @@ class MetalStockService {
           case "UPDATE":
             const oldStockValue = previousValues?.totalValue || 0;
             const oldGoldValue = oldStockValue * (standardPurity / 100);
-            
+
             stockValue = populatedMetalStock.totalValue - oldStockValue;
-            goldValue = (populatedMetalStock.totalValue * (standardPurity / 100)) - oldGoldValue;
+            goldValue =
+              populatedMetalStock.totalValue * (standardPurity / 100) -
+              oldGoldValue;
             description = `Stock updated: ${populatedMetalStock.code} (Pieces)`;
             break;
 
           case "DELETE":
             stockValue = -populatedMetalStock.totalValue;
-            goldValue = -(populatedMetalStock.totalValue * (standardPurity / 100));
+            goldValue = -(
+              populatedMetalStock.totalValue *
+              (standardPurity / 100)
+            );
             description = `Stock deleted: ${populatedMetalStock.code} (Pieces)`;
             break;
 
@@ -135,7 +148,7 @@ class MetalStockService {
 
       // Save all registry entries
       if (registryEntries.length > 0) {
-        await Promise.all(registryEntries.map(entry => entry.save()));
+        await Promise.all(registryEntries.map((entry) => entry.save()));
       }
 
       return registryEntries;
@@ -315,9 +328,9 @@ class MetalStockService {
     try {
       // Check if metal stock exists
       const existingMetalStock = await MetalStock.findById(id).populate([
-        { path: "karat", select: "standardPurity" }
+        { path: "karat", select: "standardPurity" },
       ]);
-      
+
       if (!existingMetalStock) {
         throw createAppError(
           "Metal stock not found",
@@ -331,7 +344,7 @@ class MetalStockService {
         totalValue: existingMetalStock.totalValue,
         pcs: existingMetalStock.pcs,
         pcsCount: existingMetalStock.pcsCount,
-        standardPurity: existingMetalStock.karat?.standardPurity || 0
+        standardPurity: existingMetalStock.karat?.standardPurity || 0,
       };
 
       // Check if code is being updated and if it already exists
@@ -373,18 +386,22 @@ class MetalStockService {
       ]);
 
       // Create Registry entries for stock update (only if values changed)
-      const shouldCreateRegistry = 
-        (updatedMetalStock.pcs && (
-          previousValues.totalValue !== updatedMetalStock.totalValue 
+      const shouldCreateRegistry =
+        (updatedMetalStock.pcs &&
+          previousValues.totalValue !== updatedMetalStock.totalValue) ||
           // previousValues.pcsCount !== updatedMetalStock.pcsCount
-        )) ||
-        (!updatedMetalStock.pcs && (
-          previousValues.standardPurity !== (updatedMetalStock.karat?.standardPurity || 0)
-        )) ||
+        (!updatedMetalStock.pcs &&
+          previousValues.standardPurity !==
+            (updatedMetalStock.karat?.standardPurity || 0)) ||
         previousValues.pcs !== updatedMetalStock.pcs;
 
       if (shouldCreateRegistry) {
-        await this.createRegistryEntries(updatedMetalStock, "UPDATE", adminId, previousValues);
+        await this.createRegistryEntries(
+          updatedMetalStock,
+          "UPDATE",
+          adminId,
+          previousValues
+        );
       }
 
       return updatedMetalStock;
@@ -399,31 +416,33 @@ class MetalStockService {
       throw error;
     }
   }
-  
+
   /* ---------------- DELETE (soft) ---------------- */
-  static async deleteMetalStock(id, adminId) {
-    try {
-      const metalStock = await MetalStock.findById(id);
-      if (!metalStock) {
-        throw createAppError("Metal stock not found", 404, "METAL_STOCK_NOT_FOUND");
-      }
-  
-      await this.createRegistryEntries(metalStock, "DELETE", adminId);
-  
-      const deletedMetalStock = await MetalStock.findByIdAndUpdate(
-        id,
-        {
-          status: "inactive",
-          isActive: false,
-          updatedBy: adminId,
-        },
-        { new: true }
+  static async deleteMetalStock(stockId, adminId) {
+    // Step 1: Check if stock is used inside ANY transaction
+    const existingTransaction = await MetalTransaction.findOne({
+      "stockItems.stockCode": stockId,
+      isActive: true,
+    }).select("_id voucherNumber transactionType");
+
+    if (existingTransaction) {
+      throw createAppError(
+        `This stock cannot be deleted because it is used in transaction ${
+          existingTransaction.voucherNumber || existingTransaction._id
+        }`,
+        400,
+        "STOCK_IN_TRANSACTION"
       );
-  
-      return deletedMetalStock;
-    } catch (error) {
-      throw error;
     }
+
+    // Step 2: Safe to delete
+    const deletedStock = await MetalStock.findByIdAndDelete(stockId);
+
+    if (!deletedStock) {
+      throw createAppError("Metal stock not found", 404, "NOT_FOUND");
+    }
+
+    return deletedStock;
   }
 
   // Hard delete metal stock (permanent deletion)
@@ -494,9 +513,9 @@ class MetalStockService {
   static async updateStockQuantity(id, updateData, adminId) {
     try {
       const metalStock = await MetalStock.findById(id).populate([
-        { path: "karat", select: "standardPurity" }
+        { path: "karat", select: "standardPurity" },
       ]);
-      
+
       if (!metalStock) {
         throw createAppError(
           "Metal stock not found",
@@ -511,7 +530,7 @@ class MetalStockService {
       if (metalStock.pcs) {
         // For piece-based stock
         const { pcsCount, totalValue } = updateData;
-        
+
         if (pcsCount !== undefined && pcsCount < 0) {
           throw createAppError(
             "Piece count cannot be negative",
@@ -531,17 +550,16 @@ class MetalStockService {
         previousValues = {
           totalValue: metalStock.totalValue,
           pcsCount: metalStock.pcsCount,
-          pcs: metalStock.pcs
+          pcs: metalStock.pcs,
         };
 
         if (pcsCount !== undefined) updateFields.pcsCount = pcsCount;
         if (totalValue !== undefined) updateFields.totalValue = totalValue;
-
       } else {
         // For weight-based stock - only track standardPurity changes
         previousValues = {
           standardPurity: metalStock.karat?.standardPurity || 0,
-          pcs: metalStock.pcs
+          pcs: metalStock.pcs,
         };
       }
 
@@ -556,7 +574,12 @@ class MetalStockService {
       ]);
 
       // Create Registry entries for quantity/weight update
-      await this.createRegistryEntries(updatedMetalStock, "UPDATE", adminId, previousValues);
+      await this.createRegistryEntries(
+        updatedMetalStock,
+        "UPDATE",
+        adminId,
+        previousValues
+      );
 
       return updatedMetalStock;
     } catch (error) {

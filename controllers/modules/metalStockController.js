@@ -33,6 +33,7 @@ export const createMetalStock = async (req, res, next) => {
       excludeVAT,
       vatOnMaking,
       wastage,
+      includeVAT
     } = req.body;
     // Validate required fields
     if (!metalType || !code || !description || !karat) {
@@ -82,6 +83,7 @@ export const createMetalStock = async (req, res, next) => {
       excludeVAT: excludeVAT || false,
       vatOnMaking: vatOnMaking || false,
       wastage: wastage || false,
+      includeVAT: includeVAT !== undefined ? includeVAT : true,
     };
 
     const result = await MetalStockService.createMetalStock(metalStockData, req.admin.id);

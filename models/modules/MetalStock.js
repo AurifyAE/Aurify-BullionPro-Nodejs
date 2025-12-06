@@ -151,6 +151,10 @@ const MetalStockSchema = new mongoose.Schema(
       type: Boolean,
       default:false
     },
+      includeVAT:{
+      type: Boolean,
+      default:true
+    },
     vatOnMaking: {
       type: Boolean,
       default:false
