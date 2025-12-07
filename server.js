@@ -55,7 +55,9 @@ const corsOptions = {
       "http://localhost:8080",
       "https://bullion-system-react2.onrender.com",
       "https://altawasel.bullionpro.net",
-      "https://aurify.bullionpro.net"
+      "https://aurify.bullionpro.net",
+      "https://uat.aurify.bullionpro.net",
+      "https://switz.bullionpro.net"
     ];
 
     if (!origin || allowedOrigins.includes(origin)) {
