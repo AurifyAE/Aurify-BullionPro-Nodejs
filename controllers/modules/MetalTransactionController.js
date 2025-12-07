@@ -82,7 +82,7 @@ export const createMetalTransaction = async (req, res, next) => {
         "METAL-PURCHASE",
         "METAL-SALE",
         "PURCHASE-RETURN",
-        "SALE-RETURN",
+        "SALES-RETURN",
         "IMPORT-PURCHASE",
         "EXPORT-SALE",
         "IMPORT-PURCHASE-RETURN",

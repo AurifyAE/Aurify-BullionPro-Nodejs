@@ -152,18 +152,17 @@ class RegistryService {
       .sort({ createdAt: 1 })
       .lean();
 
-
     if (!registries || registries.length === 0) return null;
 
     let main = null;
-    const infoRegistries = registries.filter((r) => { 
+    const infoRegistries = registries.filter((r) => {
       if (r.type === "PARTY_CASH_BALANCE" || r.type === "PARTY_GOLD_BALANCE") {
         main = r;
       }
-    })   
-  
-    const party = main.party;
+    });
 
+    const party = main.party;
+  
     // -----------------------------------------------------
     // 📌 FILTER OUT HEDGE REGISTRIES (reference starts with "H")
     // -----------------------------------------------------
@@ -334,29 +333,28 @@ class RegistryService {
     // 📌 5) SUPPLIER SUMMARY ENTRY
     // -----------------------------------------------------
     // -----------------------------------------------------
-// 📌 5) SUPPLIER SUMMARY ENTRY (ALWAYS SHOW)
-// -----------------------------------------------------
-if (party) {
-  const netCurr = partyCurrencyDebit - partyCurrencyCredit;
-  const netGold = partyGoldDebit - partyGoldCredit;
+    // 📌 5) SUPPLIER SUMMARY ENTRY (ALWAYS SHOW)
+    // -----------------------------------------------------
+    if (party) {
+      const netCurr = partyCurrencyDebit - partyCurrencyCredit;
+      const netGold = partyGoldDebit - partyGoldCredit;
 
-  const currencyDebit = netCurr > 0 ? netCurr : 0;
-  const currencyCredit = netCurr < 0 ? Math.abs(netCurr) : 0;
+      const currencyDebit = netCurr > 0 ? netCurr : 0;
+      const currencyCredit = netCurr < 0 ? Math.abs(netCurr) : 0;
 
-  const metalDebit = netGold > 0 ? netGold : 0;
-  const metalCredit = netGold < 0 ? Math.abs(netGold) : 0;
+      const metalDebit = netGold > 0 ? netGold : 0;
+      const metalCredit = netGold < 0 ? Math.abs(netGold) : 0;
 
-  // Supplier entry must ALWAYS be added – bypass duplicate prevention
-  lines.push({
-    accCode: party.accountCode || "SUP001",
-    description: "SUPPLIER",
-    currencyDebit: Number(currencyDebit.toFixed(2)),
-    currencyCredit: Number(currencyCredit.toFixed(2)),
-    metalDebit: Number(metalDebit.toFixed(3)),
-    metalCredit: Number(metalCredit.toFixed(3)),
-  });
-}
-
+      // Supplier entry must ALWAYS be added – bypass duplicate prevention
+      lines.push({
+        accCode: party.accountCode || "SUP001",
+        description: "SUPPLIER",
+        currencyDebit: Number(currencyDebit.toFixed(2)),
+        currencyCredit: Number(currencyCredit.toFixed(2)),
+        metalDebit: Number(metalDebit.toFixed(3)),
+        metalCredit: Number(metalCredit.toFixed(3)),
+      });
+    }
 
     // -----------------------------------------------------
     // 📌 6) TOTALS
@@ -417,12 +415,12 @@ if (party) {
 
     if (!registries || registries.length === 0) return null;
 
-      let main = null;
-    const infoRegistries = registries.filter((r) => { 
+    let main = null;
+    const infoRegistries = registries.filter((r) => {
       if (r.type === "PARTY_CASH_BALANCE" || r.type === "PARTY_GOLD_BALANCE") {
         main = r;
       }
-    }) 
+    });
     const party = main.party;
 
     // -----------------------------------------------------
@@ -627,12 +625,12 @@ if (party) {
 
     if (!registries || registries.length === 0) return null;
 
-      let main = null;
-    const infoRegistries = registries.filter((r) => { 
-      if (r.type === "PARTY_CASH_BALANCE" || r.type === "PARTY_GOLD_BALANCE") {
+    let main = null;
+    const infoRegistries = registries.filter((r) => {
+      if (r.type === "PARTY_PURCHASE_FIX" || r.type === "PARTY_SALE_FIX") {
         main = r;
       }
-    }) 
+    });
     const party = main.party;
 
     // -----------------------------------------------------
@@ -1414,15 +1412,15 @@ if (party) {
   static async getRegistriesByPartyId(partyId, page = 1, limit = 10) {
     try {
       // Filter for non-draft entries (for balance calculation)
-      const filter = { 
-        party: partyId, 
+      const filter = {
+        party: partyId,
         isActive: true,
         $or: [
           { isDraft: { $ne: true } }, // Not a draft
           { isDraft: { $exists: false } }, // Old entries without isDraft field
         ],
       };
-      
+
       // Separate filter for drafts (to show but not calculate)
       const draftFilter = {
         party: partyId,

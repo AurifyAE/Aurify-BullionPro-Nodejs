@@ -171,25 +171,25 @@ const AccountSchema = new mongoose.Schema(
             maxlength: 200,
             default: null,
           },
-          city: { type: String, trim: true, maxlength: 50, default: null },
-          country: { type: String, trim: true, maxlength: 50, default: null },
-          zipCode: { type: String, trim: true, maxlength: 20, default: null },
+          city: { type: String, trim: true, default: null },
+          country: { type: String, trim: true, default: null },
+          zipCode: { type: String, trim: true,  default: null },
           phoneNumber1: {
             type: String,
             trim: true,
-            match: /^[0-9]{10,15}$/,
+            // match: /^[0-9]{10,15}$/,
             default: null,
           },
           phoneNumber2: {
             type: String,
             trim: true,
-            match: /^[0-9]{10,15}$/,
+            // match: /^[0-9]{10,15}$/,
             default: null,
           },
           phoneNumber3: {
             type: String,
             trim: true,
-            match: /^[0-9]{10,15}$/,
+            // match: /^[0-9]{10,15}$/,
             default: null,
           },
           email: {
@@ -205,7 +205,7 @@ const AccountSchema = new mongoose.Schema(
           telephone: {
             type: String,
             trim: true,
-            match: /^[0-9]{10,15}$/,
+            // match: /^[0-9]{10,15}$/,
             default: null,
           },
           website: { type: String, trim: true, default: null },
@@ -239,7 +239,7 @@ const AccountSchema = new mongoose.Schema(
           mobile: {
             type: String,
             trim: true,
-            match: /^[0-9]{10,15}$/,
+            // match: /^[0-9]{10,15}$/,
             default: null,
           },
           document: {
