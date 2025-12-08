@@ -13,8 +13,9 @@ export const createKarat = async (req, res, next) => {
       isScrap,
     } = req.body;
 
-    minimum = minimum ?? 0;
-    maximum = maximum ?? 0;
+    // Set defaults for optional min/max fields
+    minimum = minimum !== undefined && minimum !== null && minimum !== '' ? minimum : 0;
+    maximum = maximum !== undefined && maximum !== null && maximum !== '' ? maximum : 0;
 
 
     // Validation
@@ -22,28 +23,36 @@ export const createKarat = async (req, res, next) => {
       !karatCode ||
       !division ||
       !description ||
-      minimum === undefined ||
-      maximum === undefined ||
       standardPurity === undefined
     ) {
       throw createAppError(
-        "All fields are required: karatCode, division, description, standardPurity, minimum, maximum",
+        "All fields are required: karatCode, division, description, standardPurity",
         400,
         "REQUIRED_FIELDS_MISSING"
       );
     }
 
-    // Validate numeric fields
-    if (isNaN(standardPurity) || isNaN(minimum) || isNaN(maximum)) {
+    // Validate numeric fields - min/max are optional
+    if (isNaN(standardPurity)) {
       throw createAppError(
-        "Standard purity, minimum, and maximum must be valid numbers",
+        "Standard purity must be a valid number",
         400,
         "INVALID_NUMERIC_VALUES"
       );
     }
-    if (isNaN(standardPurity)) {
+    
+    // Validate min/max only if provided
+    if (minimum !== undefined && minimum !== null && minimum !== '' && isNaN(minimum)) {
       throw createAppError(
-        "Standard purity, minimum, and maximum must be valid numbers",
+        "Minimum must be a valid number",
+        400,
+        "INVALID_NUMERIC_VALUES"
+      );
+    }
+    
+    if (maximum !== undefined && maximum !== null && maximum !== '' && isNaN(maximum)) {
+      throw createAppError(
+        "Maximum must be a valid number",
         400,
         "INVALID_NUMERIC_VALUES"
       );
@@ -79,26 +88,14 @@ export const createKarat = async (req, res, next) => {
         );
       }
 
-      // Also validate min < max
-      if (minimum >= maximum) {
-
+      // Also validate min <= max (allow equal values)
+      if (minimum > maximum) {
         throw createAppError(
-          "Minimum value must be less than maximum value",
+          "Minimum value must be less than or equal to maximum value",
           400,
           "INVALID_MIN_MAX_RANGE"
         );
       }
-    }
-
-
-    // Common validation: minimum must be less than maximum
-    if (!(minimum === 0 && maximum === 0) && minimum >= maximum) {
-
-      throw createAppError(
-        "Minimum value must be less than maximum value",
-        400,
-        "INVALID_MIN_MAX_RANGE"
-      );
     }
 
     const karatData = {
@@ -240,13 +237,13 @@ export const updateKarat = async (req, res, next) => {
       updateData.maximum = parseFloat(updateData.maximum);
     }
 
-    // Validate min/max relationship
+    // Validate min/max relationship - allow equal values
     const finalMinimum = updateData.minimum !== undefined ? updateData.minimum : existingKarat.minimum;
     const finalMaximum = updateData.maximum !== undefined ? updateData.maximum : existingKarat.maximum;
 
-    if (!(finalMinimum === 0 && finalMaximum === 0) && finalMinimum >= finalMaximum) {
+    if (!(finalMinimum === 0 && finalMaximum === 0) && finalMinimum > finalMaximum) {
       throw createAppError(
-        "Minimum value must be less than maximum value",
+        "Minimum value must be less than or equal to maximum value",
         400,
         "INVALID_MIN_MAX_RANGE"
       );

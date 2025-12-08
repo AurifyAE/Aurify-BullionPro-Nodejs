@@ -1,5 +1,6 @@
 import MetalRateMaster from "../../models/modules/MetalRateMaster.js";
 import DivisionMaster from "../../models/modules/DivisionMaster.js";
+import MetalTransaction from "../../models/modules/MetalTransaction.js";
 import { createAppError } from "../../utils/errorHandler.js";
 
 class MetalRateMasterService {
@@ -199,6 +200,8 @@ class MetalRateMasterService {
   // Delete metal rate (soft delete)
   static async deleteMetalRate(id) {
     try {
+      console.log(id);
+      console.log("deleteMetalRate");
       const metalRate = await MetalRateMaster.findById(id);
       if (!metalRate) {
         throw createAppError(
@@ -208,13 +211,29 @@ class MetalRateMasterService {
         );
       }
 
-      // Soft delete by updating status and isActive
-      metalRate.status = "inactive";
-      metalRate.isActive = false;
-      await metalRate.save();
+      // Check if this metal rate type is being used in any MetalTransaction stockItems array
+      const isUsedInTransaction = await MetalTransaction.findOne({
+        stockItems: {
+          $elemMatch: {
+            metalRate: id
+          }
+        }
+      });
+
+      if (isUsedInTransaction) {
+        throw createAppError(
+          "Cannot delete metal rate type. It is currently being used in metal transactions.",
+          400,
+          "METAL_RATE_IN_USE"
+        );
+      }
+
+
+      await MetalRateMaster.findByIdAndDelete(id);
 
       return { message: "Metal rate deleted successfully" };
     } catch (error) {
+      console.log(error);
       throw error;
     }
   }

@@ -51,19 +51,42 @@ const DocumentTypeSchema = new mongoose.Schema(
 // === AUTO-GENERATE CODE: First 2 letters + 3 random digits ===
 DocumentTypeSchema.pre("save", async function (next) {
   if (this.isNew && this.name && !this.code) {
-    const prefix = this.name.trim().slice(0, 2).toUpperCase();
-    let code;
-    let isUnique = false;
+    try {
+      // Extract first 2 alphabetic characters from name
+      let prefix = this.name.trim().replace(/[^A-Za-z]/g, "").slice(0, 2).toUpperCase();
+      
+      // Fallback if name doesn't have 2 letters
+      if (prefix.length < 2) {
+        prefix = "DT"; // Default prefix for Document Type
+      }
 
-    // Keep generating until we get a unique code
-    while (!isUnique) {
-      const randomNum = Math.floor(100 + Math.random() * 900); // 100-999
-      code = `${prefix}${randomNum}`;
-      const exists = await this.constructor.findOne({ code });
-      if (!exists) isUnique = true;
+      let code;
+      let isUnique = false;
+      let attempts = 0;
+      const maxAttempts = 100; // Prevent infinite loop
+
+      // Keep generating until we get a unique code
+      while (!isUnique && attempts < maxAttempts) {
+        const randomNum = Math.floor(100 + Math.random() * 900); // 100-999
+        code = `${prefix}${String(randomNum).padStart(3, '0')}`;
+        
+        // Check if this code already exists
+        const exists = await this.constructor.findOne({ code });
+        if (!exists) {
+          isUnique = true;
+        } else {
+          attempts++;
+        }
+      }
+
+      if (!isUnique) {
+        return next(new Error("Unable to generate unique code after multiple attempts. Please try again."));
+      }
+
+      this.code = code;
+    } catch (error) {
+      return next(error);
     }
-
-    this.code = code;
   }
   next();
 });

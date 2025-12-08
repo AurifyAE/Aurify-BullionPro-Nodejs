@@ -59,20 +59,48 @@ const SalesmanSchema = new mongoose.Schema(
 // Auto-generate code: First 2-3 letters of name + 3 digits
 SalesmanSchema.pre("save", async function (next) {
   if (this.isNew && this.name && !this.code) {
-    let prefix = this.name.trim().replace(/[^A-Z]/gi, "").slice(0, 3).toUpperCase();
-    if (prefix.length < 2) prefix = "SM"; // fallback
+    try {
+      // Extract only alphabetic characters from name and take first 2-3 letters
+      let prefix = this.name.trim().replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase();
+      
+      // Fallback to "SM" if we don't have at least 2 letters
+      if (prefix.length < 2) {
+        prefix = "SM";
+      } else if (prefix.length === 2) {
+        // Keep 2 letters for format: XX123
+        prefix = prefix.slice(0, 2);
+      } else {
+        // Use 3 letters for format: XXX123 (but match pattern allows 2-3)
+        prefix = prefix.slice(0, 3);
+      }
 
-    let code;
-    let isUnique = false;
+      let code;
+      let isUnique = false;
+      let attempts = 0;
+      const maxAttempts = 100; // Prevent infinite loop
 
-    while (!isUnique) {
-      const randomNum = String(Math.floor(100 + Math.random() * 900)); // 100-999
-      code = `${prefix}${randomNum}`;
-      const exists = await this.constructor.findOne({ code });
-      if (!exists) isUnique = true;
+      // Keep generating until we get a unique code
+      while (!isUnique && attempts < maxAttempts) {
+        const randomNum = Math.floor(100 + Math.random() * 900); // 100-999
+        code = `${prefix}${String(randomNum).padStart(3, '0')}`;
+        
+        // Check if this code already exists
+        const exists = await this.constructor.findOne({ code });
+        if (!exists) {
+          isUnique = true;
+        } else {
+          attempts++;
+        }
+      }
+
+      if (!isUnique) {
+        return next(new Error("Unable to generate unique code after multiple attempts. Please try again."));
+      }
+
+      this.code = code;
+    } catch (error) {
+      return next(error);
     }
-
-    this.code = code;
   }
   next();
 });

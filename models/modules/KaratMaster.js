@@ -32,13 +32,11 @@ const KaratMasterSchema = new mongoose.Schema(
     },
     minimum: {
       type: Number,
-      default:0,
-      required: [true, "Minimum value is required"],
+      default: 0,
     },
     maximum: {
       type: Number,
-      default:0,
-      required: [true, "Maximum value is required"],
+      default: 0,
     },
     isScrap: {
       type: Boolean,

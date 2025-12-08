@@ -3,6 +3,8 @@ import Registry from "../../models/modules/Registry.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import InventoryService from "./inventoryService.js";
 import MetalTransaction from "../../models/modules/MetalTransaction.js";
+import Inventory from "../../models/modules/inventory.js";
+import InventoryLog from "../../models/modules/InventoryLog.js";
 class MetalStockService {
   // Helper method to create Registry entries for stock operations
   static async createRegistryEntries(
@@ -435,12 +437,28 @@ class MetalStockService {
       );
     }
 
-    // Step 2: Safe to delete
+    // Step 2: Delete all related Inventory records
+    const inventoryDeleteResult = await Inventory.deleteMany({
+      metal: stockId
+    });
+
+    // Step 3: Delete all related InventoryLog records
+    const inventoryLogDeleteResult = await InventoryLog.deleteMany({
+      stockCode: stockId
+    });
+
+    // Step 4: Delete the MetalStock itself
     const deletedStock = await MetalStock.findByIdAndDelete(stockId);
 
     if (!deletedStock) {
       throw createAppError("Metal stock not found", 404, "NOT_FOUND");
     }
+
+    // Log the deletion results (optional, for debugging)
+    console.log(`[DELETE_STOCK] Deleted stock ${stockId}:`, {
+      inventoryRecords: inventoryDeleteResult.deletedCount,
+      inventoryLogs: inventoryLogDeleteResult.deletedCount
+    });
 
     return deletedStock;
   }
@@ -457,8 +475,30 @@ class MetalStockService {
         );
       }
 
+      // Delete all related Inventory records
+      const inventoryDeleteResult = await Inventory.deleteMany({
+        metal: id
+      });
+
+      // Delete all related InventoryLog records
+      const inventoryLogDeleteResult = await InventoryLog.deleteMany({
+        stockCode: id
+      });
+
+      // Delete the MetalStock itself
       await MetalStock.findByIdAndDelete(id);
-      return { message: "Metal stock permanently deleted" };
+
+      // Log the deletion results (optional, for debugging)
+      console.log(`[HARD_DELETE_STOCK] Deleted stock ${id}:`, {
+        inventoryRecords: inventoryDeleteResult.deletedCount,
+        inventoryLogs: inventoryLogDeleteResult.deletedCount
+      });
+
+      return { 
+        message: "Metal stock permanently deleted",
+        deletedInventory: inventoryDeleteResult.deletedCount,
+        deletedInventoryLogs: inventoryLogDeleteResult.deletedCount
+      };
     } catch (error) {
       throw error;
     }

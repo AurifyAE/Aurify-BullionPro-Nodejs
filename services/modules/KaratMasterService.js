@@ -1,5 +1,6 @@
 import KaratMaster from "../../models/modules/KaratMaster.js";
 import DivisionMaster from "../../models/modules/DivisionMaster.js";
+import MetalStock from "../../models/modules/MetalStock.js";
 import { createAppError } from "../../utils/errorHandler.js";
 
 class KaratMasterService {
@@ -213,6 +214,21 @@ class KaratMasterService {
         throw createAppError("Karat not found", 404, "KARAT_NOT_FOUND");
       }
 
+      // Check if karat is used in any MetalStock
+      const isUsedInStock = await MetalStock.findOne({
+        karat: id,
+        isActive: { $ne: false },
+        status: { $ne: "inactive" }
+      });
+
+      if (isUsedInStock) {
+        throw createAppError(
+          "Cannot delete karat. It is currently being used in metal stock.",
+          400,
+          "KARAT_IN_USE"
+        );
+      }
+
       // Soft delete by updating status
       const deletedKarat = await KaratMaster.findByIdAndUpdate(
         id,
@@ -228,7 +244,7 @@ class KaratMasterService {
 
       return deletedKarat;
     } catch (error) {
-      if (error.message === "Karat not found") {
+      if (error.message === "Karat not found" || error.code === "KARAT_IN_USE") {
         throw error;
       }
       throw createAppError("Error deleting karat", 500, "DELETE_ERROR");
