@@ -66,6 +66,15 @@ const entrySchema = new mongoose.Schema(
       type: Date,
       required: [true, "Voucher date is required"],
     },
+    invoiceReference: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    invoiceDate: {
+      type: Date,
+      default: null,
+    },
     party: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Account",
@@ -225,6 +234,43 @@ const entrySchema = new mongoose.Schema(
         cardChargeAmount: {
           type: Number,
           default: 0,
+        },
+        // FX Rate fields for gain/loss calculation
+        fxRate: {
+          type: Number,
+          default: 1,
+        },
+        fxBaseRate: {
+          type: Number,
+          default: 1,
+        },
+        fxGain: {
+          type: Number,
+          default: 0,
+        },
+        fxLoss: {
+          type: Number,
+          default: 0,
+        },
+        // PDC (Post-Dated Cheque) fields
+        isPDC: {
+          type: Boolean,
+          default: false,
+        },
+        pdcStatus: {
+          type: String,
+          enum: ["pending", "cleared", "bounced", null],
+          default: null,
+        },
+        pdcIssueAccount: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Account",
+          default: null,
+        },
+        pdcReceiptAccount: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Account",
+          default: null,
         },
       },
     ],

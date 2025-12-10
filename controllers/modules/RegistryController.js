@@ -180,6 +180,34 @@ export const getRegistryFixingTransaction = async (req, res, next) => {
     next(error);
   }
 };
+
+// Get Cash/PDC Entry Audit Trail
+export const getCashEntryAuditTrail = async (req, res, next) => {
+  try {
+    const { entryTransactionId } = req.params;
+
+    const registry = await RegistryService.generateCashEntryAuditTrail(
+      entryTransactionId
+    );
+
+    if (!registry) {
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Cash entry audit trail retrieved successfully",
+      data: registry,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Update registry
 export const updateRegistry = async (req, res, next) => {
   try {

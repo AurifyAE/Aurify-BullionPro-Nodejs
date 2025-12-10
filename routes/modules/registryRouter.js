@@ -20,6 +20,7 @@ import {
   getRegistryAuditTrailById,
   getRegistryHedgeAuditTrailById,
   getRegistryFixingTransaction,
+  getCashEntryAuditTrail,
 } from "../../controllers/modules/RegistryController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import {
@@ -118,4 +119,6 @@ router.delete(
 router.get("/transaction/:metalTransactionId", getRegistryAuditTrailById);
 router.get("/Hedge/:metalTransactionId", getRegistryHedgeAuditTrailById);
 router.get("/fixing/:fixingTransactionId", getRegistryFixingTransaction);
+router.get("/cash-entry/:entryTransactionId", getCashEntryAuditTrail);
+
 export default router;

@@ -1504,6 +1504,194 @@ class RegistryService {
       throw error;
     }
   }
+
+  // ------------------------------------------------------------------------
+  // GENERATE AUDIT TRAIL FOR CASH/PDC ENTRY TRANSACTIONS
+  // ------------------------------------------------------------------------
+  static async generateCashEntryAuditTrail(entryTransactionId) {
+    if (!mongoose.Types.ObjectId.isValid(entryTransactionId)) return null;
+
+    // Fetch registries linked to entry transaction
+    const registries = await Registry.find({
+      EntryTransactionId: new mongoose.Types.ObjectId(entryTransactionId),
+      isActive: true,
+    }).populate("party", "customerName accountCode");
+
+    if (!registries.length) return null;
+
+    // Find main party entry
+    let main = registries[0];
+    registries.forEach((r) => {
+      if (r.type === "PARTY_CASH_BALANCE") {
+        main = r;
+      }
+    });
+    const party = main.party;
+
+    // -----------------------------------------------------
+    // 📌 FILTER CASH/PDC ENTRIES
+    // -----------------------------------------------------
+    const cashRegistries = registries.filter((r) => {
+      return ["PARTY_CASH_BALANCE", "PDC_ENTRY", "BULLION_ENTRY"].includes(r.type);
+    });
+
+    if (cashRegistries.length === 0) {
+      return {
+        entryTransactionId,
+        transactionId: main.transactionId,
+        reference: main.reference,
+        date: main.transactionDate,
+        party: {
+          name: party?.customerName || "Walk-in Customer",
+          code: party?.accountCode || "PARTY001",
+        },
+        entries: [],
+        totals: {
+          currencyDebit: 0,
+          currencyCredit: 0,
+        },
+      };
+    }
+
+    // -----------------------------------------------------
+    // 📌 1) TYPE RULES FOR CASH/PDC ENTRIES
+    // -----------------------------------------------------
+    const TYPE_RULES = {
+      PARTY_CASH: {
+        types: ["PARTY_CASH_BALANCE"],
+        mode: "party",
+      },
+      BULLION_COMBINED: {
+        types: ["PDC_ENTRY", "BULLION_ENTRY"],
+        mode: "combined",
+      },
+    };
+
+    function getTypeMode(type) {
+      for (const rule of Object.values(TYPE_RULES)) {
+        if (rule.types.includes(type)) return rule.mode;
+      }
+      return null;
+    }
+
+    // -----------------------------------------------------
+    // 📌 2) RESULT LINES HOLDER
+    // -----------------------------------------------------
+    const lines = [];
+    const addedKeySet = new Set();
+
+    const addLine = (desc, accCode, currDr = 0, currCr = 0) => {
+      const key = `${desc}-${accCode}-${currDr}-${currCr}`;
+      if (addedKeySet.has(key)) return;
+      addedKeySet.add(key);
+
+      lines.push({
+        accCode,
+        description: desc,
+        currencyDebit: Number(currDr.toFixed(2)),
+        currencyCredit: Number(currCr.toFixed(2)),
+      });
+    };
+
+    // -----------------------------------------------------
+    // 📌 3) PARTY SUMMARY ACCUMULATORS
+    // -----------------------------------------------------
+    let partyCurrencyDebit = 0;
+    let partyCurrencyCredit = 0;
+
+    // -----------------------------------------------------
+    // 📌 4) PROCESS EACH REGISTRY
+    // -----------------------------------------------------
+    for (const reg of cashRegistries) {
+      const t = reg.type;
+      const mode = getTypeMode(t);
+
+      // Use type-based description like generateVoucherByMetalTransaction
+      const desc = t.replace(/[_-]/g, " ").toUpperCase();
+      const prefix = t
+        .replace(/[^A-Za-z]/g, "")
+        .substring(0, 3)
+        .toUpperCase();
+      const accCode = reg.party?.accountCode || prefix + "001";
+
+      switch (mode) {
+        case "party":
+          partyCurrencyDebit += reg.cashDebit || reg.debit || 0;
+          partyCurrencyCredit += reg.cashCredit || reg.credit || 0;
+          break;
+
+        case "combined": // PDC_ENTRY, BULLION_ENTRY
+          addLine(
+            desc,
+            accCode,
+            reg.cashDebit || reg.debit || 0,
+            reg.cashCredit || reg.credit || 0
+          );
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    // -----------------------------------------------------
+    // 📌 5) SUPPLIER SUMMARY ENTRY (ALWAYS SHOW)
+    // -----------------------------------------------------
+    if (party) {
+      const netCurr = partyCurrencyDebit - partyCurrencyCredit;
+
+      const currencyDebit = netCurr > 0 ? netCurr : 0;
+      const currencyCredit = netCurr < 0 ? Math.abs(netCurr) : 0;
+
+      // Supplier entry must ALWAYS be added – bypass duplicate prevention
+      lines.push({
+        accCode: party.accountCode || "SUP001",
+        description: "SUPPLIER",
+        currencyDebit: Number(currencyDebit.toFixed(2)),
+        currencyCredit: Number(currencyCredit.toFixed(2)),
+      });
+    }
+
+    // -----------------------------------------------------
+    // 📌 6) TOTALS
+    // -----------------------------------------------------
+    const totals = lines.reduce(
+      (a, l) => {
+        a.currencyDebit += l.currencyDebit;
+        a.currencyCredit += l.currencyCredit;
+        return a;
+      },
+      { currencyDebit: 0, currencyCredit: 0 }
+    );
+
+    const currencyBalance = totals.currencyDebit - totals.currencyCredit;
+
+    function normalizeBalance(value, decimals = 2) {
+      if (Math.abs(value) < 0.5) return 0;
+      return Number(value.toFixed(decimals));
+    }
+
+    // -----------------------------------------------------
+    // 📌 7) FINAL RETURN RESPONSE
+    // -----------------------------------------------------
+    return {
+      entryTransactionId,
+      transactionId: main.transactionId,
+      reference: main.reference,
+      date: main.transactionDate,
+      transactionType: main.transactionType,
+      party: {
+        name: party?.customerName || "Walk-in Customer",
+        code: party?.accountCode || "PARTY001",
+      },
+      entries: lines,
+      totals: {
+        currencyDebit: Number(totals.currencyDebit.toFixed(2)),
+        currencyCredit: Number(totals.currencyCredit.toFixed(2)),
+        currencyBalance: normalizeBalance(currencyBalance, 2),
+      },
+    };
+  }
 }
 
 export default RegistryService;
