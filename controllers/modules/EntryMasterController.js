@@ -34,7 +34,6 @@ const isPostDated = (date) => {
 
 const createEntry = async (req, res) => {
   try {
-    console.log(req.body)
     const { type, stocks, cash, invoiceReference, invoiceDate, ...rest } = req.body;
 
     if (!validTypes.includes(type))
@@ -353,8 +352,8 @@ const listHandler = (type) => async (req, res) => {
 const clearPDC = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log("first")
     const { cashItemIndex } = req.body;
+
     if (cashItemIndex === undefined || cashItemIndex === null) {
       return res.status(400).json({
         success: false,
