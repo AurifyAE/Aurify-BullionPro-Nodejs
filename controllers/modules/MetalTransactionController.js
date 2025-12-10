@@ -92,6 +92,45 @@ export const createMetalTransaction = async (req, res, next) => {
       throw createAppError("Invalid voucherType", 400, "INVALID_VOUCHER_TYPE");
     }
 
+    // === HELPER: Calculate FXGain and FXLoss based on transaction type ===
+    const calculateForexGainLoss = (transactionType, bidAmountAED, userAmountAED) => {
+      const bidValue = toNumber(bidAmountAED, 0);
+      const userValue = toNumber(userAmountAED, 0);
+      
+      // Normalize transaction type
+      const normalizedType = transactionType?.toLowerCase() || "";
+      
+      // Determine if it's a purchase or sale type
+      const isPurchaseType = [
+        "purchase",
+        "purchasereturn",
+        "importpurchase",
+        "importpurchasereturn"
+      ].includes(normalizedType);
+      
+      const isSaleType = [
+        "sale",
+        "salereturn",
+        "exportsale",
+        "exportsalereturn"
+      ].includes(normalizedType);
+      
+      let diff = 0;
+      
+      if (isPurchaseType) {
+        // For purchase: FXGain when bid > user, FXLoss when bid < user
+        diff = bidValue - userValue;
+      } else if (isSaleType) {
+        // For sale: FXGain when user > bid, FXLoss when user < bid
+        diff = userValue - bidValue;
+      }
+      
+      return {
+        FXGain: diff > 0 ? diff : 0,
+        FXLoss: diff < 0 ? Math.abs(diff) : 0,
+      };
+    };
+
     // === MAP STOCK ITEMS ===
     const mappedStockItems = stockItems.map((item) => {
       if (!item.stockCode)
@@ -113,11 +152,17 @@ export const createMetalTransaction = async (req, res, next) => {
         vat,
         itemTotal,
         remarks,
-        FXGain,
-        FXLoss,
+        forexGain,
         currencyCode,
         currencyRate,
       } = item;
+
+      // Calculate FXGain and FXLoss from forexGain data
+      const { FXGain, FXLoss } = calculateForexGainLoss(
+        transactionType,
+        forexGain?.bidAmountAED,
+        forexGain?.userAmountAED
+      );
 
       return {
         stockCode: trim(stockCode),
@@ -324,6 +369,45 @@ export const updateMetalTransaction = async (req, res, next) => {
       throw createAppError("stockItems must be non-empty array", 400);
     }
 
+    // === HELPER: Calculate FXGain and FXLoss based on transaction type ===
+    const calculateForexGainLoss = (transactionType, bidAmountAED, userAmountAED) => {
+      const bidValue = toNumber(bidAmountAED, 0);
+      const userValue = toNumber(userAmountAED, 0);
+      
+      // Normalize transaction type
+      const normalizedType = transactionType?.toLowerCase() || "";
+      
+      // Determine if it's a purchase or sale type
+      const isPurchaseType = [
+        "purchase",
+        "purchasereturn",
+        "importpurchase",
+        "importpurchasereturn"
+      ].includes(normalizedType);
+      
+      const isSaleType = [
+        "sale",
+        "salereturn",
+        "exportsale",
+        "exportsalereturn"
+      ].includes(normalizedType);
+      
+      let diff = 0;
+      
+      if (isPurchaseType) {
+        // For purchase: FXGain when bid > user, FXLoss when bid < user
+        diff = bidValue - userValue;
+      } else if (isSaleType) {
+        // For sale: FXGain when user > bid, FXLoss when user < bid
+        diff = userValue - bidValue;
+      }
+      
+      return {
+        FXGain: diff > 0 ? diff : 0,
+        FXLoss: diff < 0 ? Math.abs(diff) : 0,
+      };
+    };
+
     // === MAP STOCK ITEMS ===
     const mappedStockItems = stockItems.map((item) => {
       if (!item.stockCode)
@@ -345,9 +429,17 @@ export const updateMetalTransaction = async (req, res, next) => {
         vat,
         itemTotal,
         remarks,
+        forexGain,
         currencyCode,
         currencyRate,
       } = item;
+
+      // Calculate FXGain and FXLoss from forexGain data
+      const { FXGain, FXLoss } = calculateForexGainLoss(
+        transactionType,
+        forexGain?.bidAmountAED,
+        forexGain?.userAmountAED
+      );
 
       return {
         stockCode: trim(stockCode),
@@ -374,6 +466,8 @@ export const updateMetalTransaction = async (req, res, next) => {
           bidValue: toNumber(metalRate?.bidValue),
         },
         metalAmount: toNumber(itemTotal?.baseAmount),
+        FXGain: toNumber(FXGain),
+        FXLoss: toNumber(FXLoss),
         makingUnit: {
           unit: makingUnit?.unit || "percentage",
           makingRate: toNumber(makingUnit?.makingRate),

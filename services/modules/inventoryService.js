@@ -4,6 +4,7 @@ import Registry from "../../models/modules/Registry.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import MetalStock from "../../models/modules/MetalStock.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
+import BranchMaster from "../../models/modules/BranchMaster.js";
 
 class InventoryService {
   static async fetchAllInventory() {
@@ -506,6 +507,8 @@ class InventoryService {
 static async updateInventory(transaction, isSale, admin, session = null) {
   try {
     const updated = [];
+    // Cache branch negative stock control settings to avoid repeated queries
+    const branchNegativeStockCache = new Map();
 
     for (const item of transaction.stockItems || []) {
       const metalId = new mongoose.Types.ObjectId(item.stockCode?._id || item.stockCode);
@@ -540,13 +543,45 @@ static async updateInventory(transaction, isSale, admin, session = null) {
       const pcsDelta = factor * (item.pieces || 0);
       const weightDelta = factor * (item.grossWeight || 0);
 
-      // Validate stock levels
-      if (inventory.pcsCount + pcsDelta < 0 || inventory.grossWeight + weightDelta < 0) {
-        throw createAppError(
-          `Insufficient stock for metal: ${metal.code}`,
-          400,
-          "INSUFFICIENT_STOCK"
-        );
+      // Check branch's negative stock control setting (with caching)
+      let allowNegativeStock = true; // Default to true (allow negative stock)
+      
+      if (metal.branch) {
+        const branchId = metal.branch.toString();
+        
+        // Check cache first
+        if (!branchNegativeStockCache.has(branchId)) {
+          try {
+            const branch = await BranchMaster.findById(metal.branch).session(session);
+            if (branch) {
+              // If negativeStockControl is explicitly false, don't allow negative stock
+              // If it's true or undefined, allow negative stock (default behavior)
+              allowNegativeStock = branch.negativeStockControl !== false;
+              branchNegativeStockCache.set(branchId, allowNegativeStock);
+            } else {
+              // Branch not found, default to allowing negative stock
+              branchNegativeStockCache.set(branchId, true);
+            }
+          } catch (branchError) {
+            console.warn(`⚠️ Failed to fetch branch for negative stock control: ${branchError.message}`);
+            // Default to allowing negative stock if branch fetch fails
+            branchNegativeStockCache.set(branchId, true);
+          }
+        } else {
+          // Use cached value
+          allowNegativeStock = branchNegativeStockCache.get(branchId);
+        }
+      }
+
+      // Validate stock levels only if negative stock is not allowed
+      if (!allowNegativeStock) {
+        if (inventory.pcsCount + pcsDelta < 0 || inventory.grossWeight + weightDelta < 0) {
+          throw createAppError(
+            `Insufficient stock for metal: ${metal.code}`,
+            400,
+            "INSUFFICIENT_STOCK"
+          );
+        }
       }
 
       // Apply deltas
