@@ -422,6 +422,7 @@ export const updateMetalTransaction = async (req, res, next) => {
         purityStd,
         purity,
         pureWeightStd,
+        pieces,
         pureWeight,
         purityDifference,
         weightInOz,
@@ -449,7 +450,8 @@ export const updateMetalTransaction = async (req, res, next) => {
         grossWeight: toNumber(grossWeight),
         purityStd: toNumber(purityStd, 0.999),
         purity: toNumber(purity),
-        pureWeightStd: toNumber(pureWeightStd),
+        pureWeightStd: toNumber(pureWeightStd), 
+        pieces: toNumber(pieces),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
         purityDifference: toNumber(purityDifference)
           ? toNumber(purityDifference)
