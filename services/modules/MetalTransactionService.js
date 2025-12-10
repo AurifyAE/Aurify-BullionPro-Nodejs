@@ -512,7 +512,12 @@ class MetalTransactionService {
       price: totals.goldValue,
       metalType: totals.metalRate,
     };
-
+    const purchaseTypes = [
+      "Purchase",
+      "Purchase-Return",
+      "Import-Purchase",
+      "Import-Purchase-Return",
+    ];
     const prefix =
       transactionType === "Purchase" ||
       transactionType === "Import-Purchase-Return" ||
@@ -520,12 +525,15 @@ class MetalTransactionService {
         ? "HSM"
         : "HPM";
     const transactionId = await generateUniqueTransactionId(prefix);
+    const hedgeType = purchaseTypes.includes(transactionType)
+      ? "SALE-HEDGE" // we hedge against selling action
+      : "PURCHASE-HEDGE";
 
     const fixingData = {
       transactionId,
       metalTransactionId,
       partyId: party._id,
-      type: transactionType === "Purchase" ? "SALE-HEDGE" : "PURCHASE-HEDGE",
+      type: hedgeType,
       referenceNumber: voucherNumber,
       voucherNumber: hedgeVoucherNo,
       orders: [order],
