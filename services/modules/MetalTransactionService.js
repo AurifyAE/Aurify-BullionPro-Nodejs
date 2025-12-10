@@ -515,8 +515,8 @@ class MetalTransactionService {
 
     const prefix =
       transactionType === "Purchase" ||
-        transactionType === "Import-Purchase-Return" ||
-        transactionType === "Purchase-Return"
+      transactionType === "Import-Purchase-Return" ||
+      transactionType === "Purchase-Return"
         ? "HSM"
         : "HPM";
     const transactionId = await generateUniqueTransactionId(prefix);
@@ -595,37 +595,37 @@ class MetalTransactionService {
     console.log("++++++++++++++++++++++++++++");
     return mode === "fix"
       ? this.buildPurchaseFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType,
-        dealOrderId
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType,
+          dealOrderId
+        )
       : this.buildPurchaseUnfixEntries(
-        hedgeVoucherNo, // 1
-        hedge, // 2
-        totals, // 3
-        metalTransactionId, // 4
-        party, // 5
-        baseTransactionId, // 6
-        voucherDate, // 7
-        voucherNumber, // 8
-        adminId, // 9
-        item, // 10
-        partyCurrency, // 11
-        totalSummary, // 12
-        otherCharges, // 13
-        transactionType,
-        dealOrderId
-      );
+          hedgeVoucherNo, // 1
+          hedge, // 2
+          totals, // 3
+          metalTransactionId, // 4
+          party, // 5
+          baseTransactionId, // 6
+          voucherDate, // 7
+          voucherNumber, // 8
+          adminId, // 9
+          item, // 10
+          partyCurrency, // 11
+          totalSummary, // 12
+          otherCharges, // 13
+          transactionType,
+          dealOrderId
+        );
   }
 
   static async buildImportPurchaseEntries(
@@ -680,37 +680,37 @@ class MetalTransactionService {
     console.log("++++++++++++++++++++++++++++");
     return mode === "fix"
       ? this.buildImportPurchaseFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType,
-        dealOrderId
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType,
+          dealOrderId
+        )
       : this.buildImportPurchaseUnfixEntries(
-        hedgeVoucherNo, // 1
-        hedge, // 2
-        totals, // 3
-        metalTransactionId, // 4
-        party, // 5
-        baseTransactionId, // 6
-        voucherDate, // 7
-        voucherNumber, // 8
-        adminId, // 9
-        item, // 10
-        partyCurrency, // 11
-        totalSummary, // 12
-        otherCharges, // 13
-        transactionType,
-        dealOrderId
-      );
+          hedgeVoucherNo, // 1
+          hedge, // 2
+          totals, // 3
+          metalTransactionId, // 4
+          party, // 5
+          baseTransactionId, // 6
+          voucherDate, // 7
+          voucherNumber, // 8
+          adminId, // 9
+          item, // 10
+          partyCurrency, // 11
+          totalSummary, // 12
+          otherCharges, // 13
+          transactionType,
+          dealOrderId
+        );
   }
 
   static async buildExportSaleEntries(
@@ -762,35 +762,35 @@ class MetalTransactionService {
 
     return mode === "fix"
       ? this.buildExportSaleFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType
+        )
       : this.buildExportSaleUnfixEntries(
-        hedgeVoucherNo,
-        hedge,
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType
-      );
+          hedgeVoucherNo,
+          hedge,
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType
+        );
   }
 
   static async buildSaleEntries(
@@ -843,37 +843,37 @@ class MetalTransactionService {
 
     return mode === "fix"
       ? this.buildSaleFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType,
-        dealOrderId
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType,
+          dealOrderId
+        )
       : this.buildSaleUnfixEntries(
-        hedgeVoucherNo,
-        hedge,
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType,
-        dealOrderId
-      );
+          hedgeVoucherNo,
+          hedge,
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType,
+          dealOrderId
+        );
   }
 
   static async buildImportPurchaseReturnEntries(
@@ -924,35 +924,35 @@ class MetalTransactionService {
     }
     return mode === "fix"
       ? this.buildImportPurchaseReturnFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType
+        )
       : this.buildImportPurchaseReturnUnfixEntries(
-        hedgeVoucherNo,
-        hedge,
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType
-      );
+          hedgeVoucherNo,
+          hedge,
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType
+        );
   }
 
   static async buildExportSaleReturnEntries(
@@ -1006,35 +1006,35 @@ class MetalTransactionService {
 
     return mode === "fix"
       ? this.buildExportSaleReturnFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType
+        )
       : this.buildExportSaleReturnUnfixEntries(
-        hedgeVoucherNo, // 1
-        hedge, // 2
-        totals, // 3
-        metalTransactionId, // 4
-        party, // 5
-        baseTransactionId, // 6
-        voucherDate, // 7
-        voucherNumber, // 8
-        adminId, // 9
-        item, // 10
-        partyCurrency, // 11
-        totalSummary, // 12
-        otherCharges, // 13
-        transactionType
-      );
+          hedgeVoucherNo, // 1
+          hedge, // 2
+          totals, // 3
+          metalTransactionId, // 4
+          party, // 5
+          baseTransactionId, // 6
+          voucherDate, // 7
+          voucherNumber, // 8
+          adminId, // 9
+          item, // 10
+          partyCurrency, // 11
+          totalSummary, // 12
+          otherCharges, // 13
+          transactionType
+        );
   }
 
   static async buildPurchaseReturnEntries(
@@ -1086,37 +1086,37 @@ class MetalTransactionService {
     }
     return mode === "fix"
       ? this.buildPurchaseReturnFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType,
-        dealOrderId
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType,
+          dealOrderId
+        )
       : this.buildPurchaseReturnUnfixEntries(
-        hedgeVoucherNo, // 1
-        hedge, // 2
-        totals, // 3
-        metalTransactionId, // 4
-        party, // 5
-        baseTransactionId, // 6
-        voucherDate, // 7
-        voucherNumber, // 8
-        adminId, // 9
-        item, // 10
-        partyCurrency, // 11
-        totalSummary, // 12
-        otherCharges, // 13
-        transactionType,
-        dealOrderId
-      );
+          hedgeVoucherNo, // 1
+          hedge, // 2
+          totals, // 3
+          metalTransactionId, // 4
+          party, // 5
+          baseTransactionId, // 6
+          voucherDate, // 7
+          voucherNumber, // 8
+          adminId, // 9
+          item, // 10
+          partyCurrency, // 11
+          totalSummary, // 12
+          otherCharges, // 13
+          transactionType,
+          dealOrderId
+        );
   }
 
   static async buildSaleReturnEntries(
@@ -1171,37 +1171,37 @@ class MetalTransactionService {
 
     return mode === "fix"
       ? this.buildSaleReturnFixEntries(
-        totals,
-        metalTransactionId,
-        party,
-        baseTransactionId,
-        voucherDate,
-        voucherNumber,
-        adminId,
-        item,
-        partyCurrency,
-        totalSummary,
-        otherCharges,
-        transactionType,
-        dealOrderId
-      )
+          totals,
+          metalTransactionId,
+          party,
+          baseTransactionId,
+          voucherDate,
+          voucherNumber,
+          adminId,
+          item,
+          partyCurrency,
+          totalSummary,
+          otherCharges,
+          transactionType,
+          dealOrderId
+        )
       : this.buildSaleReturnUnfixEntries(
-        hedgeVoucherNo, // 1
-        hedge, // 2
-        totals, // 3
-        metalTransactionId, // 4
-        party, // 5
-        baseTransactionId, // 6
-        voucherDate, // 7
-        voucherNumber, // 8
-        adminId, // 9
-        item, // 10
-        partyCurrency, // 11
-        totalSummary, // 12
-        otherCharges, // 13
-        transactionType,
-        dealOrderId
-      );
+          hedgeVoucherNo, // 1
+          hedge, // 2
+          totals, // 3
+          metalTransactionId, // 4
+          party, // 5
+          baseTransactionId, // 6
+          voucherDate, // 7
+          voucherNumber, // 8
+          adminId, // 9
+          item, // 10
+          partyCurrency, // 11
+          totalSummary, // 12
+          otherCharges, // 13
+          transactionType,
+          dealOrderId
+        );
   }
 
   static buildImportPurchaseFixEntries(
@@ -1731,7 +1731,10 @@ class MetalTransactionService {
     // ============================================================
     // 9) PURITY DIFFERENCE (NEW LOGIC)
     // ============================================================
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -1743,7 +1746,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Purchase from ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -1952,14 +1956,14 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "HEDGE_ENTRY",
-          `Hedge entry recorded for ${partyName}`,
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.pureWeightStd,
+          totals.pureWeight,
           0,
           {
-            debit: totals.pureWeightStd,
-            goldDebit: totals.pureWeightStd,
+            debit: totals.pureWeight,
+            goldDebit: totals.pureWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
@@ -2358,7 +2362,10 @@ class MetalTransactionService {
     // ============================================================
     // 8) PURITY DIFFERENCE (ABS / DR/CR FIXED)
     // ============================================================
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -2370,7 +2377,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Purchase from ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -2696,8 +2704,9 @@ class MetalTransactionService {
 
         // VAT
         if (vatDetails?.vatAmount > 0) {
-          const vatDescription = `${description || "Other Charge"} - VAT ${vatDetails.vatRate || 0
-            }%`;
+          const vatDescription = `${description || "Other Charge"} - VAT ${
+            vatDetails.vatRate || 0
+          }%`;
 
           // VAT Debit
           if (debit?.account) {
@@ -2963,7 +2972,10 @@ class MetalTransactionService {
     // ------------------------------
     // 9) PURITY DIFFERENCE — MAIN UPDATE
     // ------------------------------
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -2975,7 +2987,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Purchase to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -3182,14 +3195,14 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "HEDGE_ENTRY",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeightStd}g gold hedged at bid ${totals.bidValue} USD/oz`,
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           party._id,
           false,
-          totals.pureWeightStd,
+          totals.pureWeight,
           0,
           {
-            debit: totals.pureWeightStd,
-            goldDebit: totals.pureWeightStd,
+            debit: totals.pureWeight,
+            goldDebit: totals.pureWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
@@ -3318,8 +3331,9 @@ class MetalTransactionService {
 
         // VAT Entries
         if (vatDetails?.vatAmount > 0) {
-          const vatDescription = `${description || "Other Charge"} - VAT ${vatDetails.vatRate || 0
-            }%`;
+          const vatDescription = `${description || "Other Charge"} - VAT ${
+            vatDetails.vatRate || 0
+          }%`;
 
           // VAT Debit
           if (debit?.account) {
@@ -3587,7 +3601,10 @@ class MetalTransactionService {
     // ------------------------------
     // 9) PURITY DIFFERENCE — MAIN UPDATE
     // ------------------------------
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -3599,7 +3616,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Purchase to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -4193,7 +4211,10 @@ class MetalTransactionService {
     // 8) PURITY DIFFERENCE
     // ======================
 
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
 
@@ -4416,13 +4437,13 @@ class MetalTransactionService {
             metalTransactionId,
             "001",
             "HEDGE_ENTRY",
-            `Hedge recorded for ${partyName} — ${totals.pureWeightStd}g at ${totals.bidValue}`,
+            `Hedge recorded for ${partyName} — ${totals.pureWeight}g at ${totals.bidValue}`,
             party._id,
             false,
-            totals.pureWeightStd,
-            totals.pureWeightStd,
+            totals.pureWeight,
+            totals.pureWeight,
             {
-              goldCredit: totals.pureWeightStd,
+              goldCredit: totals.pureWeight,
               cashDebit: totals.goldValue,
               grossWeight: totals.grossWeight,
               goldBidValue: totals.bidValue,
@@ -4885,7 +4906,10 @@ class MetalTransactionService {
     // 8) PURITY DIFFERENCE
     // ======================
 
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
 
@@ -5493,9 +5517,15 @@ class MetalTransactionService {
     // 8) PURITY DIFFERENCE
     // ======================
 
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
+
+      // REVERSED LOGIC FOR SALE
+      const isDebit = diff > 0; // Gain → Debit, Loss → Credit
 
       entries.push(
         this.createRegistryEntry(
@@ -5504,17 +5534,22 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${diff}`,
+          `Purity difference - Export Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
+          } ${diff})`,
           party._id,
-          diff > 0, // isDebit: Positive = Gain = Debit, Negative = Loss = Credit
+          isDebit,
           absDiff,
-          diff > 0 ? absDiff : 0,
-          diff <= 0 ? absDiff : 0,
+          !isDebit ? absDiff : 0,
           {
-            debit: diff > 0 ? absDiff : 0,
-            credit: diff <= 0 ? absDiff : 0,
-            goldDebit: totals.grossWeight || 0,
-            cashDebit: totals.goldValue || 0,
+            debit: isDebit ? absDiff : 0,
+            credit: !isDebit ? absDiff : 0,
+
+            // In Purchase you used goldDebit + cashDebit on DEBIT side
+            // For Sale we REVERSE these values
+            goldDebit: !isDebit ? totals.grossWeight || 0 : 0,
+            cashDebit: !isDebit ? totals.goldValue || 0 : 0,
+
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
@@ -5717,13 +5752,13 @@ class MetalTransactionService {
             metalTransactionId,
             "001",
             "HEDGE_ENTRY",
-            `Hedge recorded for ${partyName} — ${totals.pureWeightStd}g at ${totals.bidValue}`,
+            `Hedge recorded for ${partyName} — ${totals.pureWeight}g at ${totals.bidValue}`,
             party._id,
             false,
-            totals.pureWeightStd,
-            totals.pureWeightStd,
+            totals.pureWeight,
+            totals.pureWeight,
             {
-              goldCredit: totals.pureWeightStd,
+              goldCredit: totals.pureWeight,
               cashDebit: totals.goldValue,
               grossWeight: totals.grossWeight,
               goldBidValue: totals.bidValue,
@@ -6186,9 +6221,15 @@ class MetalTransactionService {
     // 8) PURITY DIFFERENCE
     // ======================
 
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
+
+      // REVERSED LOGIC FOR SALE
+      const isDebit = diff > 0; // Gain → Debit, Loss → Credit
 
       entries.push(
         this.createRegistryEntry(
@@ -6197,24 +6238,28 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase from ${partyName} : ${diff}`,
+          `Purity difference - Export Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
+          } ${diff})`,
           party._id,
-          diff > 0, // isDebit: Positive = Gain = Debit, Negative = Loss = Credit
+          isDebit,
           absDiff,
-          diff > 0 ? absDiff : 0,
-          diff <= 0 ? absDiff : 0,
+          !isDebit ? absDiff : 0,
           {
-            debit: diff > 0 ? absDiff : 0,
-            credit: diff <= 0 ? absDiff : 0,
-            goldDebit: totals.grossWeight || 0,
-            cashDebit: totals.goldValue || 0,
+            debit: isDebit ? absDiff : 0,
+            credit: !isDebit ? absDiff : 0,
+
+            // In Purchase you used goldDebit + cashDebit on DEBIT side
+            // For Sale we REVERSE these values
+            goldDebit: !isDebit ? totals.grossWeight || 0 : 0,
+            cashDebit: !isDebit ? totals.goldValue || 0 : 0,
+
             grossWeight: totals.grossWeight,
             pureWeight: totals.pureWeight,
             purity: totals.purity,
             goldBidValue: totals.bidValue,
             ...FX,
           },
-
           voucherDate,
           voucherNumber,
           adminId
@@ -6792,7 +6837,10 @@ class MetalTransactionService {
     // =====================================================
     // 9) PURITY DIFFERENCE (SAFE HANDLED)
     // =====================================================
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -6804,7 +6852,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Export Sale to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Export Sale to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -7014,13 +7063,13 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "HEDGE_ENTRY",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeightStd}g at bid ${totals.bidValue}`,
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g at bid ${totals.bidValue}`,
           party._id,
           false,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          totals.pureWeight,
           {
-            goldCredit: totals.pureWeightStd,
+            goldCredit: totals.pureWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
@@ -7481,7 +7530,10 @@ class MetalTransactionService {
     // =====================================================
     // 9) PURITY DIFFERENCE
     // =====================================================
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -7493,7 +7545,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Export Sale Unfix for ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Export Sale Unfix for ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -7818,8 +7871,9 @@ class MetalTransactionService {
 
         // VAT Handling
         if (vatDetails?.vatAmount > 0) {
-          const vatText = `${description || "Other Charge"} - VAT ${vatDetails.vatRate || 0
-            }%`;
+          const vatText = `${description || "Other Charge"} - VAT ${
+            vatDetails.vatRate || 0
+          }%`;
 
           if (debit?.account) {
             entries.push(
@@ -8085,7 +8139,10 @@ class MetalTransactionService {
     // 8) PURITY DIFFERENCE
     // ======================
 
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
 
@@ -8099,7 +8156,9 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Export Sale Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"} ${diff})`,
+          `Purity difference - Export Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
+          } ${diff})`,
           party._id,
           isDebit,
           absDiff,
@@ -8125,7 +8184,6 @@ class MetalTransactionService {
         )
       );
     }
-
 
     // ======================
     // 9) GOLD STOCK (GROSS)
@@ -8315,14 +8373,14 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "HEDGE_ENTRY",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeightStd}g gold`,
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold`,
           party._id,
           false,
-          totals.pureWeightStd,
-          totals.pureWeightStd,
+          totals.pureWeight,
+          totals.pureWeight,
           {
             debit: 0,
-            goldCredit: totals.pureWeightStd,
+            goldCredit: totals.pureWeight,
             cashDebit: totals.goldValue,
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
@@ -8515,8 +8573,9 @@ class MetalTransactionService {
 
         // VAT handling
         if (vatDetails?.vatAmount > 0) {
-          const vt = `${description || "Other Charge"} - VAT ${vatDetails.vatRate || 0
-            }%`;
+          const vt = `${description || "Other Charge"} - VAT ${
+            vatDetails.vatRate || 0
+          }%`;
 
           if (debit?.account) {
             entries.push(
@@ -8781,7 +8840,10 @@ class MetalTransactionService {
     // 8) PURITY DIFFERENCE
     // ======================
 
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
 
@@ -8795,7 +8857,9 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Export Sale Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"} ${diff})`,
+          `Purity difference - Export Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
+          } ${diff})`,
           party._id,
           isDebit,
           absDiff,
@@ -8821,7 +8885,6 @@ class MetalTransactionService {
         )
       );
     }
-
 
     // ======================
     // 9) GOLD STOCK (GROSS)
@@ -9005,14 +9068,14 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "HEDGE_ENTRY",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeightStd}g at bid ${totals.bidValue}`,
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g at bid ${totals.bidValue}`,
           party._id,
           false,
-          totals.pureWeightStd,
+          totals.pureWeight,
           0,
           {
-            debit: totals.pureWeightStd,
-            goldDebit: totals.pureWeightStd,
+            debit: totals.pureWeight,
+            goldDebit: totals.pureWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
@@ -9414,7 +9477,10 @@ class MetalTransactionService {
     // ------------------------------
     // 9) PURITY DIFFERENCE — MAIN UPDATE
     // ------------------------------
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
 
@@ -9428,7 +9494,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Export Sale Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Export Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -10025,7 +10092,10 @@ class MetalTransactionService {
     // ------------------------------
     // 9) PURITY DIFFERENCE — MAIN UPDATE
     // ------------------------------
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
 
@@ -10039,7 +10109,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Export Sale Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Export Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -10253,14 +10324,14 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "HEDGE_ENTRY",
-          `Hedge entry recorded for ${partyName} — ${totals.pureWeightStd}g at bid ${totals.bidValue}`,
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g at bid ${totals.bidValue}`,
           party._id,
           false,
-          totals.pureWeightStd,
+          totals.pureWeight,
           0,
           {
-            debit: totals.pureWeightStd,
-            goldDebit: totals.pureWeightStd,
+            debit: totals.pureWeight,
+            goldDebit: totals.pureWeight,
             cashCredit: totals.goldValue,
             grossWeight: totals.grossWeight,
             goldBidValue: totals.bidValue,
@@ -10662,7 +10733,10 @@ class MetalTransactionService {
     // ------------------------------
     // 9) PURITY DIFFERENCE — MAIN UPDATE
     // ------------------------------
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -10674,7 +10748,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -11269,7 +11344,10 @@ class MetalTransactionService {
     // ------------------------------
     // 9) PURITY DIFFERENCE — MAIN UPDATE
     // ------------------------------
-    if (typeof totals.purityDifference === "number" && totals.purityDifference !== 0) {
+    if (
+      typeof totals.purityDifference === "number" &&
+      totals.purityDifference !== 0
+    ) {
       const diff = totals.purityDifference;
       const absDiff = Math.abs(diff);
       const isDebit = diff > 0; // Positive = Gain = Debit, Negative = Loss = Credit
@@ -11281,7 +11359,8 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Sale Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          `Purity difference - Sale Return to ${partyName} (${
+            diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
           party._id,
           isDebit,
@@ -11667,7 +11746,8 @@ class MetalTransactionService {
       await this.incCash(party._id, currencyId, netCash, session);
       const s = netCash > 0 ? "+" : "-";
       logs.push(
-        `💰 CASH [${currencyId}] ${s}${Math.abs(netCash).toFixed(2)} for ${party.customerName
+        `💰 CASH [${currencyId}] ${s}${Math.abs(netCash).toFixed(2)} for ${
+          party.customerName
         }`
       );
     }
@@ -11683,7 +11763,8 @@ class MetalTransactionService {
           await this.ensureCashRow(debit.account, cur, session);
           await this.incCash(debit.account, cur, -debit.baseCurrency, session);
           logs.push(
-            `🟢 DEBIT ${debit.baseCurrency.toFixed(2)} (${cur}) → ${debit.account
+            `🟢 DEBIT ${debit.baseCurrency.toFixed(2)} (${cur}) → ${
+              debit.account
             }`
           );
         }
@@ -11694,7 +11775,8 @@ class MetalTransactionService {
           await this.ensureCashRow(credit.account, cur, session);
           await this.incCash(credit.account, cur, credit.baseCurrency, session);
           logs.push(
-            `🔴 CREDIT ${credit.baseCurrency.toFixed(2)} (${cur}) → ${credit.account
+            `🔴 CREDIT ${credit.baseCurrency.toFixed(2)} (${cur}) → ${
+              credit.account
             }`
           );
         }
@@ -12771,7 +12853,7 @@ class MetalTransactionService {
       }
       console.log(
         `[UPDATE_TRANSACTION] Party changed from ${oldParty.customerName} (${oldParty.accountCode}) ` +
-        `to ${newParty.customerName} (${newParty.accountCode})`
+          `to ${newParty.customerName} (${newParty.accountCode})`
       );
     }
 
@@ -13531,8 +13613,9 @@ class MetalTransactionService {
     session
   ) {
     const registryEntries = [];
-    const transactionId = `TXN-${new Date().getFullYear()}-${Math.floor(Math.random() * 900) + 100
-      }`;
+    const transactionId = `TXN-${new Date().getFullYear()}-${
+      Math.floor(Math.random() * 900) + 100
+    }`;
 
     // Calculate totals for charges
     let totalMakingCharges = 0;
@@ -13562,12 +13645,13 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "gold",
-          description: `${isPurchaseReturn
+          description: `${
+            isPurchaseReturn
               ? "Purchase Return"
               : isSaleReturn
-                ? "Sale Return"
-                : transaction.transactionType
-            } - ${stockItem.description || "Metal Item"}`,
+              ? "Sale Return"
+              : transaction.transactionType
+          } - ${stockItem.description || "Metal Item"}`,
           paryty: transaction.partyCode,
           value: pureWeight,
           debit: isSale || isPurchaseReturn ? pureWeight : 0,
@@ -13583,12 +13667,13 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "stock_balance",
-          description: `${isPurchaseReturn
+          description: `${
+            isPurchaseReturn
               ? "Purchase Return"
               : isSaleReturn
-                ? "Sale Return"
-                : transaction.transactionType
-            } Stock Balance - ${stockItem.description || "Metal Item"}`,
+              ? "Sale Return"
+              : transaction.transactionType
+          } Stock Balance - ${stockItem.description || "Metal Item"}`,
           paryty: transaction.partyCode,
           value: pureWeight,
           debit: isSale || isPurchaseReturn ? pureWeight : 0,
@@ -13606,22 +13691,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "MAKING_CHARGES",
-          description: `${transaction.transactionType === "purchaseReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
               ? "Purchase Return"
               : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
-            } - Making Charges`,
+              ? "Sale Return"
+              : transaction.transactionType
+          } - Making Charges`,
           paryty: transaction.partyCode,
           value: totalMakingCharges,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalMakingCharges
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalMakingCharges
               : 0,
           transactionDate: new Date(),
@@ -13636,22 +13722,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "OTHER_CHARGES",
-          description: `${transaction.transactionType === "purchaseReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
               ? "Purchase Return"
               : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
-            } - Other Charges`,
+              ? "Sale Return"
+              : transaction.transactionType
+          } - Other Charges`,
           paryty: transaction.partyCode,
           value: totalOtherCharges,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalOtherCharges
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalOtherCharges
               : 0,
           transactionDate: new Date(),
@@ -13666,22 +13753,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "VAT_AMOUNT",
-          description: `${transaction.transactionType === "purchaseReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
               ? "Purchase Return"
               : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
-            } - VAT Amount`,
+              ? "Sale Return"
+              : transaction.transactionType
+          } - VAT Amount`,
           paryty: transaction.partyCode,
           value: totalVatAmount,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalVatAmount
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalVatAmount
               : 0,
           transactionDate: new Date(),
@@ -13697,22 +13785,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "premium",
-          description: `${transaction.transactionType === "purchaseReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
               ? "Purchase Return"
               : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
-            } - Premium Amount`,
+              ? "Sale Return"
+              : transaction.transactionType
+          } - Premium Amount`,
           paryty: transaction.partyCode,
           value: totalPremiumAmount,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalPremiumAmount
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalPremiumAmount
               : 0,
           transactionDate: new Date(),
@@ -13727,22 +13816,23 @@ class MetalTransactionService {
       new Registry({
         transactionId: transactionId,
         type: "party_gold_balance",
-        description: `${transaction.transactionType === "purchaseReturn"
+        description: `${
+          transaction.transactionType === "purchaseReturn"
             ? "Purchase Return"
             : transaction.transactionType === "saleReturn"
-              ? "Sale Return"
-              : transaction.transactionType
-          } - Party Gold Balance`,
+            ? "Sale Return"
+            : transaction.transactionType
+        } - Party Gold Balance`,
         paryty: transaction.partyCode,
         value: totalPureWeight,
         debit:
           transaction.transactionType === "purchase" ||
-            transaction.transactionType === "saleReturn"
+          transaction.transactionType === "saleReturn"
             ? totalPureWeight
             : 0,
         credit:
           transaction.transactionType === "sale" ||
-            transaction.transactionType === "purchaseReturn"
+          transaction.transactionType === "purchaseReturn"
             ? totalPureWeight
             : 0,
         transactionDate: new Date(),
@@ -13758,22 +13848,23 @@ class MetalTransactionService {
         new Registry({
           transactionId: transactionId,
           type: "party_cash_balance",
-          description: `${transaction.transactionType === "purchaseReturn"
+          description: `${
+            transaction.transactionType === "purchaseReturn"
               ? "Purchase Return"
               : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
-            } - Party Cash Balance`,
+              ? "Sale Return"
+              : transaction.transactionType
+          } - Party Cash Balance`,
           paryty: transaction.partyCode,
           value: totalAmountAED,
           debit:
             transaction.transactionType === "sale" ||
-              transaction.transactionType === "purchaseReturn"
+            transaction.transactionType === "purchaseReturn"
               ? totalAmountAED
               : 0,
           credit:
             transaction.transactionType === "purchase" ||
-              transaction.transactionType === "saleReturn"
+            transaction.transactionType === "saleReturn"
               ? totalAmountAED
               : 0,
           transactionDate: new Date(),

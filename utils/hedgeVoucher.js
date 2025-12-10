@@ -10,6 +10,9 @@ export const generateHedgeVoucherNumber = async (transactionType) => {
     case "sale":
       prefix = "HSM";
       break;
+        case "saleReturn":
+      prefix = "HSM";
+      break;
     case "purchaseReturn":
       prefix = "HPR";
       break;
