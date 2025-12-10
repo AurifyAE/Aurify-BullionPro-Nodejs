@@ -144,6 +144,7 @@ export const createMetalTransaction = async (req, res, next) => {
         purity,
         pureWeightStd,
         pureWeight,
+        pieces,
         purityDifference,
         weightInOz,
         metalRate,
@@ -170,6 +171,7 @@ export const createMetalTransaction = async (req, res, next) => {
         grossWeight: toNumber(grossWeight),
         purityStd: toNumber(purityStd, 0.999),
         purity: toNumber(purity),
+        pieces: toNumber(pieces),
         pureWeightStd: toNumber(pureWeightStd),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
         purityDifference: toNumber(purityDifference)
