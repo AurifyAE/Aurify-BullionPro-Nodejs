@@ -209,6 +209,10 @@ const entrySchema = new mongoose.Schema(
           type: String,
           trim: true,
         },
+          bankName: {
+          type: String,
+          trim: true,
+        },
         chequeDate: {
           type: Date,
           default: null,

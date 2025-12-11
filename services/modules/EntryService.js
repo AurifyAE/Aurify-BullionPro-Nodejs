@@ -460,7 +460,7 @@ class EntryService {
 
     const currency = await CurrencyMaster.findById(cashItem.currency);
     const amount = Number(cashItem.amount);
-    const isReceipt = entry.type.includes("receipt");
+    const isReceipt = entry.type.includes("cash-receipt");
 
     const registryRows = [];
 

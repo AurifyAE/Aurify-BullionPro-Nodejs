@@ -35,7 +35,7 @@ const isPostDated = (date) => {
 const createEntry = async (req, res) => {
   try {
     const { type, stocks, cash, invoiceReference, invoiceDate, ...rest } = req.body;
-
+console.log(req.body)
     if (!validTypes.includes(type))
       return res.status(400).json({ success: false, message: "Invalid type" });
 
@@ -100,17 +100,18 @@ const createEntry = async (req, res) => {
 
     // Determine entry status based on cheque dates
     let entryStatus = "approved";
-    if (isCheque) {
-      const hasPostDatedCheque = processedCash?.some((c) => c.isPDC);
-      const allChequesToday = processedCash
-        ?.filter((c) => c.cashType === "cheque")
-        .every((c) => isToday(c.chequeDate));
+    
+    // if (isCheque) {
+    //   const hasPostDatedCheque = processedCash?.some((c) => c.isPDC);
+    //   const allChequesToday = processedCash
+    //     ?.filter((c) => c.cashType === "cheque")
+    //     .every((c) => isToday(c.chequeDate));
 
-      if (hasPostDatedCheque && !allChequesToday) {
-        // If there are post-dated cheques, still approve but mark PDC items
-        entryStatus = "approved";
-      }
-    }
+    //   if (hasPostDatedCheque && !allChequesToday) {
+    //     // If there are post-dated cheques, still approve but mark PDC items
+    //     entryStatus = "approved";
+    //   }
+    // }
 
     const entry = new Entry({
       type,
