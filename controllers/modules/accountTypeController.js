@@ -201,7 +201,21 @@ export const createTradeDebtor = async (req, res, next) => {
           return value;
         };
 
-        return {
+        // Helper to convert empty strings to null for Number fields
+        const sanitizeNumberField = (value) => {
+          if (
+            !value ||
+            value === "" ||
+            value === "null" ||
+            value === "undefined"
+          ) {
+            return null;
+          }
+          const numValue = Number(value);
+          return isNaN(numValue) ? null : numValue;
+        };
+
+        const sanitizedBank = {
           bankName: bank.bankName?.trim() || "",
           swiftId: bank.swiftId?.trim() || "",
           iban: bank.iban?.trim() || "",
@@ -216,12 +230,44 @@ export const createTradeDebtor = async (req, res, next) => {
           // Sanitize ObjectId fields - convert empty strings to null
           pdcIssue: sanitizeObjectIdField(bank.pdcIssue),
           pdcReceipt: sanitizeObjectIdField(bank.pdcReceipt),
-          // Sanitize Date fields - convert empty strings to null
-          maturityDate: sanitizeDateField(bank.maturityDate),
-          pdcReceiptMaturityDate: sanitizeDateField(
-            bank.pdcReceiptMaturityDate
+          // Sanitize Number fields - convert empty strings to null
+          maturityDays: sanitizeNumberField(bank.maturityDays),
+          pdcReceiptMaturityDays: sanitizeNumberField(
+            bank.pdcReceiptMaturityDays
           ),
         };
+
+        // Validate required PDC fields when bank data is provided
+        if (!sanitizedBank.pdcIssue || sanitizedBank.pdcIssue === null) {
+          throw createAppError(
+            "PDC Issue is required for bank details",
+            400,
+            "MISSING_PDC_ISSUE"
+          );
+        }
+        if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
+          throw createAppError(
+            "Maturity Days is required for bank details",
+            400,
+            "MISSING_MATURITY_DAYS"
+          );
+        }
+        if (!sanitizedBank.pdcReceipt || sanitizedBank.pdcReceipt === null) {
+          throw createAppError(
+            "PDC Receipt is required for bank details",
+            400,
+            "MISSING_PDC_RECEIPT"
+          );
+        }
+        if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
+          throw createAppError(
+            "PDC Receipt Maturity Days is required for bank details",
+            400,
+            "MISSING_PDC_RECEIPT_MATURITY_DAYS"
+          );
+        }
+
+        return sanitizedBank;
       });
     }
 
@@ -837,25 +883,73 @@ export const updateTradeDebtor = async (req, res, next) => {
         return value;
       };
 
-      updateData.bankDetails = updateData.bankDetails.map((bank) => ({
-        bankName: bank.bankName?.toString().trim() || "",
-        swiftId: bank.swiftId?.toString().trim() || "",
-        iban: bank.iban?.toString().trim() || "",
-        accountNumber: bank.accountNumber?.toString().trim() || "",
-        branchCode: bank.branchCode?.toString().trim() || "",
-        purpose: bank.purpose?.toString().trim() || "",
-        country: bank.country?.toString().trim() || "",
-        city: bank.city?.toString().trim() || "",
-        routingCode: bank.routingCode?.toString().trim() || "",
-        address: bank.address?.toString().trim() || "",
-        isPrimary: bank.isPrimary === true || bank.isPrimary === "true",
-        // Sanitize ObjectId fields - convert empty strings to null
-        pdcIssue: sanitizeObjectIdField(bank.pdcIssue),
-        pdcReceipt: sanitizeObjectIdField(bank.pdcReceipt),
-        // Sanitize Date fields - convert empty strings to null
-        maturityDate: sanitizeDateField(bank.maturityDate),
-        pdcReceiptMaturityDate: sanitizeDateField(bank.pdcReceiptMaturityDate),
-      }));
+      // Helper to convert empty strings to null for Number fields
+      const sanitizeNumberField = (value) => {
+        if (
+          !value ||
+          value === "" ||
+          value === "null" ||
+          value === "undefined"
+        ) {
+          return null;
+        }
+        const numValue = Number(value);
+        return isNaN(numValue) ? null : numValue;
+      };
+
+      updateData.bankDetails = updateData.bankDetails.map((bank) => {
+        const sanitizedBank = {
+          bankName: bank.bankName?.toString().trim() || "",
+          swiftId: bank.swiftId?.toString().trim() || "",
+          iban: bank.iban?.toString().trim() || "",
+          accountNumber: bank.accountNumber?.toString().trim() || "",
+          branchCode: bank.branchCode?.toString().trim() || "",
+          purpose: bank.purpose?.toString().trim() || "",
+          country: bank.country?.toString().trim() || "",
+          city: bank.city?.toString().trim() || "",
+          routingCode: bank.routingCode?.toString().trim() || "",
+          address: bank.address?.toString().trim() || "",
+          isPrimary: bank.isPrimary === true || bank.isPrimary === "true",
+          // Sanitize ObjectId fields - convert empty strings to null
+          pdcIssue: sanitizeObjectIdField(bank.pdcIssue),
+          pdcReceipt: sanitizeObjectIdField(bank.pdcReceipt),
+          // Sanitize Number fields - convert empty strings to null
+          maturityDays: sanitizeNumberField(bank.maturityDays),
+          pdcReceiptMaturityDays: sanitizeNumberField(bank.pdcReceiptMaturityDays),
+        };
+
+        // Validate required PDC fields when bank data is provided
+        if (!sanitizedBank.pdcIssue || sanitizedBank.pdcIssue === null) {
+          throw createAppError(
+            "PDC Issue is required for bank details",
+            400,
+            "MISSING_PDC_ISSUE"
+          );
+        }
+        if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
+          throw createAppError(
+            "Maturity Days is required for bank details",
+            400,
+            "MISSING_MATURITY_DAYS"
+          );
+        }
+        if (!sanitizedBank.pdcReceipt || sanitizedBank.pdcReceipt === null) {
+          throw createAppError(
+            "PDC Receipt is required for bank details",
+            400,
+            "MISSING_PDC_RECEIPT"
+          );
+        }
+        if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
+          throw createAppError(
+            "PDC Receipt Maturity Days is required for bank details",
+            400,
+            "MISSING_PDC_RECEIPT_MATURITY_DAYS"
+          );
+        }
+
+        return sanitizedBank;
+      });
     }
 
     // ──────────────────────────────────────────────────────────────

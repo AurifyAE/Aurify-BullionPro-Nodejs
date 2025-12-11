@@ -122,13 +122,7 @@ class AccountTypeService {
             bank.isPrimary = true;
             primaryFound = true;
           }
-          // Convert date fields
-          if (bank.maturityDate) {
-            bank.maturityDate = new Date(bank.maturityDate);
-          }
-          if (bank.pdcReceiptMaturityDate) {
-            bank.pdcReceiptMaturityDate = new Date(bank.pdcReceiptMaturityDate);
-          }
+          // Maturity days are already numbers, no conversion needed
         });
       }
 
@@ -308,27 +302,10 @@ class AccountTypeService {
         delete updateData._removeVatDocuments;
       }
 
-      // 3. Process bankDetails updates - convert dates
+      // 3. Process bankDetails updates - maturity days are numbers, no conversion needed
       if (updateData.bankDetails?.length) {
         updateData.bankDetails = updateData.bankDetails.map((bank) => {
-          const updatedBank = { ...bank };
-          // Convert date fields
-          if (bank.maturityDate) {
-            updatedBank.maturityDate = new Date(bank.maturityDate);
-          } else if (bank.maturityDate === null || bank.maturityDate === "") {
-            updatedBank.maturityDate = null;
-          }
-          if (bank.pdcReceiptMaturityDate) {
-            updatedBank.pdcReceiptMaturityDate = new Date(
-              bank.pdcReceiptMaturityDate
-            );
-          } else if (
-            bank.pdcReceiptMaturityDate === null ||
-            bank.pdcReceiptMaturityDate === ""
-          ) {
-            updatedBank.pdcReceiptMaturityDate = null;
-          }
-          return updatedBank;
+          return { ...bank };
         });
       }
 

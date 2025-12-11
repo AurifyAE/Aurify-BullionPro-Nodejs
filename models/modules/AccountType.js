@@ -311,13 +311,15 @@ const AccountSchema = new mongoose.Schema(
             ref: "Account",
             default: null,
           },
-          maturityDate: {
-            type: Date,
+          maturityDays: {
+            type: Number,
             default: null,
+            min: 0,
           },
-          pdcReceiptMaturityDate: {
-            type: Date,
+          pdcReceiptMaturityDays: {
+            type: Number,
             default: null,
+            min: 0,
           },
         },
       ],
