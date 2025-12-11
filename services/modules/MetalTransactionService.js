@@ -501,7 +501,7 @@ class MetalTransactionService {
     console.log("🔥 createHedgeFixingEntry CALLED");
 
     const order = {
-      commodity: "691e0475689ea503171ae9ff",
+      commodity: "693726f5815346dc678cda97",
       grossWeight: totals.grossWeight || 0,
       oneGramRate: totals.rateInGram || 0,
       currentBidValue: totals.currentBidValue,
