@@ -158,7 +158,7 @@ class KaratMasterService {
         const division = await DivisionMaster.findById(updateData.division);
 
        
-        if (!division || !division.isActive || division.status !== "active") {
+        if (!division || !division.isActive ) {
           throw createAppError(
             "Division not found or inactive",
             400,

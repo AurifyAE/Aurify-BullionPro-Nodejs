@@ -574,6 +574,11 @@ const MetalTransactionSchema = new mongoose.Schema(
       ref: "Salesman",
       default: null,
     },
+    enteredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Salesman",
+      default: null,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
