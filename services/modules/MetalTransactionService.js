@@ -506,7 +506,7 @@ class MetalTransactionService {
       oneGramRate: totals.rateInGram || 0,
       currentBidValue: totals.currentBidValue,
       bidValue: totals.bidValue,
-      pureWeight: totals.grossWeight,
+      pureWeight: totals.pureWeight,
       selectedCurrencyId: itemCurrency,
       purity: 1,
       price: totals.goldValue,
