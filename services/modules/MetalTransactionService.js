@@ -12329,6 +12329,8 @@ class MetalTransactionService {
       .populate("baseCurrency", "code symbol")
       .populate("stockItems.stockCode", "code description specifications")
       .populate("stockItems.metalRate", "metalType rate effectiveDate")
+      .populate("salesman", "name code")
+      .populate("enteredBy", "name email")
       .populate("createdBy", "name email")
       .populate("updatedBy", "name email")
       .sort({ voucherDate: -1, createdAt: -1 })
@@ -12358,6 +12360,8 @@ class MetalTransactionService {
       .populate("baseCurrency", "code symbol")
       .populate("stockItems.stockCode", "code description specifications")
       .populate("stockItems.metalRate", "metalType rate effectiveDate")
+      .populate("salesman", "name code")
+      .populate("enteredBy", "name email")
       .populate("createdBy", "name email")
       .populate("updatedBy", "name email");
 
@@ -12387,6 +12391,8 @@ class MetalTransactionService {
       .populate("itemCurrency", "code symbol")
       .populate("stockItems.stockCode", "code description")
       .populate("stockItems.metalRate", "metalType rate")
+      .populate("salesman", "name code")
+      .populate("enteredBy", "name email")
       .populate("createdBy", "name email")
       .sort({ voucherDate: -1, createdAt: -1 })
       .limit(limit);

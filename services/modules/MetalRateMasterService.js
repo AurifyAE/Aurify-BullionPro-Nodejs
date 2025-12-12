@@ -7,6 +7,13 @@ class MetalRateMasterService {
   // Create new metal rate
   static async createMetalRate(metalRateData, adminId) {
     try {
+      // Extract metal ID if it's an object (safeguard against frontend sending object)
+      if (metalRateData.metal) {
+        if (typeof metalRateData.metal === 'object' && metalRateData.metal !== null) {
+          metalRateData.metal = metalRateData.metal._id || metalRateData.metal.id || metalRateData.metal;
+        }
+      }
+      
       // Check if division exists
       const division = await DivisionMaster.findById(metalRateData.metal);
       if (!division) {
@@ -144,8 +151,12 @@ class MetalRateMasterService {
         );
       }
 
-      // Check if division exists (if being updated)
+      // Extract metal ID if it's an object (safeguard against frontend sending object)
       if (updateData.metal) {
+        if (typeof updateData.metal === 'object' && updateData.metal !== null) {
+          updateData.metal = updateData.metal._id || updateData.metal.id || updateData.metal;
+        }
+        
         const division = await DivisionMaster.findById(updateData.metal);
         if (!division) {
           throw createAppError("Division not found", 404, "DIVISION_NOT_FOUND");

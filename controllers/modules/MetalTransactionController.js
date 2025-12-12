@@ -293,8 +293,8 @@ export const createMetalTransaction = async (req, res, next) => {
         rounded: toNumber(totalSummary?.rounded) || 0,
         totalAmount: toNumber(totalSummary?.totalAmount) || 0,
       },
-      enteredBy: trim(enteredBy),
-      salesman: trim(salesman),
+      enteredBy: enteredBy || null, // Store as ObjectId, not string
+      salesman: salesman || null, // Store as ObjectId, not string
       status,
       notes: trim(notes),
       dealOrderId: dealOrderId ? trim(dealOrderId) : null,
@@ -565,8 +565,8 @@ export const updateMetalTransaction = async (req, res, next) => {
         rounded: toNumber(totalSummary?.rounded) || 0,
         totalAmount: toNumber(totalSummary?.totalAmount) || 0,
       },
-      enteredBy: trim(enteredBy),
-      salesman: trim(salesman),
+      enteredBy: enteredBy || null, // Store as ObjectId, not string
+      salesman: salesman || null, // Store as ObjectId, not string
       status,
       notes: trim(notes),
     };
