@@ -20,6 +20,40 @@ export const getInventoryById = async (req, res, next) => {
     }
 };
 
+export const getInventoryLogById = async (req, res, next) => {
+    console.log("One log fetch controller hit");
+    console.log(req.params.id);
+    try {
+        const singleInventoryLog = await InventoryService.getInventoryLogById(req.params.id)
+        res.status(200).json(singleInventoryLog);
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const updateInventoryLog = async (req, res, next) => {
+    const body = req.body;
+    console.log(body)
+    try {
+        const updatedInventoryLog = await InventoryService.updateInventoryLog(req.params.id, body)
+        res.status(200).json(updatedInventoryLog);
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const deleteInventoryLogById = async (req, res, next) => {
+    console.log("Delete log controller hit");
+    try {
+        const response = await InventoryService.deleteInventoryLogById(req.params.id)
+        res.status(200).json({ message: "Inventory log deleted successfully" });
+    } catch (error) {
+        next(error);
+    }
+};
+
+
+
 export const getAllLogs = async (req, res, next) => {
     try {
         const InventoryLogs = await InventoryService.fetchInvLogs()
@@ -46,18 +80,60 @@ export const createInventory = async (req, res, next) => {
 // update the inventory
 export const updateInventory = async (req, res, next) => {
     try {
+        const {
+            type,
+            value,
+            metalId,
+            voucher,
+            goldBidPrice,
+            purity,
+            avgMakingRate: rawAvgMakingRate,
+            avgMakingAmount: rawAvgMakingAmount,
+        } = req.body;
 
-        let { type, value, metalId, voucher, goldBidPrice } = req.body;
-        value = parseFloat(value);
+        const parsedValue = parseFloat(value);
 
-        if (!["pcs", "grams"].includes(type) || typeof value !== "number") {
+        if (!["pcs", "grams"].includes(type) || isNaN(parsedValue)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid update type or value",
             });
         }
+
+        // ✅ Normalize optional fields
+        const avgMakingRate =
+            rawAvgMakingRate !== undefined && rawAvgMakingRate !== null && rawAvgMakingRate !== ""
+                ? parseFloat(rawAvgMakingRate)
+                : 0;
+
+        const avgMakingAmount =
+            rawAvgMakingAmount !== undefined && rawAvgMakingAmount !== null && rawAvgMakingAmount !== ""
+                ? parseFloat(rawAvgMakingAmount)
+                : 0;
+
         const adminId = req.admin.id;
-        const updatedItem = await InventoryService.updateInventoryByFrontendInput({ metalId, type, value, adminId, voucher, goldBidPrice });
+        console.log(metalId,
+            type,
+            parsedValue,
+            adminId,
+            voucher,
+            goldBidPrice,
+            purity,
+            avgMakingRate,
+            avgMakingAmount
+        )
+
+        const updatedItem = await InventoryService.updateInventoryByFrontendInput({
+            metalId,
+            type,
+            value: parsedValue,
+            adminId,
+            voucher,
+            goldBidPrice,
+            purity,
+            avgMakingRate,
+            avgMakingAmount,
+        });
 
         res.status(200).json({
             success: true,
@@ -68,3 +144,4 @@ export const updateInventory = async (req, res, next) => {
         next(error);
     }
 };
+
