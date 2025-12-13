@@ -193,6 +193,21 @@ class InventoryService {
     }
   }
 
+  static async getInventoryLogById(inventoryId) {
+    console.log("inventoryId", inventoryId);
+    console.log("Fetching logs for inventoryId", inventoryId);
+    try {
+      const logs = await InventoryLog.find({ stockCode: new mongoose.Types.ObjectId(inventoryId) });
+      return logs;
+    } catch (error) {
+      throw createAppError(
+        "Failed to fetch inventory Logs",
+        500,
+        "FETCH_INVENTORY_LOG_ERROR"
+      );
+    }
+  }
+
   static async fetchInventoryById(inventoryId) {
     try {
       const logs = await InventoryLog.aggregate([
@@ -375,6 +390,9 @@ class InventoryService {
     adminId,
     voucher,
     goldBidPrice,
+    purity,
+    avgMakingRate,
+    avgMakingAmount,
   }) {
     try {
       if (!metalId || !type || value === undefined) {
@@ -427,9 +445,8 @@ class InventoryService {
         }
         inventory.grossWeight += qty * metal.totalValue;
         inventory.pcsCount += qty;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${
-          metal.code
-        } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
+        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
+          } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
         registryValue = Math.abs(qty) * (metal.pricePerPiece || 0);
       } else if (type === "grams") {
         if (qty < 0) {
@@ -442,9 +459,8 @@ class InventoryService {
         inventory.grossWeight += qty;
         inventory.pcsCount = inventory.grossWeight / inventory.pcsValue;
         inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${
-          metal.code
-        } - ${Math.abs(qty)} grams`;
+        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
+          } - ${Math.abs(qty)} grams`;
         registryValue = Math.abs(qty) * (metal.pricePerGram || 0);
       } else {
         throw createAppError(
@@ -475,6 +491,9 @@ class InventoryService {
         action: isAddition ? "add" : "remove",
         createdBy: adminId,
         note: `Inventory ${isAddition ? "added" : "removed"} by admin.`,
+        purity: purity,
+        avgMakingRate: avgMakingRate,
+        avgMakingAmount: avgMakingAmount,
       });
 
       await this.createRegistryEntry({
@@ -504,136 +523,136 @@ class InventoryService {
     }
   }
 
-static async updateInventory(transaction, isSale, admin, session = null) {
-  try {
-    const updated = [];
-    // Cache branch negative stock control settings to avoid repeated queries
-    const branchNegativeStockCache = new Map();
+  static async updateInventory(transaction, isSale, admin, session = null) {
+    try {
+      const updated = [];
+      // Cache branch negative stock control settings to avoid repeated queries
+      const branchNegativeStockCache = new Map();
 
-    for (const item of transaction.stockItems || []) {
-      const metalId = new mongoose.Types.ObjectId(item.stockCode?._id || item.stockCode);
-      if (!metalId) continue;
+      for (const item of transaction.stockItems || []) {
+        const metalId = new mongoose.Types.ObjectId(item.stockCode?._id || item.stockCode);
+        if (!metalId) continue;
 
-      console.log("🔍 Looking for MetalStock with ID:", metalId);
+        console.log("🔍 Looking for MetalStock with ID:", metalId);
 
-      // Load inventory + metal in parallel
-      const [inventory, metal] = await Promise.all([
-        Inventory.findOne({ metal: metalId }).session(session),
-        MetalStock.findById(metalId).session(session),
-      ]);
+        // Load inventory + metal in parallel
+        const [inventory, metal] = await Promise.all([
+          Inventory.findOne({ metal: metalId }).session(session),
+          MetalStock.findById(metalId).session(session),
+        ]);
 
-      console.log("🔧 Inventory:", inventory ? "found ✅" : "missing ❌");
-      console.log("🔧 MetalStock:", metal ? metal.code : "null");
+        console.log("🔧 Inventory:", inventory ? "found ✅" : "missing ❌");
+        console.log("🔧 MetalStock:", metal ? metal.code : "null");
 
-      if (!inventory) {
-        throw createAppError(
-          `Inventory not found for metal: ${item.stockCode?.code || metalId}`,
-          404,
-          "INVENTORY_NOT_FOUND"
+        if (!inventory) {
+          throw createAppError(
+            `Inventory not found for metal: ${item.stockCode?.code || metalId}`,
+            404,
+            "INVENTORY_NOT_FOUND"
+          );
+        }
+
+        if (!metal) {
+          console.warn(`⚠️ MetalStock not found for ID: ${metalId}`);
+          continue; // skip instead of crashing
+        }
+
+        // 🔹 Compute deltas
+        const factor = isSale ? -1 : 1;
+        const pcsDelta = factor * (item.pieces || 0);
+        const weightDelta = factor * (item.grossWeight || 0);
+
+        // Check branch's negative stock control setting (with caching)
+        let allowNegativeStock = true; // Default to true (allow negative stock)
+
+        if (metal.branch) {
+          const branchId = metal.branch.toString();
+
+          // Check cache first
+          if (!branchNegativeStockCache.has(branchId)) {
+            try {
+              const branch = await BranchMaster.findById(metal.branch).session(session);
+              if (branch) {
+                // If negativeStockControl is explicitly false, don't allow negative stock
+                // If it's true or undefined, allow negative stock (default behavior)
+                allowNegativeStock = branch.negativeStockControl !== false;
+                branchNegativeStockCache.set(branchId, allowNegativeStock);
+              } else {
+                // Branch not found, default to allowing negative stock
+                branchNegativeStockCache.set(branchId, true);
+              }
+            } catch (branchError) {
+              console.warn(`⚠️ Failed to fetch branch for negative stock control: ${branchError.message}`);
+              // Default to allowing negative stock if branch fetch fails
+              branchNegativeStockCache.set(branchId, true);
+            }
+          } else {
+            // Use cached value
+            allowNegativeStock = branchNegativeStockCache.get(branchId);
+          }
+        }
+
+        // Validate stock levels only if negative stock is not allowed
+        if (!allowNegativeStock) {
+          if (inventory.pcsCount + pcsDelta < 0 || inventory.grossWeight + weightDelta < 0) {
+            throw createAppError(
+              `Insufficient stock for metal: ${metal.code}`,
+              400,
+              "INSUFFICIENT_STOCK"
+            );
+          }
+        }
+
+        // Apply deltas
+        inventory.pcsCount += pcsDelta;
+        inventory.grossWeight += weightDelta;
+        inventory.pureWeight = inventory.grossWeight * (inventory.purity || 1);
+
+        await inventory.save({ session });
+        updated.push(inventory);
+
+        // Log entry
+        await InventoryLog.create(
+          [
+            {
+              code: metal.code,
+              stockCode: metal._id,
+              voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
+              voucherDate: transaction.voucherDate || new Date(),
+              grossWeight: item.grossWeight || 0,
+              action: isSale ? "remove" : "add",
+              transactionType:
+                transaction.transactionType ||
+                item.transactionType ||
+                (isSale ? "sale" : "purchase"),
+              createdBy: transaction.createdBy || admin || null,
+              pcs: !!item.pieces,
+              note: isSale
+                ? "Inventory reduced due to sale transaction"
+                : "Inventory increased due to purchase transaction",
+            },
+          ],
+          { session }
         );
       }
 
-      if (!metal) {
-        console.warn(`⚠️ MetalStock not found for ID: ${metalId}`);
-        continue; // skip instead of crashing
-      }
+      console.log("✅ [updateInventory] Completed successfully");
+      return updated;
+    } catch (err) {
+      console.error("❌ [Inventory Update Error]", {
+        message: err?.message,
+        name: err?.name,
+        code: err?.code,
+        stack: err?.stack,
+      });
 
-      // 🔹 Compute deltas
-      const factor = isSale ? -1 : 1;
-      const pcsDelta = factor * (item.pieces || 0);
-      const weightDelta = factor * (item.grossWeight || 0);
-
-      // Check branch's negative stock control setting (with caching)
-      let allowNegativeStock = true; // Default to true (allow negative stock)
-      
-      if (metal.branch) {
-        const branchId = metal.branch.toString();
-        
-        // Check cache first
-        if (!branchNegativeStockCache.has(branchId)) {
-          try {
-            const branch = await BranchMaster.findById(metal.branch).session(session);
-            if (branch) {
-              // If negativeStockControl is explicitly false, don't allow negative stock
-              // If it's true or undefined, allow negative stock (default behavior)
-              allowNegativeStock = branch.negativeStockControl !== false;
-              branchNegativeStockCache.set(branchId, allowNegativeStock);
-            } else {
-              // Branch not found, default to allowing negative stock
-              branchNegativeStockCache.set(branchId, true);
-            }
-          } catch (branchError) {
-            console.warn(`⚠️ Failed to fetch branch for negative stock control: ${branchError.message}`);
-            // Default to allowing negative stock if branch fetch fails
-            branchNegativeStockCache.set(branchId, true);
-          }
-        } else {
-          // Use cached value
-          allowNegativeStock = branchNegativeStockCache.get(branchId);
-        }
-      }
-
-      // Validate stock levels only if negative stock is not allowed
-      if (!allowNegativeStock) {
-        if (inventory.pcsCount + pcsDelta < 0 || inventory.grossWeight + weightDelta < 0) {
-          throw createAppError(
-            `Insufficient stock for metal: ${metal.code}`,
-            400,
-            "INSUFFICIENT_STOCK"
-          );
-        }
-      }
-
-      // Apply deltas
-      inventory.pcsCount += pcsDelta;
-      inventory.grossWeight += weightDelta;
-      inventory.pureWeight = inventory.grossWeight * (inventory.purity || 1);
-
-      await inventory.save({ session });
-      updated.push(inventory);
-
-      // Log entry
-      await InventoryLog.create(
-        [
-          {
-            code: metal.code,
-            stockCode: metal._id,
-            voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
-            voucherDate: transaction.voucherDate || new Date(),
-            grossWeight: item.grossWeight || 0,
-            action: isSale ? "remove" : "add",
-            transactionType:
-              transaction.transactionType ||
-              item.transactionType ||
-              (isSale ? "sale" : "purchase"),
-            createdBy: transaction.createdBy || admin || null,
-            pcs: !!item.pieces,
-            note: isSale
-              ? "Inventory reduced due to sale transaction"
-              : "Inventory increased due to purchase transaction",
-          },
-        ],
-        { session }
+      throw createAppError(
+        err?.message || "Failed to update inventory",
+        err?.statusCode || 500,
+        err?.code || "INVENTORY_UPDATE_FAILED"
       );
     }
-
-    console.log("✅ [updateInventory] Completed successfully");
-    return updated;
-  } catch (err) {
-    console.error("❌ [Inventory Update Error]", {
-      message: err?.message,
-      name: err?.name,
-      code: err?.code,
-      stack: err?.stack,
-    });
-
-    throw createAppError(
-      err?.message || "Failed to update inventory",
-      err?.statusCode || 500,
-      err?.code || "INVENTORY_UPDATE_FAILED"
-    );
   }
-}
 
 
   static async createRegistryEntry({

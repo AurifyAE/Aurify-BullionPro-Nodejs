@@ -60,6 +60,19 @@ const inventoryLogSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Gross Weight cannot be negative"],
     },
+    purity: {
+      type: Number,
+      default: 0,
+      min: [0, "Purity cannot be negative"],
+    },
+    avgMakingRate: {
+      type: Number,
+      default: 0,
+    },
+    avgMakingAmount: {
+      type: Number,
+      default: 0,
+    },
     action: {
       type: String,
       enum: ["add", "update", "delete", "remove"],
