@@ -12694,16 +12694,28 @@ class MetalTransactionService {
     // Update only allowed fields
     const allowedFields = [
       "partyCode",
-      "partyCurrency", // ← ADD THIS
+      "partyCurrency",
+      "partyCurrencyRate",
+      "itemCurrency",
+      "itemCurrencyRate",
       "stockItems",
       "otherCharges",
       "totalSummary",
       "voucherDate",
       "voucherNumber",
+      "voucherType",
+      "prefix",
       "transactionType",
       "fixed",
       "unfix",
       "hedge",
+      "metalRateUnit",
+      "enteredBy",
+      "salesman",
+      "supplierInvoiceNo",
+      "supplierDate",
+      "notes",
+      "status",
     ];
 
     for (const [key, value] of Object.entries(updateData)) {
