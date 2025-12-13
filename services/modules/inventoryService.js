@@ -210,7 +210,7 @@ class InventoryService {
   static async deleteInventoryLogById(inventoryId) {
 
     try {
-      const result = await InventoryLog.deleteMany({ stockCode: new mongoose.Types.ObjectId(inventoryId) });
+      const result = await InventoryLog.deleteMany({ _id: new mongoose.Types.ObjectId(inventoryId) });
       console.log("Deleted inventory logs for inventoryId:", inventoryId, "Result:", result);
       return result;
     } catch (error) {
