@@ -1,6 +1,6 @@
 import express from "express";
 import { authenticateToken } from '../../middleware/authMiddleware.js';
-import { getAllInventory, createInventory, updateInventory, getInventoryById, getAllLogs, getInventoryLogById, deleteInventoryLogById } from '../../controllers/modules/inventoryController.js';
+import { getAllInventory, createInventory, updateInventory, getInventoryById, getAllLogs, getInventoryLogById, deleteInventoryLogById, updateInventoryLog } from '../../controllers/modules/inventoryController.js';
 
 const router = express.Router();
 router.use(authenticateToken);
@@ -11,6 +11,7 @@ router.get("/", getAllInventory);
 router.put("/", updateInventory);
 router.get("/:id", getInventoryById);
 router.get("/log/:id", getInventoryLogById);
+router.put("/log/:id", updateInventoryLog);
 router.delete("/log/:id", deleteInventoryLogById);
 
 export default router;

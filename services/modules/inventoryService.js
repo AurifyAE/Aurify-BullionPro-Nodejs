@@ -207,6 +207,22 @@ class InventoryService {
       );
     }
   }
+
+  static async updateInventoryLog(inventoryId, body) {
+    console.log("Bodyyyyy", body)
+    console.log("Fetching logs for inventoryId", inventoryId);
+    try {
+      const logs = await InventoryLog.findByIdAndUpdate(inventoryId, body, { new: true });
+      return logs;
+    } catch (error) {
+      throw createAppError(
+        "Failed to fetch inventory Logs",
+        500,
+        "FETCH_INVENTORY_LOG_ERROR"
+      );
+    }
+  }
+
   static async deleteInventoryLogById(inventoryId) {
 
     try {
