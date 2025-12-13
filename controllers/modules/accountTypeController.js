@@ -5,6 +5,7 @@ import {
 } from "../../utils/createAccountCode.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import { deleteMultipleS3Files } from "../../utils/s3Utils.js"; // Ensure this import is added
+import AccountMode from "../../models/modules/AccountMode.js";
 
 // Create new trade debtor
 export const createTradeDebtor = async (req, res, next) => {
@@ -173,6 +174,21 @@ export const createTradeDebtor = async (req, res, next) => {
     let parsedEmployees = [];
     let parsedVatGstDetails = {};
     let parsedBankDetails = parseJsonField(bankDetails, "bankDetails") || [];
+    
+    // Check if account mode is BANK to determine if PDC validation is required
+    let isBankAccountMode = false;
+    if (accountType) {
+      try {
+        const accountMode = await AccountMode.findById(accountType).select("name").lean();
+        if (accountMode && accountMode.name) {
+          isBankAccountMode = accountMode.name.toUpperCase().includes("BANK");
+        }
+      } catch (error) {
+        console.error("Error fetching account mode:", error);
+        // Continue without PDC validation if we can't determine the mode
+      }
+    }
+    
     if (Array.isArray(parsedBankDetails) && parsedBankDetails.length > 0) {
       parsedBankDetails = parsedBankDetails.map((bank) => {
         // Helper to convert empty strings to null for ObjectId fields
@@ -237,34 +253,36 @@ export const createTradeDebtor = async (req, res, next) => {
           ),
         };
 
-        // Validate required PDC fields when bank data is provided
-        if (!sanitizedBank.pdcIssue || sanitizedBank.pdcIssue === null) {
-          throw createAppError(
-            "PDC Issue is required for bank details",
-            400,
-            "MISSING_PDC_ISSUE"
-          );
-        }
-        if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
-          throw createAppError(
-            "Maturity Days is required for bank details",
-            400,
-            "MISSING_MATURITY_DAYS"
-          );
-        }
-        if (!sanitizedBank.pdcReceipt || sanitizedBank.pdcReceipt === null) {
-          throw createAppError(
-            "PDC Receipt is required for bank details",
-            400,
-            "MISSING_PDC_RECEIPT"
-          );
-        }
-        if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
-          throw createAppError(
-            "PDC Receipt Maturity Days is required for bank details",
-            400,
-            "MISSING_PDC_RECEIPT_MATURITY_DAYS"
-          );
+        // Validate required PDC fields ONLY when account mode is BANK
+        if (isBankAccountMode) {
+          if (!sanitizedBank.pdcIssue || sanitizedBank.pdcIssue === null) {
+            throw createAppError(
+              "PDC Issue is required for bank account mode",
+              400,
+              "MISSING_PDC_ISSUE"
+            );
+          }
+          if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
+            throw createAppError(
+              "Maturity Days is required for bank account mode",
+              400,
+              "MISSING_MATURITY_DAYS"
+            );
+          }
+          if (!sanitizedBank.pdcReceipt || sanitizedBank.pdcReceipt === null) {
+            throw createAppError(
+              "PDC Receipt is required for bank account mode",
+              400,
+              "MISSING_PDC_RECEIPT"
+            );
+          }
+          if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
+            throw createAppError(
+              "PDC Receipt Maturity Days is required for bank account mode",
+              400,
+              "MISSING_PDC_RECEIPT_MATURITY_DAYS"
+            );
+          }
         }
 
         return sanitizedBank;
@@ -857,6 +875,46 @@ export const updateTradeDebtor = async (req, res, next) => {
     // 5.5. bankDetails (sanitize ObjectId and Date fields)
     // ──────────────────────────────────────────────────────────────
     if (updateData.bankDetails && Array.isArray(updateData.bankDetails)) {
+      // Check if account mode is BANK to determine if PDC validation is required
+      let isBankAccountMode = false;
+      if (updateData.accountType) {
+        try {
+          const accountMode = await AccountMode.findById(updateData.accountType).select("name").lean();
+          if (accountMode && accountMode.name) {
+            isBankAccountMode = accountMode.name.toUpperCase().includes("BANK");
+          }
+        } catch (error) {
+          console.error("Error fetching account mode:", error);
+          // If accountType is not in updateData, try to get it from existing record
+          try {
+            const existingDebtor = await AccountTypeService.getTradeDebtorById(id);
+            if (existingDebtor && existingDebtor.accountType) {
+              const accountMode = await AccountMode.findById(existingDebtor.accountType).select("name").lean();
+              if (accountMode && accountMode.name) {
+                isBankAccountMode = accountMode.name.toUpperCase().includes("BANK");
+              }
+            }
+          } catch (fetchError) {
+            console.error("Error fetching existing debtor account mode:", fetchError);
+            // Continue without PDC validation if we can't determine the mode
+          }
+        }
+      } else {
+        // If accountType is not in updateData, try to get it from existing record
+        try {
+          const existingDebtor = await AccountTypeService.getTradeDebtorById(id);
+          if (existingDebtor && existingDebtor.accountType) {
+            const accountMode = await AccountMode.findById(existingDebtor.accountType).select("name").lean();
+            if (accountMode && accountMode.name) {
+              isBankAccountMode = accountMode.name.toUpperCase().includes("BANK");
+            }
+          }
+        } catch (fetchError) {
+          console.error("Error fetching existing debtor account mode:", fetchError);
+          // Continue without PDC validation if we can't determine the mode
+        }
+      }
+      
       // Helper to convert empty strings to null for ObjectId fields
       const sanitizeObjectIdField = (value) => {
         if (
@@ -918,34 +976,36 @@ export const updateTradeDebtor = async (req, res, next) => {
           pdcReceiptMaturityDays: sanitizeNumberField(bank.pdcReceiptMaturityDays),
         };
 
-        // Validate required PDC fields when bank data is provided
-        if (!sanitizedBank.pdcIssue || sanitizedBank.pdcIssue === null) {
-          throw createAppError(
-            "PDC Issue is required for bank details",
-            400,
-            "MISSING_PDC_ISSUE"
-          );
-        }
-        if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
-          throw createAppError(
-            "Maturity Days is required for bank details",
-            400,
-            "MISSING_MATURITY_DAYS"
-          );
-        }
-        if (!sanitizedBank.pdcReceipt || sanitizedBank.pdcReceipt === null) {
-          throw createAppError(
-            "PDC Receipt is required for bank details",
-            400,
-            "MISSING_PDC_RECEIPT"
-          );
-        }
-        if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
-          throw createAppError(
-            "PDC Receipt Maturity Days is required for bank details",
-            400,
-            "MISSING_PDC_RECEIPT_MATURITY_DAYS"
-          );
+        // Validate required PDC fields ONLY when account mode is BANK
+        if (isBankAccountMode) {
+          if (!sanitizedBank.pdcIssue || sanitizedBank.pdcIssue === null) {
+            throw createAppError(
+              "PDC Issue is required for bank account mode",
+              400,
+              "MISSING_PDC_ISSUE"
+            );
+          }
+          if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
+            throw createAppError(
+              "Maturity Days is required for bank account mode",
+              400,
+              "MISSING_MATURITY_DAYS"
+            );
+          }
+          if (!sanitizedBank.pdcReceipt || sanitizedBank.pdcReceipt === null) {
+            throw createAppError(
+              "PDC Receipt is required for bank account mode",
+              400,
+              "MISSING_PDC_RECEIPT"
+            );
+          }
+          if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
+            throw createAppError(
+              "PDC Receipt Maturity Days is required for bank account mode",
+              400,
+              "MISSING_PDC_RECEIPT_MATURITY_DAYS"
+            );
+          }
         }
 
         return sanitizedBank;
