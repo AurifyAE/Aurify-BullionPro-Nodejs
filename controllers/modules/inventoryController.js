@@ -31,6 +31,16 @@ export const getInventoryLogById = async (req, res, next) => {
     }
 };
 
+export const deleteInventoryLogById = async (req, res, next) => {
+    console.log("Delete log controller hit");
+    try {
+        const response = await InventoryService.deleteInventoryLogById(req.params.id)
+        res.status(200).json({ message: "Inventory log deleted successfully" });
+    } catch (error) {
+        next(error);
+    }
+};
+
 
 
 export const getAllLogs = async (req, res, next) => {

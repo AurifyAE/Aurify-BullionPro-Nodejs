@@ -207,6 +207,23 @@ class InventoryService {
       );
     }
   }
+  static async deleteInventoryLogById(inventoryId) {
+
+    try {
+      const result = await InventoryLog.deleteMany({ stockCode: new mongoose.Types.ObjectId(inventoryId) });
+      console.log("Deleted inventory logs for inventoryId:", inventoryId, "Result:", result);
+      return result;
+    } catch (error) {
+      throw createAppError(
+        "Failed to fetch inventory Logs",
+        500,
+        "FETCH_INVENTORY_LOG_ERROR"
+      );
+    }
+  }
+
+
+
 
   static async fetchInventoryById(inventoryId) {
     try {
