@@ -33,9 +33,10 @@ export const getInventoryLogById = async (req, res, next) => {
 
 export const updateInventoryLog = async (req, res, next) => {
     const body = req.body;
-    console.log(body)
+    const adminId = req.user?._id;
+    console.log("Update log controller hit");
     try {
-        const updatedInventoryLog = await InventoryService.updateInventoryLog(req.params.id, body)
+        const updatedInventoryLog = await InventoryService.updateInventoryLog(req.params.id, body, adminId)
         res.status(200).json(updatedInventoryLog);
     } catch (error) {
         next(error);

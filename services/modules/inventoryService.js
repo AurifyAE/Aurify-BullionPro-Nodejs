@@ -33,6 +33,7 @@ class InventoryService {
                 },
               },
             },
+            // purchase , salereturn , 
 
             totalPeices: {
               $sum: {
@@ -226,13 +227,15 @@ class InventoryService {
     }
   }
 
-  static async updateInventoryLog(inventoryId, body) {
-    console.log("Bodyyyyy", body)
-    console.log("Fetching logs for inventoryId", inventoryId);
+  static async updateInventoryLog(inventoryId, body, admin) {
+
     try {
+      // updated by also add to inventory log
+      body.updatedBy = admin;
       const logs = await InventoryLog.findByIdAndUpdate(inventoryId, body, { new: true });
       return logs;
     } catch (error) {
+      console.log(error)
       throw createAppError(
         "Failed to fetch inventory Logs",
         500,
@@ -630,6 +633,7 @@ class InventoryService {
 
         await inventory.save({ session });
         updated.push(inventory);
+        console.log(JSON.stringify(transaction));
 
         // Log entry
         await InventoryLog.create(
@@ -639,14 +643,16 @@ class InventoryService {
               stockCode: metal._id,
               voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
               voucherDate: transaction.voucherDate || new Date(),
+              voucgerType: transaction.voucherType || item.voucherType || "N/A",
               grossWeight: item.grossWeight || 0,
+              party: transaction.party || item.party || null,
               action: isSale ? "remove" : "add",
               transactionType:
                 transaction.transactionType ||
                 item.transactionType ||
                 (isSale ? "sale" : "purchase"),
               createdBy: transaction.createdBy || admin || null,
-              pcs: !!item.pieces,
+              pcs: item.pieces,
               note: isSale
                 ? "Inventory reduced due to sale transaction"
                 : "Inventory increased due to purchase transaction",
