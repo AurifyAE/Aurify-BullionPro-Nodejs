@@ -24,7 +24,9 @@ export const createMetalTransaction = async (req, res, next) => {
       partyCurrency,
       partyCurrencyRate,
       itemCurrency,
+      itemCurrencyRate,
       voucherType,
+      prefix,
       voucherDate,
       voucherNumber,
       supplierInvoiceNo,
@@ -268,8 +270,14 @@ export const createMetalTransaction = async (req, res, next) => {
       partyCode: trim(partyCode),
       partyCurrency: trim(partyCurrency),
       itemCurrency: trim(itemCurrency),
+      itemCurrencyRate: itemCurrencyRate !== undefined && itemCurrencyRate !== null && itemCurrencyRate !== "" 
+        ? toNumber(itemCurrencyRate, 1) 
+        : (partyCurrencyRate !== undefined && partyCurrencyRate !== null && partyCurrencyRate !== "" 
+          ? toNumber(partyCurrencyRate, 1) 
+          : 1),
       partyCurrencyRate: toNumber(partyCurrencyRate, 1),
       voucherType,
+      prefix: trim(prefix),
       voucherDate: toDate(voucherDate) || new Date(),
       voucherNumber: trim(voucherNumber),
       supplierInvoiceNo: trim(supplierInvoiceNo),
@@ -293,8 +301,8 @@ export const createMetalTransaction = async (req, res, next) => {
         rounded: toNumber(totalSummary?.rounded) || 0,
         totalAmount: toNumber(totalSummary?.totalAmount) || 0,
       },
-      enteredBy: trim(enteredBy),
-      salesman: trim(salesman),
+      enteredBy: enteredBy || null, // Store as ObjectId, not string
+      salesman: salesman || null, // Store as ObjectId, not string
       status,
       notes: trim(notes),
       dealOrderId: dealOrderId ? trim(dealOrderId) : null,
@@ -344,8 +352,10 @@ export const updateMetalTransaction = async (req, res, next) => {
       partyCode,
       partyCurrency,
       itemCurrency,
+      itemCurrencyRate,
       partyCurrencyRate = 1,
       voucherType,
+      prefix,
       voucherDate,
       voucherNumber,
       supplierInvoiceNo,
@@ -540,8 +550,14 @@ export const updateMetalTransaction = async (req, res, next) => {
       partyCode: trim(partyCode),
       partyCurrency: trim(partyCurrency),
       itemCurrency: trim(itemCurrency),
+      itemCurrencyRate: itemCurrencyRate !== undefined && itemCurrencyRate !== null && itemCurrencyRate !== "" 
+        ? toNumber(itemCurrencyRate, 1) 
+        : (partyCurrencyRate !== undefined && partyCurrencyRate !== null && partyCurrencyRate !== "" 
+          ? toNumber(partyCurrencyRate, 1) 
+          : 1),
       partyCurrencyRate: toNumber(partyCurrencyRate, 1),
       voucherType,
+      prefix: trim(prefix),
       voucherDate: toDate(voucherDate) || new Date(),
       voucherNumber: trim(voucherNumber),
       supplierInvoiceNo: trim(supplierInvoiceNo),
@@ -565,8 +581,8 @@ export const updateMetalTransaction = async (req, res, next) => {
         rounded: toNumber(totalSummary?.rounded) || 0,
         totalAmount: toNumber(totalSummary?.totalAmount) || 0,
       },
-      enteredBy: trim(enteredBy),
-      salesman: trim(salesman),
+      enteredBy: enteredBy || null, // Store as ObjectId, not string
+      salesman: salesman || null, // Store as ObjectId, not string
       status,
       notes: trim(notes),
     };

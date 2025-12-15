@@ -145,7 +145,7 @@ class RegistryService {
     // Fetch registries
     const registries = await Registry.find({
       metalTransactionId,
-      isActive: true,
+      isActive: true
     })
       .populate("party", "customerName accountCode")
       .populate("createdBy", "name")
@@ -243,12 +243,12 @@ class RegistryService {
     }
 
     // -----------------------------------------------------
-    // 📌 2) CONTAINER FOR RESULT LINES
+    // 📌 2) GROUP ENTRIES BY TYPE AND SUM VALUES
     // -----------------------------------------------------
-    const lines = [];
-    const addedKeySet = new Set();
+    const typeGroups = {}; // { type: { desc, accCode, currDr, currCr, goldDr, goldCr } }
 
-    const addLine = (
+    const addToGroup = (
+      type,
       desc,
       accCode,
       currDr = 0,
@@ -256,18 +256,20 @@ class RegistryService {
       goldDr = 0,
       goldCr = 0
     ) => {
-      const key = `${desc}-${accCode}-${currDr}-${currCr}-${goldDr}-${goldCr}`;
-      if (addedKeySet.has(key)) return;
-      addedKeySet.add(key);
-
-      lines.push({
-        accCode,
-        description: desc,
-        currencyDebit: Number(currDr.toFixed(2)),
-        currencyCredit: Number(currCr.toFixed(2)),
-        metalDebit: Number(goldDr.toFixed(3)),
-        metalCredit: Number(goldCr.toFixed(3)),
-      });
+      if (!typeGroups[type]) {
+        typeGroups[type] = {
+          description: desc,
+          accCode,
+          currencyDebit: 0,
+          currencyCredit: 0,
+          metalDebit: 0,
+          metalCredit: 0,
+        };
+      }
+      typeGroups[type].currencyDebit += currDr;
+      typeGroups[type].currencyCredit += currCr;
+      typeGroups[type].metalDebit += goldDr;
+      typeGroups[type].metalCredit += goldCr;
     };
 
     // -----------------------------------------------------
@@ -279,13 +281,43 @@ class RegistryService {
     let partyGoldCredit = 0;
 
     // -----------------------------------------------------
-    // 📌 4) PROCESS EACH VALID (NON-HEDGE) REGISTRY
+    // 📌 4) PROCESS EACH VALID (NON-HEDGE) REGISTRY - GROUP BY TYPE
     // -----------------------------------------------------
+    const transactionType = (main?.transactionType || "").toLowerCase();
+
+    const isPurchaseSide = [
+      "purchase",
+      "purchase-return",
+      "import-purchase",
+      "import-purchase-return",
+    ].includes(transactionType);
+
+    const isSaleSide = [
+      "sale",
+      "sale-return",
+      "export-sale",
+      "export-sale-return",
+    ].includes(transactionType);
+
+    const partyName = party?.customerName || "Walk-in Customer";
+
     for (const reg of validRegistries) {
       const t = reg.type;
       const mode = getTypeMode(t);
+      let desc = t.replace(/[_-]/g, " ").toUpperCase();
 
-      const desc = t.replace(/[_-]/g, " ").toUpperCase();
+      // Custom descriptions for bullion fixing and VAT
+      if (t === "purchase-fixing") {
+        desc = `PURCHASE GOLD`;
+      } else if (t === "sales-fixing") {
+        desc = `SALE GOLD`;
+      } else if (t === "VAT_AMOUNT" || t === "PARTY_VAT_AMOUNT") {
+        if (isPurchaseSide) {
+          desc = `INPUT VAT`;
+        } else if (isSaleSide) {
+          desc = `OUTPUT VAT`;
+        }
+      }
       const prefix = t
         .replace(/[^A-Za-z]/g, "")
         .substring(0, 3)
@@ -304,7 +336,8 @@ class RegistryService {
           break;
 
         case "combined":
-          addLine(
+          addToGroup(
+            t,
             desc,
             accCode,
             reg.cashDebit || 0,
@@ -315,13 +348,11 @@ class RegistryService {
           break;
 
         case "gold-only":
-          if (reg.debit > 0) addLine(desc, accCode, 0, 0, reg.debit, 0);
-          if (reg.credit > 0) addLine(desc, accCode, 0, 0, 0, reg.credit);
+          addToGroup(t, desc, accCode, 0, 0, reg.debit || 0, reg.credit || 0);
           break;
 
         case "cash-only":
-          if (reg.debit > 0) addLine(desc, accCode, reg.debit, 0);
-          if (reg.credit > 0) addLine(desc, accCode, 0, reg.credit);
+          addToGroup(t, desc, accCode, reg.debit || 0, reg.credit || 0, 0, 0);
           break;
 
         default:
@@ -330,10 +361,19 @@ class RegistryService {
     }
 
     // -----------------------------------------------------
-    // 📌 5) SUPPLIER SUMMARY ENTRY
+    // 📌 5) CONVERT GROUPED ENTRIES TO LINES ARRAY
     // -----------------------------------------------------
+    const lines = Object.values(typeGroups).map((group) => ({
+      accCode: group.accCode,
+      description: group.description,
+      currencyDebit: Number(group.currencyDebit.toFixed(2)),
+      currencyCredit: Number(group.currencyCredit.toFixed(2)),
+      metalDebit: Number(group.metalDebit.toFixed(3)),
+      metalCredit: Number(group.metalCredit.toFixed(3)),
+    }));
+
     // -----------------------------------------------------
-    // 📌 5) SUPPLIER SUMMARY ENTRY (ALWAYS SHOW)
+    // 📌 6) SUPPLIER SUMMARY ENTRY (ALWAYS SHOW)
     // -----------------------------------------------------
     if (party) {
       const netCurr = partyCurrencyDebit - partyCurrencyCredit;
@@ -345,10 +385,10 @@ class RegistryService {
       const metalDebit = netGold > 0 ? netGold : 0;
       const metalCredit = netGold < 0 ? Math.abs(netGold) : 0;
 
-      // Supplier entry must ALWAYS be added – bypass duplicate prevention
+      // Supplier entry must ALWAYS be added
       lines.push({
         accCode: party.accountCode || "SUP001",
-        description: "SUPPLIER",
+        description: party.customerName || "SUPPLIER",
         currencyDebit: Number(currencyDebit.toFixed(2)),
         currencyCredit: Number(currencyCredit.toFixed(2)),
         metalDebit: Number(metalDebit.toFixed(3)),
@@ -451,6 +491,23 @@ class RegistryService {
       };
     }
 
+    // Determine if base transaction is purchase-side or sale-side
+    const transactionType = (main?.transactionType || "").toLowerCase();
+
+    const isPurchaseSide = [
+      "purchase",
+      "purchase-return",
+      "import-purchase",
+      "import-purchase-return",
+    ].includes(transactionType);
+
+    const isSaleSide = [
+      "sale",
+      "sale-return",
+      "export-sale",
+      "export-sale-return",
+    ].includes(transactionType);
+
     // -----------------------------------------------------
     // 📌 1) TYPE RULES FOR HEDGE VOUCHERS
     // -----------------------------------------------------
@@ -516,7 +573,18 @@ class RegistryService {
       const t = reg.type;
       const mode = getTypeMode(t);
 
-      const desc = t.replace(/[_-]/g, " ").toUpperCase();
+      let desc = t.replace(/[_-]/g, " ").toUpperCase();
+
+      // Custom description for hedge entry based on transaction side
+      if (t === "HEDGE_ENTRY") {
+        if (isPurchaseSide) {
+          // Purchase transaction → hedge against sale
+          desc = "SALES HEDGING FIXING";
+        } else if (isSaleSide) {
+          // Sale transaction → hedge against purchase
+          desc = "PURCHASE HEDGING FIXING";
+        }
+      }
       const prefix = t
         .replace(/[^A-Za-z]/g, "")
         .substring(0, 3)
@@ -548,7 +616,7 @@ class RegistryService {
     }
 
     // -----------------------------------------------------
-    // 📌 5) SUPPLIER SUMMARY
+    // 📌 5) SUPPLIER SUMMARY (USE PARTY NAME)
     // -----------------------------------------------------
     if (party) {
       const netCurrDr = partyCurrencyDebit - partyCurrencyCredit;
@@ -556,8 +624,10 @@ class RegistryService {
       const netGoldDr = partyGoldDebit - partyGoldCredit;
       const netGoldCr = partyGoldCredit - partyGoldDebit;
 
+      const supplierName = party.customerName || "SUPPLIER";
+
       addLine(
-        "SUPPLIER",
+        supplierName,
         party.accountCode || "SUP001",
         netCurrDr > 0 ? netCurrDr : 0,
         netCurrCr > 0 ? netCurrCr : 0,
@@ -698,7 +768,14 @@ class RegistryService {
       const t = reg.type;
       const mode = getTypeMode(t);
 
-      const desc = t.replace(/[_-]/g, " ").toUpperCase();
+      let desc = t.replace(/[_-]/g, " ").toUpperCase();
+
+      // Custom descriptions for bullion fixing types
+      if (t === "purchase-fixing") {
+        desc = "PURCHASE GOLD";
+      } else if (t === "sales-fixing") {
+        desc = "SALE GOLD";
+      }
       const prefix = t
         .replace(/[^A-Za-z]/g, "")
         .substring(0, 3)
@@ -738,8 +815,10 @@ class RegistryService {
       const netGoldDr = partyGoldDebit - partyGoldCredit;
       const netGoldCr = partyGoldCredit - partyGoldDebit;
 
+      const supplierName = party.customerName || "SUPPLIER";
+
       addLine(
-        "SUPPLIER",
+        supplierName,
         party.accountCode || "SUP001",
         netCurrDr > 0 ? netCurrDr : 0,
         netCurrCr > 0 ? netCurrCr : 0,
@@ -1606,8 +1685,16 @@ class RegistryService {
       const t = reg.type;
       const mode = getTypeMode(t);
 
-      // Use type-based description like generateVoucherByMetalTransaction
-      const desc = t.replace(/[_-]/g, " ").toUpperCase();
+      // Use type-based description and append party name for PDC/BULLION
+      let desc = t.replace(/[_-]/g, " ").toUpperCase();
+
+      const partyName = reg.party?.customerName || party?.customerName || "Walk-in Customer";
+
+      if (t === "PDC_ENTRY") {
+        desc = `${partyName}`;
+      } else if (t === "BULLION_ENTRY") {
+        desc = `${partyName}`;
+      }
       const prefix = t
         .replace(/[^A-Za-z]/g, "")
         .substring(0, 3)
@@ -1646,7 +1733,7 @@ class RegistryService {
       // Supplier entry must ALWAYS be added – bypass duplicate prevention
       lines.push({
         accCode: party.accountCode || "SUP001",
-        description: "SUPPLIER",
+        description: party.customerName,
         currencyDebit: Number(currencyDebit.toFixed(2)),
         currencyCredit: Number(currencyCredit.toFixed(2)),
       });

@@ -399,6 +399,12 @@ const MetalTransactionSchema = new mongoose.Schema(
       default: null,
       maxlength: [50, "Voucher type cannot exceed 50 characters"],
     },
+    prefix: {
+      type: String,
+      trim: true,
+      default: null,
+      maxlength: [10, "Prefix cannot exceed 10 characters"],
+    },
     voucherDate: {
       type: Date,
       default: Date.now,
@@ -451,6 +457,11 @@ const MetalTransactionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "CurrencyMaster",
       default: null,
+    },
+    itemCurrencyRate: {
+      type: Number,
+      default: 1,
+      min: [0, "Item Currency Rate cannot be negative"],
     },
     partyCurrencyRate: {
       type: Number,
@@ -570,6 +581,11 @@ const MetalTransactionSchema = new mongoose.Schema(
       maxlength: [1000, "Notes cannot exceed 1000 characters"],
     },
     salesman: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Salesman",
+      default: null,
+    },
+    enteredBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Salesman",
       default: null,
