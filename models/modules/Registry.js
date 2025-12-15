@@ -7,7 +7,6 @@ const RegistrySchema = new mongoose.Schema(
       required: [true, "Transaction ID is required"],
       trim: true,
       uppercase: true,
-
     },
     transactionType:{
       type: String,

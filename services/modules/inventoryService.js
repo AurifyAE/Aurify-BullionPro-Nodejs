@@ -519,7 +519,8 @@ class InventoryService {
         avgMakingAmount: avgMakingAmount,
       });
 
-      await this.createRegistryEntry({
+      const res = await this.createRegistryEntry({
+        transactionType: "opening",
         transactionId: await Registry.generateTransactionId(),
         metalId: metalId,
         InventoryLogID: invLog._id,
@@ -535,6 +536,7 @@ class InventoryService {
         grossWeight: grossWeight,
         pureWeight,
       });
+      console.log("Registry entry created:", res);
       return savedInventory;
     } catch (error) {
       if (error.name === "AppError") throw error;
@@ -682,6 +684,7 @@ class InventoryService {
 
 
   static async createRegistryEntry({
+    transactionType,
     transactionId,
     metalId,
     InventoryLogID,
@@ -702,6 +705,8 @@ class InventoryService {
   }) {
     try {
       const registryEntry = new Registry({
+        transactionType,
+        assetType:"XAU",
         transactionId,
         metalId,
         InventoryLogID,
