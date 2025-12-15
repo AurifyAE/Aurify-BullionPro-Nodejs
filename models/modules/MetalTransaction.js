@@ -279,6 +279,16 @@ const otherChargeSchema = new mongoose.Schema(
       trim: true,
       maxlength: [200, "Description cannot exceed 200 characters"],
     },
+    percentage: {
+      type: Number,
+      default: 0,
+      min: [0, "Percentage cannot be negative"],
+    },
+    amount: {
+      type: Number,
+      default: 0,
+      min: [0, "Amount cannot be negative"],
+    },
     debit: {
       account: {
         type: mongoose.Schema.Types.ObjectId,
