@@ -21,43 +21,58 @@ class InventoryService {
               $sum: {
                 $switch: {
                   branches: [
-                    {
-                      case: { $eq: ["$transactionType", "sale"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "metalPayment"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "purchaseReturn"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "saleReturn"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "purchase"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "metalReceipt"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "opening"] },
-                      then: "$grossWeight",
-                    },
+                    { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
+                    { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
+                    { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
+                    { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
+                    { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
+                    { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
+                    { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" },
                   ],
                   default: 0,
                 },
               },
             },
+
+            totalPeices: {
+              $sum: {
+                $switch: {
+                  branches: [
+                    { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$pcs", -1] } },
+                    { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$pcs", -1] } },
+                    { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
+                    { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$pcs" },
+                    { case: { $eq: ["$transactionType", "purchase"] }, then: "$pcs" },
+                    { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$pcs" },
+                    { case: { $eq: ["$transactionType", "opening"] }, then: "$pcs" },
+                  ],
+                  default: 0,
+                },
+              },
+            },
+            avgMakingRate: {
+              $avg: {
+                $cond: [
+                  { $ne: ["$avgMakingRate", null] },
+                  "$avgMakingRate",
+                  "$$REMOVE"
+                ]
+              }
+            },
+            avgMakingAmount: {
+              $avg: {
+                $cond: [
+                  { $ne: ["$avgMakingAmount", null] },
+                  "$avgMakingAmount",
+                  "$$REMOVE"
+                ]
+              }
+            },
             pcs: { $first: "$pcs" },
             code: { $first: "$code" },
           },
         },
+
 
         // Lookup stock details from metalstocks
         {
@@ -99,7 +114,10 @@ class InventoryService {
           $project: {
             _id: 0,
             totalGrossWeight: 1,
+            totalPeices: 1,
             code: 1,
+            avgMakingRate: { $round: ["$avgMakingRate", 2] },
+            avgMakingAmount: { $round: ["$avgMakingAmount", 2] },
             totalValue: "$stock.totalValue",
             metalId: "$stock._id",
             StockName: "$stock.code",
@@ -500,14 +518,14 @@ class InventoryService {
 
       await this.createRegistryEntry({
         transactionId: await Registry.generateTransactionId(),
-        metalId: metalId, 
+        metalId: metalId,
         InventoryLogID: invLog._id,
         type: "GOLD_STOCK",
         goldBidValue: goldBidPrice,
         description: `OPENING STOCK FOR ${metal.code}`,
         value: grossWeight,
         isBullion: true,
-        credit:grossWeight,
+        credit: grossWeight,
         reference: voucher.voucherCode,
         createdBy: adminId,
         purity: inventory.purity,
