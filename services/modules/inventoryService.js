@@ -418,19 +418,22 @@ class InventoryService {
 
   static async updateInventoryByFrontendInput({
     metalId,
-    type,
-    value,
-    adminId,
-    voucher,
-    goldBidPrice,
+    grossWeight,
+    pieces,
     purity,
+    pureWeight,
     avgMakingRate,
     avgMakingAmount,
+    voucherDate,
+    voucher,
+    goldBidPrice,
+    adminId
   }) {
+    //log for debugging
     try {
-      if (!metalId || !type || value === undefined) {
+      if (!metalId) {
         throw createAppError(
-          "Missing metalId, type, or value",
+          "Missing metalId in input",
           400,
           "MISSING_INPUT"
         );
@@ -456,94 +459,59 @@ class InventoryService {
         );
       }
 
-      const qty = Number(value);
-      if (isNaN(qty)) {
-        throw createAppError(
-          "Provided value must be a number",
-          400,
-          "INVALID_VALUE"
-        );
-      }
       let description = "";
       let registryValue = 0;
-      const isAddition = qty > 0;
 
-      if (type === "pcs") {
-        if (!Number.isInteger(qty) || qty < 0) {
-          throw createAppError(
-            "Piece count is required and must be a non-negative integer for piece-based stock",
-            400,
-            "INVALID_PCS_COUNT"
-          );
-        }
-        inventory.grossWeight += qty * metal.totalValue;
-        inventory.pcsCount += qty;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
-          } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
-        registryValue = Math.abs(qty) * (metal.pricePerPiece || 0);
-      } else if (type === "grams") {
-        if (qty < 0) {
-          throw createAppError(
-            "Weight value must be a non-negative number",
-            400,
-            "INVALID_GRAM_VALUE"
-          );
-        }
-        inventory.grossWeight += qty;
-        inventory.pcsCount = inventory.grossWeight / inventory.pcsValue;
-        inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
-          } - ${Math.abs(qty)} grams`;
-        registryValue = Math.abs(qty) * (metal.pricePerGram || 0);
-      } else {
-        throw createAppError(
-          "Invalid type. Use 'pcs' or 'grams'",
-          400,
-          "INVALID_TYPE"
-        );
-      }
+      const isAddition = grossWeight >= 0 && pieces >= 0;
+      const qty = grossWeight !== 0 ? grossWeight : pieces;
+
+      // no pcs or gross weight distinction
+      inventory.grossWeight += grossWeight;
+      inventory.pcsCount += pieces;
+      description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
+        } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
+      registryValue = Math.abs(qty) * (metal.pricePerPiece || 0);
+
+      inventory.pureWeight = pureWeight
+      description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
+        } - ${Math.abs(qty)} grams`;
+      registryValue = Math.abs(qty) * (metal.pricePerGram || 0);
+
       const savedInventory = await inventory.save();
-      let pureWeight;
 
-      if (type == "pcs") {
-        value = savedInventory.pcsValue * value;
-        pureWeight = value * savedInventory.purity;
-      } else {
-        pureWeight = value * savedInventory.purity;
-      }
 
       const invLog = await InventoryLog.create({
         code: metal.code,
         transactionType: "opening",
-        pcs: type === "pcs",
+        pcs: pieces,
         stockCode: metal._id,
         voucherCode: voucher?.voucherCode || "",
         voucherType: voucher?.voucherType || "",
         voucherDate: voucher?.voucherDate || new Date(),
-        grossWeight: type === "grams" ? Math.abs(qty) : 0,
-        pcs: type === "pcs" ? Math.abs(qty) : 0,
+        grossWeight: Math.abs(grossWeight),
+        pcs: Math.abs(pieces),
         action: isAddition ? "add" : "remove",
         createdBy: adminId,
         note: `Inventory ${isAddition ? "added" : "removed"} by admin.`,
-        purity: type === "grams" ? purity : 0,
+        purity: purity,
         avgMakingRate: avgMakingRate,
         avgMakingAmount: avgMakingAmount,
       });
 
       await this.createRegistryEntry({
         transactionId: await Registry.generateTransactionId(),
-        metalId: metalId, // this is not Transaction id this is MetalID
+        metalId: metalId, 
         InventoryLogID: invLog._id,
         type: "GOLD_STOCK",
         goldBidValue: goldBidPrice,
         description: `OPENING STOCK FOR ${metal.code}`,
-        value: value,
+        value: grossWeight,
         isBullion: true,
-        credit: value,
+        credit:grossWeight,
         reference: voucher.voucherCode,
         createdBy: adminId,
         purity: inventory.purity,
-        grossWeight: value,
+        grossWeight: grossWeight,
         pureWeight,
       });
       return savedInventory;

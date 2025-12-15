@@ -81,26 +81,18 @@ export const createInventory = async (req, res, next) => {
 export const updateInventory = async (req, res, next) => {
     try {
         const {
-            type,
-            value,
             metalId,
-            voucher,
-            goldBidPrice,
+            grossWeight,
+            pieces,
             purity,
+            pureWeight,
             avgMakingRate: rawAvgMakingRate,
             avgMakingAmount: rawAvgMakingAmount,
+            voucherDate,
+            voucher,
+            goldBidPrice,
         } = req.body;
 
-        const parsedValue = parseFloat(value);
-
-        if (!["pcs", "grams"].includes(type) || isNaN(parsedValue)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid update type or value",
-            });
-        }
-
-        // ✅ Normalize optional fields
         const avgMakingRate =
             rawAvgMakingRate !== undefined && rawAvgMakingRate !== null && rawAvgMakingRate !== ""
                 ? parseFloat(rawAvgMakingRate)
@@ -112,27 +104,19 @@ export const updateInventory = async (req, res, next) => {
                 : 0;
 
         const adminId = req.admin.id;
-        console.log(metalId,
-            type,
-            parsedValue,
-            adminId,
-            voucher,
-            goldBidPrice,
-            purity,
-            avgMakingRate,
-            avgMakingAmount
-        )
 
         const updatedItem = await InventoryService.updateInventoryByFrontendInput({
             metalId,
-            type,
-            value: parsedValue,
-            adminId,
-            voucher,
-            goldBidPrice,
+            grossWeight,
+            pieces,
             purity,
+            pureWeight,
             avgMakingRate,
             avgMakingAmount,
+            voucherDate,
+            voucher,
+            goldBidPrice,
+            adminId
         });
 
         res.status(200).json({
