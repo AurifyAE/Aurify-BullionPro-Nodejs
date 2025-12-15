@@ -235,7 +235,8 @@ export const createMetalTransaction = async (req, res, next) => {
       return {
         code: trim(charge.code),
         description: trim(charge.description) || "",
-        percentage: toNumber(charge.percentage),
+        percentage: toNumber(charge.percentage, 0),
+        amount: toNumber(charge.amount, 0), // Add amount field
         debit: {
           account: trim(charge.debit.account),
           baseCurrency: toNumber(charge.debit.baseCurrency),
@@ -515,7 +516,8 @@ export const updateMetalTransaction = async (req, res, next) => {
       return {
         code: trim(charge.code),
         description: trim(charge.description) || "",
-        percentage: toNumber(charge.percentage),
+        percentage: toNumber(charge.percentage, 0),
+        amount: toNumber(charge.amount, 0), // Add amount field
         debit: {
           account: trim(charge.debit.account),
           baseCurrency: toNumber(charge.debit.baseCurrency),

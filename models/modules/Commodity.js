@@ -13,7 +13,6 @@ const CommoditySchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
       maxlength: [20, "Code cannot exceed 20 characters"],
-      match: [/^[A-Z0-9_-]+$/, "Code can only contain letters, numbers, hyphen or underscore"],
       unique: true,
     },
     description: {

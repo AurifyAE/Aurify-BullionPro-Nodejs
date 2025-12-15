@@ -160,6 +160,59 @@ const resolveOrderWeight = (order) => {
   );
 };
 
+const aggregateOrdersForRegistry = (orders) => {
+  const aggregates = new Map();
+
+  for (const order of orders) {
+    const currencyId = order.selectedCurrencyId?.toString();
+    if (!currencyId) {
+      throw createAppError(
+        "Order missing selectedCurrencyId",
+        400,
+        "MISSING_CURRENCY"
+      );
+    }
+
+    const pureWeight = resolveOrderWeight(order);
+    const grossWeight = Number(order.grossWeight) || 0;
+    const bidValueOz = toNumberOrThrow(order.bidValue, "bidValue");
+    const priceBase = toNumberOrThrow(order.price, "price");
+    const currencyRate =
+      Number(order.currencyRate ?? order.itemCurrencyRate ?? 1) || 1;
+    const totalValueAED = priceBase * currencyRate;
+    const assetType = order.currencyCode;
+
+    const key = `${currencyId}|${assetType || ""}|${currencyRate}`;
+    let agg = aggregates.get(key);
+    if (!agg) {
+      agg = {
+        currencyId,
+        assetType,
+        currencyRate,
+        pureWeightSum: 0,
+        grossWeightSum: 0,
+        totalValueAEDSum: 0,
+        bidValueOzWeightedSum: 0,
+        weightForAvg: 0,
+        sourceOrder: order,
+      };
+      aggregates.set(key, agg);
+    }
+
+    agg.pureWeightSum += pureWeight;
+    agg.grossWeightSum += grossWeight;
+    agg.totalValueAEDSum += totalValueAED;
+    agg.bidValueOzWeightedSum += bidValueOz * pureWeight;
+    agg.weightForAvg += pureWeight;
+  }
+
+  return Array.from(aggregates.values()).map((agg) => ({
+    ...agg,
+    bidValueOz:
+      agg.weightForAvg > 0 ? agg.bidValueOzWeightedSum / agg.weightForAvg : 0,
+  }));
+};
+
 /* --------------------------------------------------------------
    DELTA HELPERS (GOLD + CASH)
    -------------------------------------------------------------- */
@@ -373,6 +426,8 @@ export const TransactionFixingService = {
       const partyName =
         account.customerName || account.accountCode || "Unknown";
 
+      const registryAggregates = aggregateOrdersForRegistry(transactionData.orders);
+
       for (const order of transactionData.orders) {
         const regId = await Registry.generateTransactionId();
         const pureWeight = resolveOrderWeight(order);
@@ -473,21 +528,25 @@ export const TransactionFixingService = {
         }
 
         // REGULAR REGISTRY ENTRIES (gold & cash)
+      }
+
+      for (const agg of registryAggregates) {
+        const regId = await Registry.generateTransactionId();
         const entries = buildRegistryEntries({
           regId,
           fixId: transaction._id,
           account,
-          order,
+          order: agg.sourceOrder,
           type,
-          pureWeight,
-          totalValue: totalValueAED, // AED
-          bidValueOz,
-          currencyId,
+          pureWeight: agg.pureWeightSum,
+          totalValue: agg.totalValueAEDSum,
+          bidValueOz: agg.bidValueOz,
+          currencyId: agg.currencyId,
           adminId,
-          voucherNumber,
-          grossWeight,
-          assetType: order.currencyCode,
-          currencyRate: order.itemCurrencyRate,
+          voucherNumber: transaction.voucherNumber,
+          grossWeight: agg.grossWeightSum,
+          assetType: agg.assetType,
+          currencyRate: agg.currencyRate,
         });
         registryEntries.push(...entries);
       }
@@ -626,6 +685,8 @@ export const TransactionFixingService = {
       const partyName =
         account.customerName || account.accountCode || "Unknown";
 
+      const registryAggregates = aggregateOrdersForRegistry(newOrders);
+
       for (const order of newOrders) {
         const regId = await Registry.generateTransactionId();
         const pureWeight = resolveOrderWeight(order);
@@ -726,19 +787,25 @@ export const TransactionFixingService = {
         }
 
         // REGISTRY ENTRIES
+      }
+
+      for (const agg of registryAggregates) {
+        const regId = await Registry.generateTransactionId();
         const entries = buildRegistryEntries({
           regId,
           fixId: existing._id,
           account,
-          order,
+          order: agg.sourceOrder,
           type: newType,
-          pureWeight,
-          totalValue: totalValueAED,
-          bidValueOz,
-          currencyId,
+          pureWeight: agg.pureWeightSum,
+          totalValue: agg.totalValueAEDSum,
+          bidValueOz: agg.bidValueOz,
+          currencyId: agg.currencyId,
           adminId,
-          voucherNumber,
-          grossWeight,
+          voucherNumber: existing.voucherNumber,
+          grossWeight: agg.grossWeightSum,
+          assetType: agg.assetType,
+          currencyRate: agg.currencyRate,
         });
         registryEntries.push(...entries);
       }
