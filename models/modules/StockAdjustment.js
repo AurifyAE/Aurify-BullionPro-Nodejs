@@ -88,7 +88,7 @@ const StockAdjustmentSchema = new Schema(
 
     division: {
       type: Schema.Types.ObjectId,
-      ref: "Division",
+      ref: "DivisionMaster",
       required: true,
       index: true,
     },

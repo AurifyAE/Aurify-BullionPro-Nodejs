@@ -25,8 +25,17 @@ export const createStockAdjustment = async (req, res, next) => {
 
 
 export const getAllStockAdjustments = async (req, res, next) => {
-    // To be implemented
-}
+    try {
+        const result = await StockAdjustmentService.getAllStockAdjustments(req.query);
+
+        res.status(200).json({
+            success: true,
+            ...result,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
 
 export const getStockAdjustmentById = async (req, res, next) => {
     // To be implemented
