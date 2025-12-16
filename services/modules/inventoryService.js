@@ -17,7 +17,7 @@ class InventoryService {
         {
           $addFields: {
             isPurchase: {
-              $eq: ["$transactionType", "purchase"],
+              $eq: ["$transactionType", "purchase", "salesreturn", "metalReceipt"],
             },
             isOpeningOrAdjustment: {
               $in: ["$transactionType", ["opening", "adjustment"]],
@@ -706,6 +706,8 @@ class InventoryService {
               voucherType: transaction.voucherType || item.voucherType || "N/A",
               grossWeight: item.grossWeight || 0,
               party: transaction.party || item.party || null,
+              avgMakingAmount: item.makingUnit.makingAmount || 0,
+              avgMakingRate: item.makingUnit.makingRate || 0,
               action: isSale ? "remove" : "add",
               transactionType:
                 transaction.transactionType ||
