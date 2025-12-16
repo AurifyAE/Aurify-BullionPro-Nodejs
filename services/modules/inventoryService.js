@@ -10,56 +10,132 @@ class InventoryService {
   static async fetchAllInventory() {
     try {
       const logs = await InventoryLog.aggregate([
-        // Sort to ensure latest values
+        // 1️⃣ Sort latest first
         { $sort: { updatedAt: -1 } },
 
-        // Group by stockCode
+        // 2️⃣ Flags
+        {
+          $addFields: {
+            isPurchase: {
+              $in: [
+                "$transactionType",
+                [
+                  "purchase",
+                  "saleReturn",
+                  "importPurchase",
+                  "importPurchaseReturn",
+                  "exportSaleReturn",
+                ],
+              ],
+            },
+            isOpeningOrAdjustment: {
+              $in: ["$transactionType", ["opening", "adjustment"]],
+            },
+          },
+        },
+
+        // 3️⃣ Group by stockCode
         {
           $group: {
             _id: "$stockCode",
+
+            // ----------------------------
+            // Gross Weight
+            // ----------------------------
             totalGrossWeight: {
               $sum: {
-                $switch: {
-                  branches: [
-                    {
-                      case: { $eq: ["$transactionType", "sale"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "metalPayment"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "purchaseReturn"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "saleReturn"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "purchase"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "metalReceipt"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "opening"] },
-                      then: "$grossWeight",
-                    },
-                  ],
-                  default: 0,
-                },
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$grossWeight",
+                  { $multiply: ["$grossWeight", -1] },
+                ],
               },
             },
-            pcs: { $first: "$pcs" },
+
+            // ----------------------------
+            // Pieces
+            // ----------------------------
+            totalPeices: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$pcs",
+                  { $multiply: ["$pcs", -1] }
+                ]
+              }
+            },
+            // ----------------------------
+            // OPENING + ADJUSTMENT (already averaged)
+            // ----------------------------
+            baseMakingRate: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isOpeningOrAdjustment",
+                      { $ne: ["$avgMakingRate", null] },
+                    ],
+                  },
+                  "$avgMakingRate",
+                  0,
+                ],
+              },
+            },
+            baseMakingAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isOpeningOrAdjustment",
+                      { $ne: ["$avgMakingAmount", null] },
+                    ],
+                  },
+                  "$avgMakingAmount",
+                  0,
+                ],
+              },
+            },
+
+            // ----------------------------
+            // PURCHASE → AVERAGE ONLY
+            // ----------------------------
+            purchaseAvgMakingRate: {
+              $avg: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isPurchase",
+                      { $ne: ["$avgMakingRate", null] },
+                    ],
+                  },
+                  "$avgMakingRate",
+                  "$$REMOVE",
+                ],
+              },
+            },
+            purchaseAvgMakingAmount: {
+              $avg: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isPurchase",
+                      { $ne: ["$avgMakingAmount", null] },
+                    ],
+                  },
+                  "$avgMakingAmount",
+                  "$$REMOVE",
+                ],
+              },
+            },
+
+            // ----------------------------
+            // Meta
+            // ----------------------------
             code: { $first: "$code" },
           },
         },
 
-        // Lookup stock details from metalstocks
+        // 4️⃣ Lookups
         {
           $lookup: {
             from: "metalstocks",
@@ -70,7 +146,6 @@ class InventoryService {
         },
         { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
 
-        // Lookup karat purity from karatmasters
         {
           $lookup: {
             from: "karatmasters",
@@ -81,7 +156,6 @@ class InventoryService {
         },
         { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
 
-        // Lookup metalType from divisionmasters
         {
           $lookup: {
             from: "divisionmasters",
@@ -90,16 +164,41 @@ class InventoryService {
             as: "metalTypeInfo",
           },
         },
-        {
-          $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true },
-        },
+        { $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true } },
 
-        // Final projection
+        // 5️⃣ Final projection
         {
           $project: {
             _id: 0,
-            totalGrossWeight: 1,
             code: 1,
+            totalGrossWeight: 1,
+            totalPeices: 1,
+
+            // ✅ FINAL RULE APPLIED
+            avgMakingRate: {
+              $round: [
+                {
+                  $add: [
+                    "$baseMakingRate",
+                    { $ifNull: ["$purchaseAvgMakingRate", 0] },
+                  ],
+                },
+                2,
+              ],
+            },
+
+            avgMakingAmount: {
+              $round: [
+                {
+                  $add: [
+                    "$baseMakingAmount",
+                    { $ifNull: ["$purchaseAvgMakingAmount", 0] },
+                  ],
+                },
+                2,
+              ],
+            },
+
             totalValue: "$stock.totalValue",
             metalId: "$stock._id",
             StockName: "$stock.code",
@@ -112,13 +211,10 @@ class InventoryService {
 
       return logs;
     } catch (err) {
-      throw createAppError(
-        "Failed to fetch inventory logs",
-        500,
-        "FETCH_ERROR"
-      );
+      throw createAppError("Failed to fetch inventory logs", 500, "FETCH_ERROR");
     }
   }
+
 
   static async reverseInventory(transaction, session) {
     try {
@@ -208,13 +304,15 @@ class InventoryService {
     }
   }
 
-  static async updateInventoryLog(inventoryId, body) {
-    console.log("Bodyyyyy", body)
-    console.log("Fetching logs for inventoryId", inventoryId);
+  static async updateInventoryLog(inventoryId, body, admin) {
+
     try {
+      // updated by also add to inventory log
+      body.updatedBy = admin;
       const logs = await InventoryLog.findByIdAndUpdate(inventoryId, body, { new: true });
       return logs;
     } catch (error) {
+      console.log(error)
       throw createAppError(
         "Failed to fetch inventory Logs",
         500,
@@ -418,19 +516,22 @@ class InventoryService {
 
   static async updateInventoryByFrontendInput({
     metalId,
-    type,
-    value,
-    adminId,
-    voucher,
-    goldBidPrice,
+    grossWeight,
+    pieces,
     purity,
+    pureWeight,
     avgMakingRate,
     avgMakingAmount,
+    voucherDate,
+    voucher,
+    goldBidPrice,
+    adminId
   }) {
+    //log for debugging
     try {
-      if (!metalId || !type || value === undefined) {
+      if (!metalId) {
         throw createAppError(
-          "Missing metalId, type, or value",
+          "Missing metalId in input",
           400,
           "MISSING_INPUT"
         );
@@ -456,71 +557,37 @@ class InventoryService {
         );
       }
 
-      const qty = Number(value);
-      if (isNaN(qty)) {
-        throw createAppError(
-          "Provided value must be a number",
-          400,
-          "INVALID_VALUE"
-        );
-      }
       let description = "";
       let registryValue = 0;
-      const isAddition = qty > 0;
 
-      if (type === "pcs") {
-        if (!Number.isInteger(qty) || qty < 0) {
-          throw createAppError(
-            "Piece count is required and must be a non-negative integer for piece-based stock",
-            400,
-            "INVALID_PCS_COUNT"
-          );
-        }
-        inventory.grossWeight += qty * metal.totalValue;
-        inventory.pcsCount += qty;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
-          } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
-        registryValue = Math.abs(qty) * (metal.pricePerPiece || 0);
-      } else if (type === "grams") {
-        if (qty < 0) {
-          throw createAppError(
-            "Weight value must be a non-negative number",
-            400,
-            "INVALID_GRAM_VALUE"
-          );
-        }
-        inventory.grossWeight += qty;
-        inventory.pcsCount = inventory.grossWeight / inventory.pcsValue;
-        inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
-        description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
-          } - ${Math.abs(qty)} grams`;
-        registryValue = Math.abs(qty) * (metal.pricePerGram || 0);
-      } else {
-        throw createAppError(
-          "Invalid type. Use 'pcs' or 'grams'",
-          400,
-          "INVALID_TYPE"
-        );
-      }
+      const isAddition = grossWeight >= 0 && pieces >= 0;
+      const qty = grossWeight !== 0 ? grossWeight : pieces;
+
+      // no pcs or gross weight distinction
+      inventory.grossWeight += grossWeight;
+      inventory.pcsCount += pieces;
+      description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
+        } - ${Math.abs(qty)} pieces & ${metal.totalValue} grams`;
+      registryValue = Math.abs(qty) * (metal.pricePerPiece || 0);
+
+      inventory.pureWeight = pureWeight
+      description = `Inventory ${isAddition ? "added" : "removed"}: ${metal.code
+        } - ${Math.abs(qty)} grams`;
+      registryValue = Math.abs(qty) * (metal.pricePerGram || 0);
+
       const savedInventory = await inventory.save();
-      let pureWeight;
 
-      if (type == "pcs") {
-        value = savedInventory.pcsValue * value;
-        pureWeight = value * savedInventory.purity;
-      } else {
-        pureWeight = value * savedInventory.purity;
-      }
 
       const invLog = await InventoryLog.create({
         code: metal.code,
         transactionType: "opening",
-        pcs: type === "pcs",
+        pcs: pieces,
         stockCode: metal._id,
         voucherCode: voucher?.voucherCode || "",
         voucherType: voucher?.voucherType || "",
         voucherDate: voucher?.voucherDate || new Date(),
-        grossWeight: value,
+        grossWeight: Math.abs(grossWeight),
+        pcs: Math.abs(pieces),
         action: isAddition ? "add" : "remove",
         createdBy: adminId,
         note: `Inventory ${isAddition ? "added" : "removed"} by admin.`,
@@ -529,22 +596,24 @@ class InventoryService {
         avgMakingAmount: avgMakingAmount,
       });
 
-      await this.createRegistryEntry({
+      const res = await this.createRegistryEntry({
+        transactionType: "opening",
         transactionId: await Registry.generateTransactionId(),
-        metalId: metalId, // this is not Transaction id this is MetalID
+        metalId: metalId,
         InventoryLogID: invLog._id,
         type: "GOLD_STOCK",
         goldBidValue: goldBidPrice,
         description: `OPENING STOCK FOR ${metal.code}`,
-        value: value,
+        value: grossWeight,
         isBullion: true,
-        credit: value,
+        credit: grossWeight,
         reference: voucher.voucherCode,
         createdBy: adminId,
         purity: inventory.purity,
-        grossWeight: value,
+        grossWeight: grossWeight,
         pureWeight,
       });
+      console.log("Registry entry created:", res);
       return savedInventory;
     } catch (error) {
       if (error.name === "AppError") throw error;
@@ -643,6 +712,7 @@ class InventoryService {
 
         await inventory.save({ session });
         updated.push(inventory);
+        console.log(JSON.stringify(transaction));
 
         // Log entry
         await InventoryLog.create(
@@ -652,14 +722,18 @@ class InventoryService {
               stockCode: metal._id,
               voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
               voucherDate: transaction.voucherDate || new Date(),
+              voucherType: transaction.voucherType || item.voucherType || "N/A",
               grossWeight: item.grossWeight || 0,
+              party: transaction.party || item.party || null,
+              avgMakingAmount: item.makingUnit.makingAmount || 0,
+              avgMakingRate: item.makingUnit.makingRate || 0,
               action: isSale ? "remove" : "add",
               transactionType:
                 transaction.transactionType ||
                 item.transactionType ||
                 (isSale ? "sale" : "purchase"),
               createdBy: transaction.createdBy || admin || null,
-              pcs: !!item.pieces,
+              pcs: item.pieces,
               note: isSale
                 ? "Inventory reduced due to sale transaction"
                 : "Inventory increased due to purchase transaction",
@@ -689,6 +763,7 @@ class InventoryService {
 
 
   static async createRegistryEntry({
+    transactionType,
     transactionId,
     metalId,
     InventoryLogID,
@@ -709,6 +784,8 @@ class InventoryService {
   }) {
     try {
       const registryEntry = new Registry({
+        transactionType,
+        assetType: "XAU",
         transactionId,
         metalId,
         InventoryLogID,

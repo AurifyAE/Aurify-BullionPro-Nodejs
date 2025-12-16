@@ -60,6 +60,10 @@ const inventoryLogSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Gross Weight cannot be negative"],
     },
+    pcs: {
+      type: Number,
+      default: 0,
+    },
     purity: {
       type: Number,
       default: 0,

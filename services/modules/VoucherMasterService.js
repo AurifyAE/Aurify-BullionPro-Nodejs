@@ -6,6 +6,7 @@ import { createAppError } from "../../utils/errorHandler.js";
 import FundTransfer from "../../models/modules/FundTransfer.js";
 import MetalStock from "../../models/modules/MetalStock.js";
 import Registry from "../../models/modules/Registry.js";
+import InventoryLog from "../../models/modules/InventoryLog.js";
 
 class VoucherMasterService {
   // Cache for voucher configurations to reduce DB queries
@@ -142,13 +143,14 @@ class VoucherMasterService {
       // Metal Stock
       if (moduleLC === "metal-stock") {
         console.log(`[getTransactionCount] Using model: MetalStock`);
+        const value = "opening"
 
         const query = transactionType
-          ? { referenceType: { $regex: `^${transactionType}$`, $options: "i" } }
+          ? { transactionType: { $regex: `^${value}$`, $options: "i" } }
           : {};
 
         console.log(`[getTransactionCount] MetalStock Query:`, query);
-        const count = await MetalStock.countDocuments(query);
+        const count = await InventoryLog.countDocuments(query);
         console.log(`[getTransactionCount] MetalStock Count:`, count);
         return count;
       }
@@ -176,19 +178,19 @@ class VoucherMasterService {
         console.log(`[getTransactionCount] Using model: Drafting - Getting last voucher number`);
 
         const { default: Drafting } = await import("../../models/modules/Drafting.js");
-        
+
         // Get voucher config first to know the prefix
         const voucher = await this.getVoucherConfig(module);
         const prefix = voucher.prefix;
-        
+
         // Build query to find drafts with voucherCode matching the prefix
-        const matchQuery = { 
-          voucherCode: { 
-            $exists: true, 
-            $ne: null, 
+        const matchQuery = {
+          voucherCode: {
+            $exists: true,
+            $ne: null,
             $ne: "",
             $regex: `^${prefix}` // Match voucher codes starting with the prefix
-          } 
+          }
         };
         if (transactionType) {
           matchQuery.voucherType = { $regex: `^${transactionType}$`, $options: "i" };
