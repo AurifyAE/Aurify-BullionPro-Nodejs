@@ -550,6 +550,27 @@ class MetalTransactionService {
       entries.push(...hedgeRegistryEntries);
     }
 
+    // =====================================================
+    // ROUND OFF REGISTRIES - Created if roundOff is non-zero
+    // =====================================================
+    const roundOff = totalSummary?.rounded || 0;
+    if (roundOff !== 0 && roundOff !== null && roundOff !== undefined) {
+      const roundOffEntries = this.createRoundOffRegistries({
+        transactionType,
+        baseTransactionId,
+        metalTransactionId: transaction._id,
+        party,
+        roundOff,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        partyCurrency,
+        partyCurrencyRate: transaction.partyCurrencyRate || 1,
+        dealOrderId,
+      });
+      entries.push(...roundOffEntries);
+    }
+
     return entries.filter(Boolean);
   }
 
@@ -683,6 +704,139 @@ class MetalTransactionService {
     );
 
     return entries;
+  }
+
+  // Create round off registries based on transaction type and round off value
+  static createRoundOffRegistries({
+    transactionType,
+    baseTransactionId,
+    metalTransactionId,
+    party,
+    roundOff,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    partyCurrency,
+    partyCurrencyRate = 1,
+    dealOrderId = null,
+  }) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+    const absRoundOff = Math.abs(roundOff);
+
+    // Determine transaction type groups
+    const groupA = ["purchase", "saleReturn", "importPurchase", "exportSaleReturn"];
+    const isGroupA = groupA.includes(transactionType);
+    const isGroupB = !isGroupA; // sale, purchaseReturn, importPurchaseReturn, exportSale
+
+    // Get currency information
+    // partyCurrency might be an ObjectId or populated object
+    let currencyCode = "AED";
+    let currencyRate = partyCurrencyRate || 1;
+    
+    if (partyCurrency) {
+      if (typeof partyCurrency === 'object' && partyCurrency.currencyCode) {
+        currencyCode = partyCurrency.currencyCode;
+        currencyRate = partyCurrency.conversionRate || partyCurrency.rate || partyCurrencyRate || 1;
+      } else if (typeof partyCurrency === 'object' && partyCurrency.code) {
+        currencyCode = partyCurrency.code;
+        currencyRate = partyCurrency.conversionRate || partyCurrency.rate || partyCurrencyRate || 1;
+      }
+    }
+
+    const FX = {
+      assetType: currencyCode,
+      currencyRate: currencyRate,
+      dealOrderId: dealOrderId || null,
+    };
+
+    // Determine debit/credit based on group and round off sign
+    let partyCashDebit = 0;
+    let partyCashCredit = 0;
+    let discountDebit = 0;
+    let discountCredit = 0;
+
+    if (isGroupA) {
+      // Group A: purchase, saleReturn, importPurchase, exportSaleReturn
+      if (roundOff > 0) {
+        // Positive round off
+        partyCashCredit = absRoundOff;
+        discountDebit = absRoundOff;
+      } else {
+        // Negative round off
+        partyCashDebit = absRoundOff;
+        discountCredit = absRoundOff;
+      }
+    } else {
+      // Group B: sale, purchaseReturn, importPurchaseReturn, exportSale (OPPOSITE)
+      if (roundOff > 0) {
+        // Positive round off
+        partyCashDebit = absRoundOff;
+        discountCredit = absRoundOff;
+      } else {
+        // Negative round off
+        partyCashCredit = absRoundOff;
+        discountDebit = absRoundOff;
+      }
+    }
+
+    // 1. PARTY_CASH_BALANCE registry
+    if (partyCashDebit > 0 || partyCashCredit > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "012",
+          "PARTY_CASH_BALANCE",
+          `Round off adjustment - ${transactionType} from ${partyName}`,
+          party._id,
+          false,
+          absRoundOff,
+          partyCashCredit,
+          {
+            cashDebit: partyCashDebit,
+            cashCredit: partyCashCredit,
+            debit:partyCashDebit,
+            credit:partyCashCredit,
+            ...FX,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    // 2. DISCOUNT_ON_SALES/PURCHASE registry
+    if (discountDebit > 0 || discountCredit > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "013",
+          "DISCOUNT_ON_SALES/PURCHASE",
+          `Discount on ${transactionType} - Round off from ${partyName}`,
+          party._id,
+          false,
+          absRoundOff,
+          discountCredit,
+          {
+            cashDebit: discountDebit,
+            cashCredit: discountCredit,
+            debit:discountDebit,
+            credit:discountCredit,
+            ...FX,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries.filter(Boolean);
   }
 
   static getTransactionMode(fixed, unfix) {
