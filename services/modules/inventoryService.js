@@ -19,19 +19,12 @@ class InventoryService {
             _id: "$stockCode",
             totalGrossWeight: {
               $sum: {
-                $switch: {
-                  branches: [
-                    { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" },
-                  ],
-                  default: 0,
-                },
-              },
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$grossWeight",
+                  { $multiply: ["$grossWeight", -1] }
+                ]
+              }
             },
             // purchase , salereturn , 
 
@@ -645,7 +638,7 @@ class InventoryService {
               stockCode: metal._id,
               voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
               voucherDate: transaction.voucherDate || new Date(),
-              voucgerType: transaction.voucherType || item.voucherType || "N/A",
+              voucherType: transaction.voucherType || item.voucherType || "N/A",
               grossWeight: item.grossWeight || 0,
               party: transaction.party || item.party || null,
               action: isSale ? "remove" : "add",
@@ -706,7 +699,7 @@ class InventoryService {
     try {
       const registryEntry = new Registry({
         transactionType,
-        assetType:"XAU",
+        assetType: "XAU",
         transactionId,
         metalId,
         InventoryLogID,
