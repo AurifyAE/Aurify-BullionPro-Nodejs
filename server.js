@@ -21,6 +21,7 @@ import accountRoutes from "./routes/modules/accountMasterRoutes.js";
 import entryRoutes from "./routes/modules/entryMasterRoutes.js";
 import fundTransferRoutes from "./routes/modules/fundTransferRoutes.js";
 import inventoryRoutes from "./routes/modules/inventoryRoutes.js";
+import stockAdjustmentRoutes from "./routes/modules/stockAdjustmentRoutes.js";
 import reportsRoutes from "./routes/modules/reportsRoutes.js";
 import userRouter from './routes/user/userRouters.js'
 import classificationRoutes from "./routes/modules/classificationRoutes.js"
@@ -98,6 +99,7 @@ app.use("/api/v1/account", accountRoutes);
 app.use("/api/v1/entry", entryRoutes);
 app.use("/api/v1/fund-transfer", fundTransferRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
+app.use("/api/v1/stock-adjustments", stockAdjustmentRoutes);
 app.use("/api/v1/reports", reportsRoutes)
 app.use("/api/v1/classification", classificationRoutes)
 app.use("/api/v1/branch", branchMasterRoutes)
@@ -112,7 +114,7 @@ app.use("/api/v1/draftings", draftingRoutes);
 // Global error handling middleware
 app.use(errorHandler);
 
-app.listen(port,() => {
+app.listen(port, () => {
   console.log("Server running !!!!!");
   console.log(`http://localhost:${port}`);
 });
