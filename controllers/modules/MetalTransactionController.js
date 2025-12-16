@@ -221,6 +221,8 @@ export const createMetalTransaction = async (req, res, next) => {
           premiumTotal: toNumber(itemTotal?.premiumTotal),
           subTotal: toNumber(itemTotal?.subTotal),
           vatAmount: toNumber(itemTotal?.vatAmount),
+          // New: taxableAmount = base used for VAT (Metal + Making or Making only)
+          taxableAmount: toNumber(itemTotal?.taxableAmount),
           itemTotalAmount: toNumber(itemTotal?.itemTotalAmount),
         },
         remarks: trim(remarks) || "",
@@ -502,6 +504,8 @@ export const updateMetalTransaction = async (req, res, next) => {
           premiumTotal: toNumber(itemTotal?.premiumTotal),
           subTotal: toNumber(itemTotal?.subTotal),
           vatAmount: toNumber(itemTotal?.vatAmount),
+          // New: taxableAmount = base used for VAT (Metal + Making or Making only)
+          taxableAmount: toNumber(itemTotal?.taxableAmount),
           itemTotalAmount: toNumber(itemTotal?.itemTotalAmount),
         },
         remarks: trim(remarks) || "",

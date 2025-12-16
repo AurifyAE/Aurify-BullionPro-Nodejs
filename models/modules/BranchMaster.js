@@ -144,6 +144,11 @@ const BranchSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    roundOffLimit: {
+      type: Number,
+      default: 10,
+      min: [0, "Round off limit cannot be negative"],
+    },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
