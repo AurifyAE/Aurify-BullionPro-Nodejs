@@ -78,7 +78,6 @@ export const createMetalTransaction = async (req, res, next) => {
         "INVALID_TRANSACTION_TYPE"
       );
     }
-
     if (
       ![
         "METAL-PURCHASE",
