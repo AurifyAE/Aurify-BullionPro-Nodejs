@@ -241,6 +241,12 @@ const StockItemSchema = new mongoose.Schema(
         default: 0,
         min: [0, "VAT Amount cannot be negative"],
       },
+      // Base amount on which VAT is calculated (Metal + Making or only Making)
+      taxableAmount: {
+        type: Number,
+        default: 0,
+        min: [0, "Taxable Amount cannot be negative"],
+      },
       itemTotalAmount: {
         type: Number,
         default: 0,
