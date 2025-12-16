@@ -10,24 +10,42 @@ class InventoryService {
   static async fetchAllInventory() {
     try {
       const logs = await InventoryLog.aggregate([
-        // Sort to ensure latest values
+        // 1️ Sort latest first
         { $sort: { updatedAt: -1 } },
 
-        // Group by stockCode
+        // 2️ Flags for making logic
+        {
+          $addFields: {
+            isPurchase: {
+              $eq: ["$transactionType", "purchase"],
+            },
+            isOpeningOrAdjustment: {
+              $in: ["$transactionType", ["opening", "adjustment"]],
+            },
+          },
+        },
+
+        // 3️ Group by stockCode
         {
           $group: {
             _id: "$stockCode",
+
+            // ----------------------------
+            // Gross weight (unchanged)
+            // ----------------------------
             totalGrossWeight: {
               $sum: {
                 $cond: [
                   { $eq: ["$action", "add"] },
                   "$grossWeight",
-                  { $multiply: ["$grossWeight", -1] }
-                ]
-              }
+                  { $multiply: ["$grossWeight", -1] },
+                ],
+              },
             },
-            // purchase , salereturn , 
 
+            // ----------------------------
+            // Pieces (unchanged)
+            // ----------------------------
             totalPeices: {
               $sum: {
                 $switch: {
@@ -39,36 +57,58 @@ class InventoryService {
                     { case: { $eq: ["$transactionType", "purchase"] }, then: "$pcs" },
                     { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$pcs" },
                     { case: { $eq: ["$transactionType", "opening"] }, then: "$pcs" },
+                    { case: { $eq: ["$transactionType", "adjustment"] }, then: "$pcs" },
                   ],
                   default: 0,
                 },
               },
             },
-            avgMakingRate: {
+
+            // ----------------------------
+            // OPENING + ADJUSTMENT (already averaged)
+            // ----------------------------
+            baseMakingRate: {
+              $sum: {
+                $cond: ["$isOpeningOrAdjustment", "$avgMakingRate", 0],
+              },
+            },
+            baseMakingAmount: {
+              $sum: {
+                $cond: ["$isOpeningOrAdjustment", "$avgMakingAmount", 0],
+              },
+            },
+
+            // ----------------------------
+            // PURCHASE (needs averaging)
+            // ----------------------------
+            purchaseMakingRate: {
               $avg: {
                 $cond: [
-                  { $ne: ["$avgMakingRate", null] },
+                  "$isPurchase",
                   "$avgMakingRate",
-                  "$$REMOVE"
-                ]
-              }
+                  "$$REMOVE",
+                ],
+              },
             },
-            avgMakingAmount: {
+            purchaseMakingAmount: {
               $avg: {
                 $cond: [
-                  { $ne: ["$avgMakingAmount", null] },
+                  "$isPurchase",
                   "$avgMakingAmount",
-                  "$$REMOVE"
-                ]
-              }
+                  "$$REMOVE",
+                ],
+              },
             },
+
+            // ----------------------------
+            // Meta
+            // ----------------------------
             pcs: { $first: "$pcs" },
             code: { $first: "$code" },
           },
         },
 
-
-        // Lookup stock details from metalstocks
+        // 4️ Lookup stock details
         {
           $lookup: {
             from: "metalstocks",
@@ -79,7 +119,7 @@ class InventoryService {
         },
         { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
 
-        // Lookup karat purity from karatmasters
+        // 5️ Lookup karat purity
         {
           $lookup: {
             from: "karatmasters",
@@ -90,7 +130,7 @@ class InventoryService {
         },
         { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
 
-        // Lookup metalType from divisionmasters
+        // 6️ Lookup metal type
         {
           $lookup: {
             from: "divisionmasters",
@@ -99,19 +139,42 @@ class InventoryService {
             as: "metalTypeInfo",
           },
         },
-        {
-          $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true },
-        },
+        { $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true } },
 
-        // Final projection
+        // 7️ Final projection
         {
           $project: {
             _id: 0,
             totalGrossWeight: 1,
             totalPeices: 1,
             code: 1,
-            avgMakingRate: { $round: ["$avgMakingRate", 2] },
-            avgMakingAmount: { $round: ["$avgMakingAmount", 2] },
+
+            //  FINAL MAKING OUTPUT
+            avgMakingRate: {
+              $round: [
+                {
+                  $cond: [
+                    { $ne: ["$purchaseMakingRate", null] },
+                    "$purchaseMakingRate",
+                    "$baseMakingRate",
+                  ],
+                },
+                2,
+              ],
+            },
+
+            avgMakingAmount: {
+              $round: [
+                {
+                  $add: [
+                    "$baseMakingAmount",
+                    { $ifNull: ["$purchaseMakingAmount", 0] },
+                  ],
+                },
+                2,
+              ],
+            },
+
             totalValue: "$stock.totalValue",
             metalId: "$stock._id",
             StockName: "$stock.code",
@@ -121,6 +184,8 @@ class InventoryService {
           },
         },
       ]);
+
+
 
       return logs;
     } catch (err) {
