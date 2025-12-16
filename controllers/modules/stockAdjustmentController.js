@@ -3,9 +3,7 @@ import StockAdjustmentService from '../../services/modules/stockAdjustmentServic
 
 export const createStockAdjustment = async (req, res, next) => {
     try {
-        console.log(req.admin)
         const adminId = req.admin?.id;
-        console.log("Admin ID:", adminId);
 
         if (!adminId) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -59,9 +57,45 @@ export const getStockAdjustmentById = async (req, res, next) => {
 
 
 export const updateStockAdjustment = async (req, res, next) => {
-    // To be implemented
-}
+    try {
+        const { id } = req.params;
+        const adminId = req.admin?.id;
+
+        if (!adminId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const updated =
+            await StockAdjustmentService.updateStockAdjustment(id, req.body, adminId);
+
+        res.status(200).json({
+            success: true,
+            data: updated,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 
 export const deleteStockAdjustment = async (req, res, next) => {
-    // To be implemented
-}
+    try {
+        const { id } = req.params;
+        const adminId = req.admin?.id;
+
+        if (!adminId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        console.log("Deleting stock adjustment with ID:", id, "by admin ID:", adminId);
+        const result =
+            await StockAdjustmentService.deleteStockAdjustment(id, adminId);
+
+        res.status(200).json({
+            success: true,
+            message: "Stock adjustment cancelled successfully",
+            data: result,
+        });
+    } catch (error) {
+        next(error);
+    }
+};

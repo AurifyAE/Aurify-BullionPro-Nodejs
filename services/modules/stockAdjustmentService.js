@@ -72,6 +72,9 @@ export class StockAdjustmentService {
 
         const filter = {};
 
+        if (!query.includeCancelled) {
+            filter.status = { $ne: "Cancelled" };
+        }
         // Status filter
         if (status) {
             filter.status = status;
@@ -131,6 +134,104 @@ export class StockAdjustmentService {
         if (!adjustment) {
             throw createAppError("Stock adjustment not found", 404);
         }
+
+        return adjustment;
+    }
+
+    static async updateStockAdjustment(id, data, adminId) {
+        // 1. Validate ID
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            throw createAppError("Invalid stock adjustment ID", 400);
+        }
+
+        // 2. Fetch existing adjustment
+        const existing = await StockAdjustment.findById(id);
+        if (!existing) {
+            throw createAppError("Stock adjustment not found", 404);
+        }
+
+        // 3. Prevent editing cancelled records
+        if (existing.status === "Cancelled") {
+            throw createAppError("Cancelled adjustment cannot be edited", 400);
+        }
+
+        // 4. Resolve division (ID expected, but support name just in case)
+        // let divisionId = data.division;
+
+        // if (divisionId && !mongoose.Types.ObjectId.isValid(divisionId)) {
+        //     const divisionDoc = await Division.findOne({ name: divisionId });
+        //     if (!divisionDoc) {
+        //         throw createAppError("Invalid division", 400);
+        //     }
+        //     divisionId = divisionDoc._id;
+        // }
+
+        // 5. Build update payload (snapshot overwrite)
+        const updatePayload = {
+            voucherType: data.voucherType || existing.voucherType,
+            division: existing.division,
+            status: data.status || existing.status,
+
+            from: {
+                stockId: data.fromData.stockId,
+                grossWeight: data.fromData.grossWeight,
+                purity: data.fromData.purity,
+                pureWeight: data.fromData.pureWeight,
+                avgMakingRate: data.fromData.avgRate ?? 0,
+                avgMakingAmount: data.fromData.avgAmount ?? 0,
+            },
+
+            to: {
+                stockId: data.toData.stockId,
+                grossWeight: data.toData.grossWeight,
+                purity: data.toData.purity,
+                pureWeight: data.toData.pureWeight,
+                avgMakingRate: data.toData.avgRate ?? 0,
+                avgMakingAmount: data.toData.avgAmount ?? 0,
+            },
+        };
+
+        // 6. Persist update
+        const updated = await StockAdjustment.findByIdAndUpdate(
+            id,
+            updatePayload,
+            { new: true }
+        )
+            .populate("division", "description code")
+            .populate("enteredBy", "name email")
+            .populate("from.stockId", "code")
+            .populate("to.stockId", "code");
+
+        return updated;
+    }
+
+    static async deleteStockAdjustment(id, adminId) {
+        // 1. Validate ID
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            throw createAppError("Invalid stock adjustment ID", 400);
+        }
+
+        // 2. Fetch adjustment
+        const adjustment = await StockAdjustment.findById(id);
+
+        if (!adjustment) {
+            throw createAppError("Stock adjustment not found", 404);
+        }
+
+        // // 3. Prevent deleting completed adjustments
+        // if (adjustment.status === "Completed") {
+        //     throw createAppError(
+        //         "Completed stock adjustments cannot be deleted",
+        //         400
+        //     );
+        // }
+
+        // 4. Cancel (soft delete)
+        adjustment.status = "Cancelled";
+        adjustment.cancelledBy = adminId; // optional (recommended)
+        adjustment.cancelledAt = new Date(); // optional (recommended)
+
+        await adjustment.save();
 
         return adjustment;
     }
