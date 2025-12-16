@@ -279,7 +279,7 @@ export class ReportService {
         Account.aggregate(receivablesPayablesPipeline),
       ]);
 
-     
+
 
       // 4. Format the output
       const formatted = this.formatedOwnStock(reportData, receivablesAndPayables, getOpeningBalance);
@@ -334,6 +334,7 @@ export class ReportService {
       fromDate,
       discount,
       toDate,
+      asOnDate,
       transactionType,
       division = [],
       voucher = [],
@@ -371,9 +372,12 @@ export class ReportService {
     // Initialize dates
     let startDate = null;
     let endDate = null;
+    let asOnDateParsed = null;
 
     if (fromDate) startDate = moment(fromDate).startOf("day").toDate();
     if (toDate) endDate = moment(toDate).endOf("day").toDate();
+    if (asOnDate) asOnDateParsed = moment(asOnDate).endOf("day").toDate();
+
     if (startDate && endDate && startDate > endDate) {
       throw new Error("From date cannot be greater than to date");
     }
@@ -413,6 +417,7 @@ export class ReportService {
 
     if (startDate) result.startDate = startDate;
     if (endDate) result.endDate = endDate;
+    if (asOnDateParsed) result.asOnDate = asOnDateParsed;
     if (transactionType) result.transactionType = transactionType;
 
     // Conditionally add groupByRange if it has any non-empty array
@@ -2192,12 +2197,17 @@ export class ReportService {
   }
 
   buildStockPipeline(filters) {
-
     const pipeline = [];
-
     const matchConditions = {};
 
-    if (filters.startDate || filters.endDate) {
+    // Date filter - support asOnDate for stock balance as of a specific date
+    if (filters.asOnDate) {
+      // If asOnDate is provided, fetch all records up to and including that date
+      matchConditions.createdAt = {
+        $lte: new Date(filters.asOnDate)
+      };
+    } else if (filters.startDate || filters.endDate) {
+      // Otherwise use date range if provided
       matchConditions.createdAt = {};
       if (filters.startDate) {
         matchConditions.createdAt.$gte = new Date(filters.startDate);
@@ -2207,14 +2217,19 @@ export class ReportService {
       }
     }
 
+    // Transaction type filter
     if (filters.transactionType && filters.transactionType !== 'All') {
       matchConditions.transactionType = filters.transactionType;
     }
+
+    // Stock code filter from groupByRange
     if (filters.groupByRange?.stockCode?.length) {
       matchConditions.stockCode = {
         $in: filters.groupByRange.stockCode.map(id => new ObjectId(id))
       };
     }
+
+    // Voucher filter
     if (filters.voucher?.length) {
       const regexFilters = filters.voucher.map(v => new RegExp(`^${v.prefix}`, "i"));
       matchConditions.voucherCode = { $in: regexFilters };
@@ -2240,17 +2255,47 @@ export class ReportService {
       },
     });
 
-    // Lookup karat purity from karatmasters
+    // Apply MetalStock filters from groupByRange
+    const stockMatchConditions = {};
+
+    if (filters.groupByRange?.categoryCode?.length) {
+      stockMatchConditions["stock.category"] = { $in: filters.groupByRange.categoryCode };
+    }
+
+    if (filters.groupByRange?.karat?.length) {
+      stockMatchConditions["stock.karat"] = { $in: filters.groupByRange.karat };
+    }
+
+    if (filters.groupByRange?.type?.length) {
+      stockMatchConditions["stock.type"] = { $in: filters.groupByRange.type };
+    }
+
+    if (filters.groupByRange?.size?.length) {
+      stockMatchConditions["stock.size"] = { $in: filters.groupByRange.size };
+    }
+
+    if (filters.groupByRange?.color?.length) {
+      stockMatchConditions["stock.color"] = { $in: filters.groupByRange.color };
+    }
+
+    if (filters.groupByRange?.brand?.length) {
+      stockMatchConditions["stock.brand"] = { $in: filters.groupByRange.brand };
+    }
+
+    if (Object.keys(stockMatchConditions).length > 0) {
+      pipeline.push({ $match: stockMatchConditions });
+    }
+
+    // Lookup karat details for purity
     pipeline.push({
       $lookup: {
         from: "karatmasters",
-        localField: "stock.karat", // Corrected from stockDetails.karat
+        localField: "stock.karat",
         foreignField: "_id",
         as: "karatDetails",
       },
     });
 
-    // Unwind the karatDetails array
     pipeline.push({
       $unwind: {
         path: "$karatDetails",
@@ -2258,24 +2303,7 @@ export class ReportService {
       },
     });
 
-    // Lookup metal type from metaltypes (assuming metalTypeInfo.description is needed)
-    pipeline.push({
-      $lookup: {
-        from: "metaltypes",
-        localField: "stock.metalType",
-        foreignField: "_id",
-        as: "metalTypeDetails",
-      },
-    });
-
-    // Unwind the metalTypeDetails array
-    pipeline.push({
-      $unwind: {
-        path: "$metalTypeDetails",
-        preserveNullAndEmptyArrays: true,
-      },
-    });
-
+    // Division filter
     if (filters.division?.length) {
       pipeline.push({
         $match: {
@@ -2284,64 +2312,155 @@ export class ReportService {
       });
     }
 
-    // Group by stockCode to calculate totals
+    // Group by stockCode to calculate totals and averages
     pipeline.push({
       $group: {
         _id: "$stockCode",
+        stockCode: { $first: "$stock.code" },
+        description: { $first: "$stock.description" },
+        metalId: { $first: "$stock._id" },
+
+        // Calculate total gross weight based on transaction type
         totalGrossWeight: {
           $sum: {
             $switch: {
               branches: [
                 { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
+                { case: { $eq: ["$transactionType", "exportSale"] }, then: { $multiply: ["$grossWeight", -1] } },
                 { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
                 { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
+                { case: { $eq: ["$transactionType", "importPurchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
                 { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
+                { case: { $eq: ["$transactionType", "exportSaleReturn"] }, then: "$grossWeight" },
                 { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
+                { case: { $eq: ["$transactionType", "importPurchase"] }, then: "$grossWeight" },
                 { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
                 { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" },
+                { case: { $eq: ["$transactionType", "initial"] }, then: "$grossWeight" },
               ],
               default: 0,
             },
           },
         },
-        pcs: { $first: "$stock.pcs" }, // Use stock.pcs
-        code: { $first: "$code" },
-        description: { $first: "$stock.description" }, // Add description
-        purity: { $first: "$karatDetails.standardPurity" }, // Add purity from karatDetails
-        totalValue: { $first: "$stock.totalValue" }, // Include totalValue
-        metalId: { $first: "$stock._id" }, // Include metalId
-        stockName: { $first: "$stock.code" }, // Include stockName
-        metalType: { $first: "$metalTypeDetails.description" }, // Include metalType description
+
+        // Calculate total pieces
+        totalPcs: {
+          $sum: {
+            $switch: {
+              branches: [
+                { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$pcs", -1] } },
+                { case: { $eq: ["$transactionType", "exportSale"] }, then: { $multiply: ["$pcs", -1] } },
+                { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$pcs", -1] } },
+                { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
+                { case: { $eq: ["$transactionType", "importPurchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
+                { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$pcs" },
+                { case: { $eq: ["$transactionType", "exportSaleReturn"] }, then: "$pcs" },
+                { case: { $eq: ["$transactionType", "purchase"] }, then: "$pcs" },
+                { case: { $eq: ["$transactionType", "importPurchase"] }, then: "$pcs" },
+                { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$pcs" },
+                { case: { $eq: ["$transactionType", "opening"] }, then: "$pcs" },
+                // { case: { $eq: ["$transactionType", "initial"] }, then: "$pcs" },
+              ],
+              default: 0,
+            },
+          },
+        },
+
+        // Get purity from karat details
+        purity: { $first: "$karatDetails.standardPurity" },
+
+        // Sum of avgMakingRate from purchase transactions
+        totalMakingRate: {
+          $sum: {
+            $cond: [
+              {
+                $in: [
+                  "$transactionType",
+                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"]
+                ]
+              },
+              "$avgMakingRate",
+              0
+            ]
+          }
+        },
+
+        // Sum of avgMakingAmount from purchase transactions
+        totalMakingAmount: {
+          $sum: {
+            $cond: [
+              {
+                $in: [
+                  "$transactionType",
+                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"]
+                ]
+              },
+              "$avgMakingAmount",
+              0
+            ]
+          }
+        },
+
+        // Count of purchase transactions
+        purchaseTransactionCount: {
+          $sum: {
+            $cond: [
+              {
+                $in: [
+                  "$transactionType",
+                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"]
+                ]
+              },
+              1,
+              0
+            ]
+          }
+        },
       },
     });
 
-    // Calculate pureWeight based on totalGrossWeight and purity
+    // Calculate weighted averages for making rate and amount
     pipeline.push({
       $project: {
         _id: 0,
-        code: 1,
+        stockCode: 1,
         description: 1,
-        purity: 1,
-        pureWeight: {
-          $cond: {
-            if: { $and: [{ $ne: ["$purity", null] }, { $ne: ["$purity", 0] }] },
-            then: { $divide: [{ $multiply: ["$totalGrossWeight", "$purity"] }, 24] }, // Assuming karat-based purity (e.g., 24K = 100%)
-            else: "$totalGrossWeight", // Fallback to grossWeight if purity is null or 0
-          },
-        },
-        pcs: 1,
-        gross: "$totalGrossWeight", // Rename totalGrossWeight to gross
-        totalValue: 1,
         metalId: 1,
-        stockName: 1,
-        metalType: 1,
+        grossWeight: "$totalGrossWeight",
+        pcs: "$totalPcs",
+        purity: 1,
+
+        // Calculate average making rate (sum / count of purchase transactions)
+        avgMakingRate: {
+          $cond: [
+            { $gt: ["$purchaseTransactionCount", 0] },
+            { $divide: ["$totalMakingRate", "$purchaseTransactionCount"] },
+            0
+          ]
+        },
+
+        // Calculate average making amount (sum / count of purchase transactions)
+        avgMakingAmount: {
+          $cond: [
+            { $gt: ["$purchaseTransactionCount", 0] },
+            { $divide: ["$totalMakingAmount", "$purchaseTransactionCount"] },
+            0
+          ]
+        },
       },
     });
 
-    // Optional: Filter out entries with zero gross weight (if needed)
+    // Filter out entries with zero gross weight
     pipeline.push({
       $match: {
-        gross: { $ne: 0 },
+        grossWeight: { $ne: 0 },
+      },
+    });
+
+    // Sort by stock code
+    pipeline.push({
+      $sort: {
+        stockCode: 1,
       },
     });
 
