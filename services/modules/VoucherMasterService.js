@@ -96,6 +96,28 @@ class VoucherMasterService {
         return count;
       }
 
+      // Hedge Metal Transaction modules - use TransactionFixing model
+      const hedgeMetalModules = ["hedge-metal-payment", "hedge-metal-receipt"];
+      if (hedgeMetalModules.includes(moduleLC)) {
+        console.log(`[getTransactionCount] Using model: TransactionFixing (Hedge)`);
+
+        const query = {};
+
+        // Add transactionType filter if provided
+        // Query by transactionType field (purchase, sale, purchaseReturn, etc.)
+        // This field stores the original transaction type for voucher counting
+        if (transactionType) {
+          // Normalize transaction type to lowercase for matching
+          const normalizedType = transactionType.toLowerCase().trim();
+          query.transactionType = { $regex: `^${normalizedType}$`, $options: "i" };
+        }
+
+        console.log(`[getTransactionCount] TransactionFixing (Hedge) Query:`, query);
+        const count = await TransactionFix.countDocuments(query);
+        console.log(`[getTransactionCount] TransactionFixing (Hedge) Count:`, count);
+        return count;
+      }
+
       // TransactionFix-based modules
       const fixModules = ["sales-fixing", "purchase-fixing"];
       if (fixModules.includes(moduleLC)) {
