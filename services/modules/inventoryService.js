@@ -10,72 +10,132 @@ class InventoryService {
   static async fetchAllInventory() {
     try {
       const logs = await InventoryLog.aggregate([
-        // Sort to ensure latest values
+        // 1️⃣ Sort latest first
         { $sort: { updatedAt: -1 } },
 
-        // Group by stockCode
+        // 2️⃣ Flags
+        {
+          $addFields: {
+            isPurchase: {
+              $in: [
+                "$transactionType",
+                [
+                  "purchase",
+                  "saleReturn",
+                  "importPurchase",
+                  "importPurchaseReturn",
+                  "exportSaleReturn",
+                ],
+              ],
+            },
+            isOpeningOrAdjustment: {
+              $in: ["$transactionType", ["opening", "adjustment"]],
+            },
+          },
+        },
+
+        // 3️⃣ Group by stockCode
         {
           $group: {
             _id: "$stockCode",
+
+            // ----------------------------
+            // Gross Weight
+            // ----------------------------
             totalGrossWeight: {
               $sum: {
-                $switch: {
-                  branches: [
-                    { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                    { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                    { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" },
-                  ],
-                  default: 0,
-                },
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$grossWeight",
+                  { $multiply: ["$grossWeight", -1] },
+                ],
               },
             },
-            // purchase , salereturn , 
 
+            // ----------------------------
+            // Pieces
+            // ----------------------------
             totalPeices: {
               $sum: {
-                $switch: {
-                  branches: [
-                    { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$pcs", -1] } },
-                    { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$pcs", -1] } },
-                    { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
-                    { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$pcs" },
-                    { case: { $eq: ["$transactionType", "purchase"] }, then: "$pcs" },
-                    { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$pcs" },
-                    { case: { $eq: ["$transactionType", "opening"] }, then: "$pcs" },
-                  ],
-                  default: 0,
-                },
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$pcs",
+                  { $multiply: ["$pcs", -1] }
+                ]
+              }
+            },
+            // ----------------------------
+            // OPENING + ADJUSTMENT (already averaged)
+            // ----------------------------
+            baseMakingRate: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isOpeningOrAdjustment",
+                      { $ne: ["$avgMakingRate", null] },
+                    ],
+                  },
+                  "$avgMakingRate",
+                  0,
+                ],
               },
             },
-            avgMakingRate: {
-              $avg: {
+            baseMakingAmount: {
+              $sum: {
                 $cond: [
-                  { $ne: ["$avgMakingRate", null] },
-                  "$avgMakingRate",
-                  "$$REMOVE"
-                ]
-              }
-            },
-            avgMakingAmount: {
-              $avg: {
-                $cond: [
-                  { $ne: ["$avgMakingAmount", null] },
+                  {
+                    $and: [
+                      "$isOpeningOrAdjustment",
+                      { $ne: ["$avgMakingAmount", null] },
+                    ],
+                  },
                   "$avgMakingAmount",
-                  "$$REMOVE"
-                ]
-              }
+                  0,
+                ],
+              },
             },
-            pcs: { $first: "$pcs" },
+
+            // ----------------------------
+            // PURCHASE → AVERAGE ONLY
+            // ----------------------------
+            purchaseAvgMakingRate: {
+              $avg: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isPurchase",
+                      { $ne: ["$avgMakingRate", null] },
+                    ],
+                  },
+                  "$avgMakingRate",
+                  "$$REMOVE",
+                ],
+              },
+            },
+            purchaseAvgMakingAmount: {
+              $avg: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isPurchase",
+                      { $ne: ["$avgMakingAmount", null] },
+                    ],
+                  },
+                  "$avgMakingAmount",
+                  "$$REMOVE",
+                ],
+              },
+            },
+
+            // ----------------------------
+            // Meta
+            // ----------------------------
             code: { $first: "$code" },
           },
         },
 
-
-        // Lookup stock details from metalstocks
+        // 4️⃣ Lookups
         {
           $lookup: {
             from: "metalstocks",
@@ -86,7 +146,6 @@ class InventoryService {
         },
         { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
 
-        // Lookup karat purity from karatmasters
         {
           $lookup: {
             from: "karatmasters",
@@ -97,7 +156,6 @@ class InventoryService {
         },
         { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
 
-        // Lookup metalType from divisionmasters
         {
           $lookup: {
             from: "divisionmasters",
@@ -106,19 +164,41 @@ class InventoryService {
             as: "metalTypeInfo",
           },
         },
-        {
-          $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true },
-        },
+        { $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true } },
 
-        // Final projection
+        // 5️⃣ Final projection
         {
           $project: {
             _id: 0,
+            code: 1,
             totalGrossWeight: 1,
             totalPeices: 1,
-            code: 1,
-            avgMakingRate: { $round: ["$avgMakingRate", 2] },
-            avgMakingAmount: { $round: ["$avgMakingAmount", 2] },
+
+            // ✅ FINAL RULE APPLIED
+            avgMakingRate: {
+              $round: [
+                {
+                  $add: [
+                    "$baseMakingRate",
+                    { $ifNull: ["$purchaseAvgMakingRate", 0] },
+                  ],
+                },
+                2,
+              ],
+            },
+
+            avgMakingAmount: {
+              $round: [
+                {
+                  $add: [
+                    "$baseMakingAmount",
+                    { $ifNull: ["$purchaseAvgMakingAmount", 0] },
+                  ],
+                },
+                2,
+              ],
+            },
+
             totalValue: "$stock.totalValue",
             metalId: "$stock._id",
             StockName: "$stock.code",
@@ -131,13 +211,10 @@ class InventoryService {
 
       return logs;
     } catch (err) {
-      throw createAppError(
-        "Failed to fetch inventory logs",
-        500,
-        "FETCH_ERROR"
-      );
+      throw createAppError("Failed to fetch inventory logs", 500, "FETCH_ERROR");
     }
   }
+
 
   static async reverseInventory(transaction, session) {
     try {
@@ -645,9 +722,11 @@ class InventoryService {
               stockCode: metal._id,
               voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
               voucherDate: transaction.voucherDate || new Date(),
-              voucgerType: transaction.voucherType || item.voucherType || "N/A",
+              voucherType: transaction.voucherType || item.voucherType || "N/A",
               grossWeight: item.grossWeight || 0,
               party: transaction.party || item.party || null,
+              avgMakingAmount: item.makingUnit.makingAmount || 0,
+              avgMakingRate: item.makingUnit.makingRate || 0,
               action: isSale ? "remove" : "add",
               transactionType:
                 transaction.transactionType ||
@@ -706,7 +785,7 @@ class InventoryService {
     try {
       const registryEntry = new Registry({
         transactionType,
-        assetType:"XAU",
+        assetType: "XAU",
         transactionId,
         metalId,
         InventoryLogID,

@@ -98,10 +98,10 @@ export const createMetalTransaction = async (req, res, next) => {
     const calculateForexGainLoss = (transactionType, bidAmountAED, userAmountAED) => {
       const bidValue = toNumber(bidAmountAED, 0);
       const userValue = toNumber(userAmountAED, 0);
-      
+
       // Normalize transaction type
       const normalizedType = transactionType?.toLowerCase() || "";
-      
+
       // Determine if it's a purchase or sale type
       const isPurchaseType = [
         "purchase",
@@ -109,16 +109,16 @@ export const createMetalTransaction = async (req, res, next) => {
         "importpurchase",
         "importpurchasereturn"
       ].includes(normalizedType);
-      
+
       const isSaleType = [
         "sale",
         "salereturn",
         "exportsale",
         "exportsalereturn"
       ].includes(normalizedType);
-      
+
       let diff = 0;
-      
+
       if (isPurchaseType) {
         // For purchase: FXGain when bid > user, FXLoss when bid < user
         diff = bidValue - userValue;
@@ -126,7 +126,7 @@ export const createMetalTransaction = async (req, res, next) => {
         // For sale: FXGain when user > bid, FXLoss when user < bid
         diff = userValue - bidValue;
       }
-      
+
       return {
         FXGain: diff > 0 ? diff : 0,
         FXLoss: diff < 0 ? Math.abs(diff) : 0,
@@ -273,10 +273,10 @@ export const createMetalTransaction = async (req, res, next) => {
       partyCode: trim(partyCode),
       partyCurrency: trim(partyCurrency),
       itemCurrency: trim(itemCurrency),
-      itemCurrencyRate: itemCurrencyRate !== undefined && itemCurrencyRate !== null && itemCurrencyRate !== "" 
-        ? toNumber(itemCurrencyRate, 1) 
-        : (partyCurrencyRate !== undefined && partyCurrencyRate !== null && partyCurrencyRate !== "" 
-          ? toNumber(partyCurrencyRate, 1) 
+      itemCurrencyRate: itemCurrencyRate !== undefined && itemCurrencyRate !== null && itemCurrencyRate !== ""
+        ? toNumber(itemCurrencyRate, 1)
+        : (partyCurrencyRate !== undefined && partyCurrencyRate !== null && partyCurrencyRate !== ""
+          ? toNumber(partyCurrencyRate, 1)
           : 1),
       partyCurrencyRate: toNumber(partyCurrencyRate, 1),
       voucherType,
@@ -319,9 +319,9 @@ export const createMetalTransaction = async (req, res, next) => {
       );
 
     // === INVENTORY UPDATE ===
-    if (["purchase", "saleReturn"].includes(transactionType)) {
+    if (["purchase", "saleReturn", "importPurchase", "exportSaleReturn"].includes(transactionType)) {
       await InventoryService.updateInventory(metalTransaction, false); // add
-    } else if (["sale", "purchaseReturn"].includes(transactionType)) {
+    } else if (["sale", "purchaseReturn", "importPurchaseReturn", "exportsale"].includes(transactionType)) {
       await InventoryService.updateInventory(metalTransaction, true); // deduct
     }
 
@@ -388,10 +388,10 @@ export const updateMetalTransaction = async (req, res, next) => {
     const calculateForexGainLoss = (transactionType, bidAmountAED, userAmountAED) => {
       const bidValue = toNumber(bidAmountAED, 0);
       const userValue = toNumber(userAmountAED, 0);
-      
+
       // Normalize transaction type
       const normalizedType = transactionType?.toLowerCase() || "";
-      
+
       // Determine if it's a purchase or sale type
       const isPurchaseType = [
         "purchase",
@@ -399,16 +399,16 @@ export const updateMetalTransaction = async (req, res, next) => {
         "importpurchase",
         "importpurchasereturn"
       ].includes(normalizedType);
-      
+
       const isSaleType = [
         "sale",
         "salereturn",
         "exportsale",
         "exportsalereturn"
       ].includes(normalizedType);
-      
+
       let diff = 0;
-      
+
       if (isPurchaseType) {
         // For purchase: FXGain when bid > user, FXLoss when bid < user
         diff = bidValue - userValue;
@@ -416,7 +416,7 @@ export const updateMetalTransaction = async (req, res, next) => {
         // For sale: FXGain when user > bid, FXLoss when user < bid
         diff = userValue - bidValue;
       }
-      
+
       return {
         FXGain: diff > 0 ? diff : 0,
         FXLoss: diff < 0 ? Math.abs(diff) : 0,
@@ -463,7 +463,7 @@ export const updateMetalTransaction = async (req, res, next) => {
         grossWeight: toNumber(grossWeight),
         purityStd: toNumber(purityStd, 0.999),
         purity: toNumber(purity),
-        pureWeightStd: toNumber(pureWeightStd), 
+        pureWeightStd: toNumber(pureWeightStd),
         pieces: toNumber(pieces),
         pureWeight: toNumber(pureWeight) ? toNumber(pureWeight) : pureWeightStd,
         purityDifference: toNumber(purityDifference)
@@ -556,10 +556,10 @@ export const updateMetalTransaction = async (req, res, next) => {
       partyCode: trim(partyCode),
       partyCurrency: trim(partyCurrency),
       itemCurrency: trim(itemCurrency),
-      itemCurrencyRate: itemCurrencyRate !== undefined && itemCurrencyRate !== null && itemCurrencyRate !== "" 
-        ? toNumber(itemCurrencyRate, 1) 
-        : (partyCurrencyRate !== undefined && partyCurrencyRate !== null && partyCurrencyRate !== "" 
-          ? toNumber(partyCurrencyRate, 1) 
+      itemCurrencyRate: itemCurrencyRate !== undefined && itemCurrencyRate !== null && itemCurrencyRate !== ""
+        ? toNumber(itemCurrencyRate, 1)
+        : (partyCurrencyRate !== undefined && partyCurrencyRate !== null && partyCurrencyRate !== ""
+          ? toNumber(partyCurrencyRate, 1)
           : 1),
       partyCurrencyRate: toNumber(partyCurrencyRate, 1),
       voucherType,
