@@ -95,8 +95,8 @@ export class StockAdjustmentService {
             StockAdjustment.find(filter)
                 .populate("division", "code")
                 .populate("enteredBy", "name email")
-                .populate("from.stockId", "stockCode")
-                .populate("to.stockId", "stockCode")
+                .populate("from.stockId", "code")
+                .populate("to.stockId", "code")
                 .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
                 .skip(skip)
                 .limit(Number(limit))
@@ -114,6 +114,25 @@ export class StockAdjustmentService {
                 totalPages: Math.ceil(total / limit),
             },
         };
+    }
+
+    static async getStockAdjustmentById(id) {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            throw createAppError("Invalid stock adjustment ID", 400);
+        }
+
+        const adjustment = await StockAdjustment.findById(id)
+            .populate("division", "code")
+            .populate("enteredBy", "name email")
+            .populate("from.stockId", "code standardPurity")
+            .populate("to.stockId", "code standardPurity")
+            .lean();
+
+        if (!adjustment) {
+            throw createAppError("Stock adjustment not found", 404);
+        }
+
+        return adjustment;
     }
 
 }
