@@ -11702,11 +11702,11 @@ class MetalTransactionService {
       stockItems,
       otherCharges,
       totalSummary,
-      partyCurrency,
+      itemCurrency,
     } = metalTransaction;
 
     const logs = [];
-    const currencyId = partyCurrency?.toString?.() || null;
+    const currencyId = itemCurrency?.toString?.() || null;
     const currencyObjId = currencyId
       ? new mongoose.Types.ObjectId(currencyId)
       : null;
@@ -11718,7 +11718,7 @@ class MetalTransactionService {
       transactionType,
       mode,
       totals,
-      partyCurrency
+      itemCurrency
     );
 
     // 2️⃣ Update GOLD balance
@@ -11871,7 +11871,7 @@ class MetalTransactionService {
     return updateOps;
   }
 
-  static calculateBalanceChanges(transactionType, mode, totals, partyCurrency) {
+  static calculateBalanceChanges(transactionType, mode, totals, itemCurrency) {
     const balanceMatrix = {
       purchase: {
         unfix: {
@@ -12038,7 +12038,7 @@ class MetalTransactionService {
       vatAmount: 0,
     };
 
-    return { ...changes, currency: partyCurrency }; // ✅ include currency id
+    return { ...changes, currency: itemCurrency }; // ✅ include currency id
   }
 
   static generateTransactionId() {
@@ -12906,6 +12906,8 @@ class MetalTransactionService {
       "salesman",
       "supplierInvoiceNo",
       "supplierDate",
+      "declarationNumber",
+      "importExportType",
       "notes",
       "status",
     ];
@@ -13112,17 +13114,21 @@ class MetalTransactionService {
       fixed,
       unfix,
       partyCurrency,
+      itemCurrency,
       otherCharges,
     } = transaction;
 
     const totals = this.calculateTotals(stockItems, totalSummary, false);
     const mode = this.getTransactionMode(fixed, unfix);
 
+    // Use itemCurrency for cash balance if available, otherwise fallback to partyCurrency
+    const currencyForBalance = itemCurrency || partyCurrency;
+
     const ch = this.calculateBalanceChanges(
       transactionType,
       mode,
       totals,
-      partyCurrency
+      currencyForBalance
     );
 
     const sign = -1; // always reverse
@@ -13137,7 +13143,7 @@ class MetalTransactionService {
       );
     }
 
-    // 2️⃣ Reverse CASH
+    // 2️⃣ Reverse CASH (use itemCurrency for cash balance)
     const netCash =
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
@@ -13145,9 +13151,14 @@ class MetalTransactionService {
       (ch.otherCharges || 0) +
       (ch.vatAmount || 0);
 
-    if (partyCurrency && netCash !== 0) {
-      await this.ensureCashRow(party._id, partyCurrency, session);
-      await this.incCash(party._id, partyCurrency, sign * netCash, session);
+    const currencyId = currencyForBalance?.toString?.() || null;
+    const currencyObjId = currencyId
+      ? new mongoose.Types.ObjectId(currencyId)
+      : null;
+
+    if (currencyObjId && netCash !== 0) {
+      await this.ensureCashRow(party._id, currencyId, session);
+      await this.incCash(party._id, currencyId, sign * netCash, session);
     }
 
     // 3️⃣ Reverse Debit/Credit for otherCharges
@@ -13961,14 +13972,19 @@ class MetalTransactionService {
       fixed,
       unfix,
       partyCurrency,
+      itemCurrency,
     } = transaction;
     const totals = this.calculateTotals(stockItems, totalSummary);
     const mode = this.getTransactionMode(fixed, unfix);
+    
+    // Use itemCurrency for cash balance if available, otherwise fallback to partyCurrency
+    const currencyForBalance = itemCurrency || partyCurrency;
+    
     const ch = this.calculateBalanceChanges(
       transactionType,
       mode,
       totals,
-      partyCurrency
+      currencyForBalance
     );
     const sign = isReversal ? -1 : 1;
 
@@ -13982,7 +13998,7 @@ class MetalTransactionService {
       );
     }
 
-    // CASH
+    // CASH (use itemCurrency for cash balance)
     const netCash =
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
@@ -13990,9 +14006,14 @@ class MetalTransactionService {
       (ch.discountBalance || 0) +
       (ch.vatAmount || 0);
 
-    if (partyCurrency && netCash !== 0) {
-      await this.ensureCashRow(partyId, partyCurrency, session);
-      await this.incCash(partyId, partyCurrency, sign * netCash, session);
+    const currencyId = currencyForBalance?.toString?.() || null;
+    const currencyObjId = currencyId
+      ? new mongoose.Types.ObjectId(currencyId)
+      : null;
+
+    if (currencyObjId && netCash !== 0) {
+      await this.ensureCashRow(partyId, currencyId, session);
+      await this.incCash(partyId, currencyId, sign * netCash, session);
     }
   }
 
