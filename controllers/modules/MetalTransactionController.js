@@ -31,6 +31,8 @@ export const createMetalTransaction = async (req, res, next) => {
       voucherNumber,
       supplierInvoiceNo,
       supplierDate,
+      declarationNumber,
+      importExportType,
       metalRateUnit,
       stockItems = [],
       otherCharges = [],
@@ -77,6 +79,25 @@ export const createMetalTransaction = async (req, res, next) => {
         400,
         "INVALID_TRANSACTION_TYPE"
       );
+    }
+
+    // Validate declaration number and import/export type for specific transaction types
+    const importExportTypes = ["exportSale", "exportSaleReturn", "importPurchase", "importPurchaseReturn"];
+    if (importExportTypes.includes(transactionType)) {
+      if (!declarationNumber || !declarationNumber.trim()) {
+        throw createAppError(
+          "Declaration number is required for this transaction type",
+          400,
+          "DECLARATION_NUMBER_REQUIRED"
+        );
+      }
+      if (!importExportType || !importExportType.trim()) {
+        throw createAppError(
+          "Import/Export type is required for this transaction type",
+          400,
+          "IMPORT_EXPORT_TYPE_REQUIRED"
+        );
+      }
     }
     if (
       ![
@@ -362,6 +383,8 @@ export const updateMetalTransaction = async (req, res, next) => {
       voucherNumber,
       supplierInvoiceNo,
       supplierDate,
+      declarationNumber,
+      importExportType,
       metalRateUnit,
       stockItems = [],
       otherCharges = [],
@@ -378,6 +401,25 @@ export const updateMetalTransaction = async (req, res, next) => {
     const missing = required.filter((f) => !body[f]);
     if (missing.length)
       throw createAppError(`Missing: ${missing.join(", ")}`, 400);
+
+    // Validate declaration number and import/export type for specific transaction types
+    const importExportTypes = ["exportSale", "exportSaleReturn", "importPurchase", "importPurchaseReturn"];
+    if (importExportTypes.includes(transactionType)) {
+      if (!declarationNumber || !declarationNumber.trim()) {
+        throw createAppError(
+          "Declaration number is required for this transaction type",
+          400,
+          "DECLARATION_NUMBER_REQUIRED"
+        );
+      }
+      if (!importExportType || !importExportType.trim()) {
+        throw createAppError(
+          "Import/Export type is required for this transaction type",
+          400,
+          "IMPORT_EXPORT_TYPE_REQUIRED"
+        );
+      }
+    }
 
     if (!Array.isArray(stockItems) || stockItems.length === 0) {
       throw createAppError("stockItems must be non-empty array", 400);
@@ -567,6 +609,8 @@ export const updateMetalTransaction = async (req, res, next) => {
       voucherNumber: trim(voucherNumber),
       supplierInvoiceNo: trim(supplierInvoiceNo),
       supplierDate: toDate(supplierDate),
+      declarationNumber: trim(declarationNumber) || null,
+      importExportType: trim(importExportType) || null,
       metalRateUnit: metalRateUnit
         ? {
           rateType: trim(metalRateUnit.rateType),

@@ -12,15 +12,15 @@ import VoucherMasterService from '../services/modules/VoucherMasterService.js';
 const TRANSACTION_TYPE_TO_MODULE = {
   // Receipt types (purchase-based) - use hedge-metal-receipt
   purchase: "hedge-metal-purchase",
-  purchaseReturn: "hedge-metal-purchase-return",
-  importPurchase: "hedge-metal-import-purchase",
-  importPurchaseReturn: "hedge-metal-import-purchase-return",
+  purchasereturn: "hedge-metal-purchase-return",
+  importpurchase: "hedge-metal-import-purchase",
+  importpurchasereturn: "hedge-metal-import-purchase-return",
   
   // Payment types (sale-based) - use hedge-metal-payment
   sale: "hedge-metal-sale",
-  saleReturn: "hedge-metal-sale-return",
-  exportSale: "hedge-metal-export-sale",
-  exportSaleReturn: "hedge-metal-export-sale-return",
+  salereturn: "hedge-metal-sale-return",
+  exportsale: "hedge-metal-export-sale",
+  exportsalereturn: "hedge-metal-export-sale-return",
 };
 
 /**
@@ -52,8 +52,10 @@ export const generateHedgeVoucherNumber = async (transactionType) => {
     const normalizedType = transactionType.toLowerCase().trim();
     
     // Get the module name for this transaction type
+    console.log(normalizedType,"normalizedType🟢🟢🟢");
+    console.log(TRANSACTION_TYPE_TO_MODULE,"TRANSACTION_TYPE_TO_MODULE🟢🟢🟢");
     const module = TRANSACTION_TYPE_TO_MODULE[normalizedType];
-    
+    console.log(module,"module🟢🟢🟢");
     if (!module) {
       throw new Error(
         `No hedge voucher module found for transaction type: ${transactionType}. ` +
