@@ -377,11 +377,6 @@ export class ReportService {
     if (fromDate) startDate = moment(fromDate).startOf("day").toDate();
     if (toDate) endDate = moment(toDate).endOf("day").toDate();
     if (asOnDate) asOnDateParsed = moment(asOnDate).endOf("day").toDate();
-<<<<<<< HEAD
-
-=======
-    
->>>>>>> 213fcd5ba4738f65b41fc38d8fd137593744242d
     if (startDate && endDate && startDate > endDate) {
       throw new Error("From date cannot be greater than to date");
     }
@@ -2261,27 +2256,27 @@ export class ReportService {
 
     // Apply MetalStock filters from groupByRange
     const stockMatchConditions = {};
-
+    
     if (filters.groupByRange?.categoryCode?.length) {
       stockMatchConditions["stock.category"] = { $in: filters.groupByRange.categoryCode };
     }
-
+    
     if (filters.groupByRange?.karat?.length) {
       stockMatchConditions["stock.karat"] = { $in: filters.groupByRange.karat };
     }
-
+    
     if (filters.groupByRange?.type?.length) {
       stockMatchConditions["stock.type"] = { $in: filters.groupByRange.type };
     }
-
+    
     if (filters.groupByRange?.size?.length) {
       stockMatchConditions["stock.size"] = { $in: filters.groupByRange.size };
     }
-
+    
     if (filters.groupByRange?.color?.length) {
       stockMatchConditions["stock.color"] = { $in: filters.groupByRange.color };
     }
-
+    
     if (filters.groupByRange?.brand?.length) {
       stockMatchConditions["stock.brand"] = { $in: filters.groupByRange.brand };
     }
