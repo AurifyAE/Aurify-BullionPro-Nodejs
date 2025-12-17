@@ -522,13 +522,15 @@ class MetalTransactionService {
       else if (transactionType === "exportSaleReturn") hedgeTransactionType = "Sale-Return";
 
       // Create HedgeFixingEntry ONCE with summed totals
+      // Pass both display format (for hedge type logic) and original transactionType (for voucher counting)
       await this.createHedgeFixingEntry({
         hedge,
         hedgeVoucherNo,
         voucherNumber,
         party,
         adminId,
-        transactionType: hedgeTransactionType,
+        transactionType: hedgeTransactionType, // Display format for hedge type logic
+        originalTransactionType: transactionType, // Original type (purchase, sale, etc.) for voucher counting
         totals: sumTotals,
         itemCurrency,
         metalTransactionId: transaction._id,
@@ -917,7 +919,8 @@ class MetalTransactionService {
     voucherNumber,
     party,
     adminId,
-    transactionType,
+    transactionType, // Display format (Purchase, Sale, etc.) for hedge type logic
+    originalTransactionType, // Original type (purchase, sale, etc.) for voucher counting
     totals, // FIXED
     itemCurrency,
     metalTransactionId,
@@ -955,11 +958,33 @@ class MetalTransactionService {
       ? "SALE-HEDGE" // we hedge against selling action
       : "PURCHASE-HEDGE";
 
+    // Use originalTransactionType if provided, otherwise normalize from display format
+    // This ensures we save the correct transaction type (purchase, sale, etc.) for voucher counting
+    let normalizedTransactionType;
+    if (originalTransactionType) {
+      // Use the original transaction type directly (already in correct format: purchase, sale, etc.)
+      normalizedTransactionType = originalTransactionType.toLowerCase().trim();
+    } else {
+      // Fallback: Map display names to actual transaction type values
+      const transactionTypeMap = {
+        "Purchase": "purchase",
+        "Purchase-Return": "purchaseReturn",
+        "Import-Purchase": "importPurchase",
+        "Import-Purchase-Return": "importPurchaseReturn",
+        "Sale": "sale",
+        "Sale-Return": "saleReturn",
+        "Export-Sale": "exportSale",
+        "Export-Sale-Return": "exportSaleReturn",
+      };
+      normalizedTransactionType = transactionTypeMap[transactionType] || transactionType.toLowerCase();
+    }
+
     const fixingData = {
       transactionId,
       metalTransactionId,
       partyId: party._id,
-      type: hedgeType,
+      type: hedgeType, // Keep existing hedge type (SALE-HEDGE or PURCHASE-HEDGE)
+      transactionType: normalizedTransactionType, // Save original transaction type for voucher counting (purchase, sale, purchaseReturn, etc.)
       referenceNumber: voucherNumber,
       voucherNumber: hedgeVoucherNo,
       orders: [order],
@@ -972,7 +997,7 @@ class MetalTransactionService {
 
     const fixing = await TransactionFixing.create(fixingData);
 
-    console.log("✅ Hedge Fixing Saved:", fixing.transactionId);
+    console.log("✅ Hedge Fixing Saved:", fixing.transactionId, "Transaction Type:", normalizedTransactionType);
 
     return fixing;
   }
@@ -11772,16 +11797,29 @@ class MetalTransactionService {
       );
     }
 
-    // 3️⃣ Update CASH balance safely (per currency)
+    // 3️⃣ Get round-off amount from totalSummary
+    const roundOff = totalSummary?.rounded || 0;
+    const roundOffAmount = Number(roundOff) || 0;
+
+    // 4️⃣ Update CASH balance safely (per currency)
+    // Include round-off in the cash balance calculation
     const netCash =
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.otherCharges || 0) +
       (ch.discountBalance || 0) +
-      (ch.vatAmount || 0);
+      (ch.vatAmount || 0) +
+      roundOffAmount; // Add round-off to cash balance
     console.log("--------------------");
-    console.log(netCash);
-
+    console.log("Net Cash (before round-off):", 
+      (ch.cashBalance || 0) +
+      (ch.premiumBalance || 0) +
+      (ch.otherCharges || 0) +
+      (ch.discountBalance || 0) +
+      (ch.vatAmount || 0)
+    );
+    console.log("Round-off amount:", roundOffAmount);
+    console.log("Net Cash (after round-off):", netCash);
     console.log("--------------------");
 
     if (currencyObjId && !isNaN(netCash) && netCash !== 0) {
@@ -11791,7 +11829,7 @@ class MetalTransactionService {
       logs.push(
         `💰 CASH [${currencyId}] ${s}${Math.abs(netCash).toFixed(2)} for ${
           party.customerName
-        }`
+        }${roundOffAmount !== 0 ? ` (includes round-off: ${roundOffAmount > 0 ? '+' : ''}${roundOffAmount.toFixed(2)})` : ''}`
       );
     }
 
