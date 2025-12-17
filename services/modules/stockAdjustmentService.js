@@ -92,6 +92,103 @@ export class StockAdjustmentService {
                 { session }
             );
 
+            // 5. registry entry - stock adjustment credit gold - means deducting gold from inventory  
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "XAU",
+                transactionId: adjustment[0]._id,
+                metalId: data.fromData.stockId,
+                type: "GOLD_STOCK",
+                goldBidValue: 0,
+                description: "Stock Adjustment credit",
+                value: data.fromData.grossWeight ?? 0,
+                debit: 0,
+                credit: 0,
+                goldDebit: 0,
+                goldCredit: data.fromData.grossWeight ?? 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
+            // 5. registry entry - stock adjustment debit gold 
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "XAU",
+                transactionId: adjustment[0]._id,
+                metalId: data.toStock.stockId,
+                type: "GOLD_STOCK",
+                goldBidValue: 0,
+                description: "Stock Adjustment Debit",
+                value: data.toStock.grossWeight ?? 0,
+                debit: 0,
+                credit: 0,
+                goldDebit: data.toStock.grossWeight ?? 0,
+                goldCredit: 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
+            const stockDifference = (data.toStock.grossWeight ?? 0) - (data.fromData.grossWeight ?? 0);
+            const makingAmountDifference = (data.toStock.avgAmount ?? 0) - (data.fromData.avgAmount ?? 0);
+
+            // if the stock diif or making amouunt differnece is zero and also negetive handle the credit and debit entry accordingly
+            if (stockDifference === 0 && makingAmountDifference === 0) {
+
+                // 5. registry entry - stock adjustment diffrence 
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "stock",
+                    transactionId: adjustment[0]._id,
+                    metalId: data.fromData.stockId,
+                    type: "STOCK_ADJUSTMENT",
+                    goldBidValue: 0,
+                    description: "Stock Adjustment",
+                    value: 0,
+                    debit: makingAmountDifference >= 0 ? makingAmountDifference : 0,
+                    credit: makingAmountDifference < 0 ? makingAmountDifference : 0,
+                    goldDebit: stockDifference >= 0 ? stockDifference : 0,
+                    goldCredit: stockDifference < 0 ? stockDifference : 0,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                })
+            }
+
+
+            // 5. registry entry - stock adjustment making credit -- from the from stock
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "AED",
+                transactionId: adjustment[0]._id,
+                metalId: data.fromData.stockId,
+                type: "MAKING_CHARGES",
+                goldBidValue: 0,
+                description: "Making Charges Adjustment",
+                value: 0,
+                debit: 0,
+                credit: data.fromData.avgAmount ?? 0,
+                goldDebit: 0,
+                goldCredit: 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
+            // 5. registry entry - stock adjustment making debit 
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "AED",
+                transactionId: adjustment[0]._id,
+                metalId: data.fromData.stockId,
+                type: "MAKING_CHARGES",
+                goldBidValue: 0,
+                description: "Making Charges Adjustment",
+                value: 0,
+                debit: data.toStock.avgAmount ?? 0,
+                credit: 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
+
             // 5. Commit
             await session.commitTransaction();
             session.endSession();
@@ -390,7 +487,61 @@ export class StockAdjustmentService {
             throw error;
         }
     }
+    static async createRegistryEntry({
+        transactionType,
+        assetType,
+        transactionId,
+        metalId,
+        InventoryLogID,
+        type,
+        goldBidValue,
+        description,
+        value,
+        goldDebit,
+        goldCredit,
+        debit = 0,
+        credit = 0,
+        reference = null,
+        party = null,
+        isBullion = null,
+        costCenter = "INVENTORY",
+        createdBy,
+        purity,
+        grossWeight,
+        pureWeight,
+    }) {
+        try {
+            const registryEntry = new Registry({
+                transactionType,
+                assetType,
+                transactionId,
+                metalId,
+                InventoryLogID,
+                costCenter,
+                type,
+                goldBidValue,
+                description,
+                goldDebit: value,
+                value,
+                debit: value,
+                credit: 0,
+                reference,
+                party,
+                isBullion,
+                createdBy,
+                status: "completed",
+                purity,
+                grossWeight,
+                pureWeight,
+            });
 
+            return await registryEntry.save();
+        } catch (error) {
+            console.error("Failed to create registry entry:", error);
+            // Don't throw error to prevent inventory update from failing
+            // Log the error for debugging purposes
+        }
+    }
 
 }
 
