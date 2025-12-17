@@ -11732,16 +11732,29 @@ class MetalTransactionService {
       );
     }
 
-    // 3️⃣ Update CASH balance safely (per currency)
+    // 3️⃣ Get round-off amount from totalSummary
+    const roundOff = totalSummary?.rounded || 0;
+    const roundOffAmount = Number(roundOff) || 0;
+
+    // 4️⃣ Update CASH balance safely (per currency)
+    // Include round-off in the cash balance calculation
     const netCash =
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.otherCharges || 0) +
       (ch.discountBalance || 0) +
-      (ch.vatAmount || 0);
+      (ch.vatAmount || 0) +
+      roundOffAmount; // Add round-off to cash balance
     console.log("--------------------");
-    console.log(netCash);
-
+    console.log("Net Cash (before round-off):", 
+      (ch.cashBalance || 0) +
+      (ch.premiumBalance || 0) +
+      (ch.otherCharges || 0) +
+      (ch.discountBalance || 0) +
+      (ch.vatAmount || 0)
+    );
+    console.log("Round-off amount:", roundOffAmount);
+    console.log("Net Cash (after round-off):", netCash);
     console.log("--------------------");
 
     if (currencyObjId && !isNaN(netCash) && netCash !== 0) {
@@ -11751,7 +11764,7 @@ class MetalTransactionService {
       logs.push(
         `💰 CASH [${currencyId}] ${s}${Math.abs(netCash).toFixed(2)} for ${
           party.customerName
-        }`
+        }${roundOffAmount !== 0 ? ` (includes round-off: ${roundOffAmount > 0 ? '+' : ''}${roundOffAmount.toFixed(2)})` : ''}`
       );
     }
 
