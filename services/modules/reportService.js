@@ -279,7 +279,7 @@ export class ReportService {
         Account.aggregate(receivablesPayablesPipeline),
       ]);
 
-
+     
 
       // 4. Format the output
       const formatted = this.formatedOwnStock(reportData, receivablesAndPayables, getOpeningBalance);
@@ -377,6 +377,7 @@ export class ReportService {
     if (fromDate) startDate = moment(fromDate).startOf("day").toDate();
     if (toDate) endDate = moment(toDate).endOf("day").toDate();
     if (asOnDate) asOnDateParsed = moment(asOnDate).endOf("day").toDate();
+    
     if (startDate && endDate && startDate > endDate) {
       throw new Error("From date cannot be greater than to date");
     }
@@ -2318,6 +2319,7 @@ export class ReportService {
         stockCode: { $first: "$stock.code" },
         description: { $first: "$stock.description" },
         metalId: { $first: "$stock._id" },
+        
         // Calculate total gross weight based on transaction type
         totalGrossWeight: {
           $sum: {
@@ -2340,6 +2342,7 @@ export class ReportService {
             },
           },
         },
+        
         // Calculate total pieces
         totalPcs: {
           $sum: {
@@ -2362,10 +2365,10 @@ export class ReportService {
             },
           },
         },
-
+        
         // Get purity from karat details
         purity: { $first: "$karatDetails.standardPurity" },
-
+        
         // Sum of avgMakingRate from purchase transactions
         totalMakingRate: {
           $sum: {
@@ -2381,6 +2384,7 @@ export class ReportService {
             ]
           }
         },
+        
         // Sum of avgMakingAmount from purchase transactions
         totalMakingAmount: {
           $sum: {
@@ -2396,6 +2400,7 @@ export class ReportService {
             ]
           }
         },
+        
         // Count of purchase transactions
         purchaseTransactionCount: {
           $sum: {
@@ -2424,6 +2429,7 @@ export class ReportService {
         grossWeight: "$totalGrossWeight",
         pcs: "$totalPcs",
         purity: 1,
+        
         // Calculate average making rate (sum / count of purchase transactions)
         avgMakingRate: {
           $cond: [
@@ -2432,6 +2438,7 @@ export class ReportService {
             0
           ]
         },
+        
         // Calculate average making amount (sum / count of purchase transactions)
         avgMakingAmount: {
           $cond: [
