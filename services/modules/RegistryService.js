@@ -230,6 +230,7 @@ class RegistryService {
           "VAT_AMOUNT",
           "OTHER-CHARGE",
           "MAKING_CHARGES",
+          "DISCOUNT_ON_SALES/PURCHASE"
         ],
         mode: "cash-only",
       },

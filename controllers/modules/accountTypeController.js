@@ -6,6 +6,7 @@ import {
 import { createAppError } from "../../utils/errorHandler.js";
 import { deleteMultipleS3Files } from "../../utils/s3Utils.js"; // Ensure this import is added
 import AccountMode from "../../models/modules/AccountMode.js";
+import AccountType from "../../models/modules/AccountType.js";
 
 // Create new trade debtor
 export const createTradeDebtor = async (req, res, next) => {
@@ -27,6 +28,7 @@ export const createTradeDebtor = async (req, res, next) => {
       employees,
       kycDetails,
       accountType,
+      accountCode, // Accept manual account code from frontend
     } = req.body;
 
     console.log("req.body : ", req.body);
@@ -51,8 +53,23 @@ export const createTradeDebtor = async (req, res, next) => {
     // ✅ NEW: Validate account mode exists and is active
     await validateAccountMode(accountType);
 
-    // ✅ NEW: Generate unique account code automatically
-    const accountCode = await generateUniqueAccountCode(accountType);
+    // ✅ NEW: Handle account code - use manual if provided, otherwise auto-generate
+    let finalAccountCode;
+    if (accountCode && accountCode.trim()) {
+      // User provided manual account code - validate for duplicates
+      const codeExists = await AccountType.isAccountCodeExists(accountCode.trim().toUpperCase());
+      if (codeExists) {
+        throw createAppError(
+          `Account code "${accountCode.trim().toUpperCase()}" already exists. Please use a different code.`,
+          400,
+          "DUPLICATE_ACCOUNT_CODE"
+        );
+      }
+      finalAccountCode = accountCode.trim().toUpperCase();
+    } else {
+      // Auto-generate account code if not provided
+      finalAccountCode = await generateUniqueAccountCode(accountType);
+    }
 
     // Basic validation - required fields (removed accountCode from here)
     if (!customerName || !accountType) {
@@ -153,21 +170,13 @@ export const createTradeDebtor = async (req, res, next) => {
       netAmount: parseFloat(l.netAmount) || 0,
       creditDaysAmt: parseInt(l.creditDaysAmt) || 0,
       creditDaysMtl: parseInt(l.creditDaysMtl) || 0,
-      Margin: parseFloat(l.Margin),
+      // Margin is optional for debtors - default to 0 if not provided
+      Margin: l.Margin !== undefined && l.Margin !== null && l.Margin !== "" ? parseFloat(l.Margin) || 0 : 0,
       creditAmount: parseFloat(l.creditAmount) || 0,
       metalAmount: parseFloat(l.metalAmount) || 0,
     }));
 
-    // Validate Margin
-    if (
-      ParsedlimitsMargins.some((l) => l.Margin === undefined || isNaN(l.Margin))
-    ) {
-      throw createAppError(
-        "Margin is required and must be a valid number",
-        400,
-        "MISSING_MARGIN"
-      );
-    }
+    // Margin is not required for debtors - removed validation
 
     // Parse optional fields
     let parsedAddresses = parseJsonField(addresses, "addresses") || [];
@@ -526,11 +535,11 @@ export const createTradeDebtor = async (req, res, next) => {
       }
     }
 
-    // ✅ Build trade debtor data with generated account code
+    // ✅ Build trade debtor data with account code (manual or generated)
     const tradeDebtorData = {
       accountType: accountType.trim(),
       title: sanitizeString(title, "N/A"),
-      accountCode: accountCode, // ✅ Use generated code
+      accountCode: finalAccountCode, // ✅ Use manual code if provided, otherwise generated
       customerName: customerName.trim(),
       acDefinition: parsedAcDefinition,
       vatGstDetails: parsedVatGstDetails,
@@ -848,27 +857,56 @@ export const updateTradeDebtor = async (req, res, next) => {
     // 5. limitsMargins (safe parsing)
     // ──────────────────────────────────────────────────────────────
     if (updateData.limitsMargins && Array.isArray(updateData.limitsMargins)) {
-      updateData.limitsMargins = updateData.limitsMargins.map((l) => ({
-        limitType: l.limitType || "Fixed",
-        currency: l.currency?._id || l.currency,
-        creditDaysAmt: parseInt(l.creditDaysAmt) || 0,
-        creditDaysMtl: parseInt(l.creditDaysMtl) || 0,
-        Margin: parseFloat(l.Margin) ?? 0,
-        creditAmount: parseFloat(l.creditAmount) || 0,
-        metalAmount: parseFloat(l.metalAmount) || 0,
-      }));
-
-      if (
-        updateData.limitsMargins.some(
-          (l) => l.Margin === null || isNaN(l.Margin)
-        )
-      ) {
-        throw createAppError(
-          "Margin is required and must be a valid number",
-          400,
-          "INVALID_MARGIN"
-        );
+      // Determine account mode to check if margin is required
+      let accountModeName = "";
+      try {
+        const accountTypeId = updateData.accountType || (await AccountType.findById(id))?.accountType;
+        if (accountTypeId) {
+          const accountMode = await AccountMode.findById(accountTypeId).select("name").lean();
+          if (accountMode && accountMode.name) {
+            accountModeName = accountMode.name.toUpperCase();
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching account mode for margin validation:", error);
       }
+
+      // Check if account mode is RECEIVABLE or PAYABLE (margin not required)
+      const receivablePayable = ["RECEIVABLE", "RECEIVABLES", "PAYABLE", "PAYABLES"];
+      const isReceivableOrPayable = receivablePayable.some((m) => accountModeName.includes(m));
+
+      updateData.limitsMargins = updateData.limitsMargins.map((l) => {
+        // For RECEIVABLE/PAYABLE: allow empty/0 for Margin (set to 0 if empty)
+        // For others: require valid number
+        let marginValue;
+        if (isReceivableOrPayable) {
+          // For RECEIVABLE/PAYABLE: allow empty string, null, undefined, or 0
+          // Set to 0 if empty/null/undefined (schema requires a number)
+          if (l.Margin === null || l.Margin === undefined || l.Margin === "" || l.Margin === "null" || l.Margin === "undefined") {
+            marginValue = 0; // Set to 0 for RECEIVABLE/PAYABLE when empty
+          } else {
+            const parsed = parseFloat(l.Margin);
+            marginValue = isNaN(parsed) ? 0 : parsed;
+          }
+        } else {
+          // For other account types, require valid number (default to 0 if invalid)
+          const parsed = parseFloat(l.Margin);
+          marginValue = isNaN(parsed) ? 0 : parsed;
+        }
+
+        return {
+          limitType: l.limitType || "Fixed",
+          currency: l.currency?._id || l.currency,
+          creditDaysAmt: parseInt(l.creditDaysAmt) || 0,
+          creditDaysMtl: parseInt(l.creditDaysMtl) || 0,
+          Margin: marginValue,
+          creditAmount: parseFloat(l.creditAmount) || 0,
+          metalAmount: parseFloat(l.metalAmount) || 0,
+        };
+      });
+
+      // Margin is not required for debtors - removed validation
+      // All account types (including RECEIVABLE/PAYABLE) can have margin as 0 or empty
     }
 
     // ──────────────────────────────────────────────────────────────

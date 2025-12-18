@@ -124,6 +124,12 @@ const TransactionFixingSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    transactionType: {
+      type: String,
+      trim: true,
+      // Store the original transaction type (purchase, sale, purchaseReturn, etc.) for voucher counting
+      // This is different from 'type' which stores hedge type (SALE-HEDGE, PURCHASE-HEDGE)
+    },
     referenceNumber: { type: String, trim: true, uppercase: true },
     invoiceReferenceNumber: { type: String, trim: true },
     invoiceDate: { type: Date },

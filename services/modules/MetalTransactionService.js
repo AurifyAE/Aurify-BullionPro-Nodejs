@@ -522,13 +522,15 @@ class MetalTransactionService {
       else if (transactionType === "exportSaleReturn") hedgeTransactionType = "Sale-Return";
 
       // Create HedgeFixingEntry ONCE with summed totals
+      // Pass both display format (for hedge type logic) and original transactionType (for voucher counting)
       await this.createHedgeFixingEntry({
         hedge,
         hedgeVoucherNo,
         voucherNumber,
         party,
         adminId,
-        transactionType: hedgeTransactionType,
+        transactionType: hedgeTransactionType, // Display format for hedge type logic
+        originalTransactionType: transactionType, // Original type (purchase, sale, etc.) for voucher counting
         totals: sumTotals,
         itemCurrency,
         metalTransactionId: transaction._id,
@@ -548,6 +550,27 @@ class MetalTransactionService {
         dealOrderId,
       });
       entries.push(...hedgeRegistryEntries);
+    }
+
+    // =====================================================
+    // ROUND OFF REGISTRIES - Created if roundOff is non-zero
+    // =====================================================
+    const roundOff = totalSummary?.rounded || 0;
+    if (roundOff !== 0 && roundOff !== null && roundOff !== undefined) {
+      const roundOffEntries = this.createRoundOffRegistries({
+        transactionType,
+        baseTransactionId,
+        metalTransactionId: transaction._id,
+        party,
+        roundOff,
+        voucherDate,
+        voucherNumber,
+        adminId,
+        partyCurrency,
+        partyCurrencyRate: transaction.partyCurrencyRate || 1,
+        dealOrderId,
+      });
+      entries.push(...roundOffEntries);
     }
 
     return entries.filter(Boolean);
@@ -685,6 +708,139 @@ class MetalTransactionService {
     return entries;
   }
 
+  // Create round off registries based on transaction type and round off value
+  static createRoundOffRegistries({
+    transactionType,
+    baseTransactionId,
+    metalTransactionId,
+    party,
+    roundOff,
+    voucherDate,
+    voucherNumber,
+    adminId,
+    partyCurrency,
+    partyCurrencyRate = 1,
+    dealOrderId = null,
+  }) {
+    const entries = [];
+    const partyName = party.customerName || party.accountCode;
+    const absRoundOff = Math.abs(roundOff);
+
+    // Determine transaction type groups
+    const groupA = ["purchase", "saleReturn", "importPurchase", "exportSaleReturn"];
+    const isGroupA = groupA.includes(transactionType);
+    const isGroupB = !isGroupA; // sale, purchaseReturn, importPurchaseReturn, exportSale
+
+    // Get currency information
+    // partyCurrency might be an ObjectId or populated object
+    let currencyCode = "AED";
+    let currencyRate = partyCurrencyRate || 1;
+    
+    if (partyCurrency) {
+      if (typeof partyCurrency === 'object' && partyCurrency.currencyCode) {
+        currencyCode = partyCurrency.currencyCode;
+        currencyRate = partyCurrency.conversionRate || partyCurrency.rate || partyCurrencyRate || 1;
+      } else if (typeof partyCurrency === 'object' && partyCurrency.code) {
+        currencyCode = partyCurrency.code;
+        currencyRate = partyCurrency.conversionRate || partyCurrency.rate || partyCurrencyRate || 1;
+      }
+    }
+
+    const FX = {
+      assetType: currencyCode,
+      currencyRate: currencyRate,
+      dealOrderId: dealOrderId || null,
+    };
+
+    // Determine debit/credit based on group and round off sign
+    let partyCashDebit = 0;
+    let partyCashCredit = 0;
+    let discountDebit = 0;
+    let discountCredit = 0;
+
+    if (isGroupA) {
+      // Group A: purchase, saleReturn, importPurchase, exportSaleReturn
+      if (roundOff > 0) {
+        // Positive round off
+        partyCashCredit = absRoundOff;
+        discountDebit = absRoundOff;
+      } else {
+        // Negative round off
+        partyCashDebit = absRoundOff;
+        discountCredit = absRoundOff;
+      }
+    } else {
+      // Group B: sale, purchaseReturn, importPurchaseReturn, exportSale (OPPOSITE)
+      if (roundOff > 0) {
+        // Positive round off
+        partyCashDebit = absRoundOff;
+        discountCredit = absRoundOff;
+      } else {
+        // Negative round off
+        partyCashCredit = absRoundOff;
+        discountDebit = absRoundOff;
+      }
+    }
+
+    // 1. PARTY_CASH_BALANCE registry
+    if (partyCashDebit > 0 || partyCashCredit > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "012",
+          "PARTY_CASH_BALANCE",
+          `Round off adjustment - ${transactionType} from ${partyName}`,
+          party._id,
+          false,
+          absRoundOff,
+          partyCashCredit,
+          {
+            cashDebit: partyCashDebit,
+            cashCredit: partyCashCredit,
+            debit:partyCashDebit,
+            credit:partyCashCredit,
+            ...FX,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    // 2. DISCOUNT_ON_SALES/PURCHASE registry
+    if (discountDebit > 0 || discountCredit > 0) {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "013",
+          "DISCOUNT_ON_SALES/PURCHASE",
+          `Discount on ${transactionType} - Round off from ${partyName}`,
+          party._id,
+          false,
+          absRoundOff,
+          discountCredit,
+          {
+            cashDebit: discountDebit,
+            cashCredit: discountCredit,
+            debit:discountDebit,
+            credit:discountCredit,
+            ...FX,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId
+        )
+      );
+    }
+
+    return entries.filter(Boolean);
+  }
+
   static getTransactionMode(fixed, unfix) {
     if (fixed && !unfix) return "fix";
     if (unfix && !fixed) return "unfix";
@@ -698,7 +854,8 @@ class MetalTransactionService {
     voucherNumber,
     party,
     adminId,
-    transactionType,
+    transactionType, // Display format (Purchase, Sale, etc.) for hedge type logic
+    originalTransactionType, // Original type (purchase, sale, etc.) for voucher counting
     totals, // FIXED
     itemCurrency,
     metalTransactionId,
@@ -736,11 +893,33 @@ class MetalTransactionService {
       ? "SALE-HEDGE" // we hedge against selling action
       : "PURCHASE-HEDGE";
 
+    // Use originalTransactionType if provided, otherwise normalize from display format
+    // This ensures we save the correct transaction type (purchase, sale, etc.) for voucher counting
+    let normalizedTransactionType;
+    if (originalTransactionType) {
+      // Use the original transaction type directly (already in correct format: purchase, sale, etc.)
+      normalizedTransactionType = originalTransactionType.toLowerCase().trim();
+    } else {
+      // Fallback: Map display names to actual transaction type values
+      const transactionTypeMap = {
+        "Purchase": "purchase",
+        "Purchase-Return": "purchaseReturn",
+        "Import-Purchase": "importPurchase",
+        "Import-Purchase-Return": "importPurchaseReturn",
+        "Sale": "sale",
+        "Sale-Return": "saleReturn",
+        "Export-Sale": "exportSale",
+        "Export-Sale-Return": "exportSaleReturn",
+      };
+      normalizedTransactionType = transactionTypeMap[transactionType] || transactionType.toLowerCase();
+    }
+
     const fixingData = {
       transactionId,
       metalTransactionId,
       partyId: party._id,
-      type: hedgeType,
+      type: hedgeType, // Keep existing hedge type (SALE-HEDGE or PURCHASE-HEDGE)
+      transactionType: normalizedTransactionType, // Save original transaction type for voucher counting (purchase, sale, purchaseReturn, etc.)
       referenceNumber: voucherNumber,
       voucherNumber: hedgeVoucherNo,
       orders: [order],
@@ -753,7 +932,7 @@ class MetalTransactionService {
 
     const fixing = await TransactionFixing.create(fixingData);
 
-    console.log("✅ Hedge Fixing Saved:", fixing.transactionId);
+    console.log("✅ Hedge Fixing Saved:", fixing.transactionId, "Transaction Type:", normalizedTransactionType);
 
     return fixing;
   }
@@ -11483,6 +11662,7 @@ class MetalTransactionService {
   /** 🔹 Increment a currency balance safely with arrayFilters */
   static async incCash(accountId, currencyId, delta, session) {
     const currencyObjId = new mongoose.Types.ObjectId(currencyId);
+    console.log("incCash💸💸💸", accountId, currencyId, delta);
     await Account.updateOne(
       { _id: accountId },
       {
@@ -11523,11 +11703,11 @@ class MetalTransactionService {
       stockItems,
       otherCharges,
       totalSummary,
-      partyCurrency,
+      itemCurrency,
     } = metalTransaction;
 
     const logs = [];
-    const currencyId = partyCurrency?.toString?.() || null;
+    const currencyId = itemCurrency?.toString?.() || null;
     const currencyObjId = currencyId
       ? new mongoose.Types.ObjectId(currencyId)
       : null;
@@ -11539,7 +11719,7 @@ class MetalTransactionService {
       transactionType,
       mode,
       totals,
-      partyCurrency
+      itemCurrency
     );
 
     // 2️⃣ Update GOLD balance
@@ -11553,16 +11733,29 @@ class MetalTransactionService {
       );
     }
 
-    // 3️⃣ Update CASH balance safely (per currency)
+    // 3️⃣ Get round-off amount from totalSummary
+    const roundOff = totalSummary?.rounded || 0;
+    const roundOffAmount = Number(roundOff) || 0;
+
+    // 4️⃣ Update CASH balance safely (per currency)
+    // Include round-off in the cash balance calculation
     const netCash =
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.otherCharges || 0) +
       (ch.discountBalance || 0) +
-      (ch.vatAmount || 0);
+      (ch.vatAmount || 0) +
+      roundOffAmount; // Add round-off to cash balance
     console.log("--------------------");
-    console.log(netCash);
-
+    console.log("Net Cash (before round-off):", 
+      (ch.cashBalance || 0) +
+      (ch.premiumBalance || 0) +
+      (ch.otherCharges || 0) +
+      (ch.discountBalance || 0) +
+      (ch.vatAmount || 0)
+    );
+    console.log("Round-off amount:", roundOffAmount);
+    console.log("Net Cash (after round-off):", netCash);
     console.log("--------------------");
 
     if (currencyObjId && !isNaN(netCash) && netCash !== 0) {
@@ -11572,7 +11765,7 @@ class MetalTransactionService {
       logs.push(
         `💰 CASH [${currencyId}] ${s}${Math.abs(netCash).toFixed(2)} for ${
           party.customerName
-        }`
+        }${roundOffAmount !== 0 ? ` (includes round-off: ${roundOffAmount > 0 ? '+' : ''}${roundOffAmount.toFixed(2)})` : ''}`
       );
     }
 
@@ -11582,32 +11775,32 @@ class MetalTransactionService {
         const { debit, credit, vatDetails } = oc;
 
         // 🟢 Debit
-        if (debit?.account && debit?.baseCurrency > 0) {
+        if (debit?.account && debit?.amountFC > 0) {
           const cur = debit.currency?.toString?.() || currencyId;
           await this.ensureCashRow(debit.account, cur, session);
-          await this.incCash(debit.account, cur, -debit.baseCurrency, session);
+          await this.incCash(debit.account, cur, -debit.amountFC, session);
           logs.push(
-            `🟢 DEBIT ${debit.baseCurrency.toFixed(2)} (${cur}) → ${
+            `🟢 DEBIT ${debit?.amountFC} (${cur}) → ${
               debit.account
             }`
           );
         }
 
         // 🔴 Credit
-        if (credit?.account && credit?.baseCurrency > 0) {
+        if (credit?.account && credit?.amountFC > 0) {
           const cur = credit.currency?.toString?.() || currencyId;
           await this.ensureCashRow(credit.account, cur, session);
-          await this.incCash(credit.account, cur, credit.baseCurrency, session);
+          await this.incCash(credit.account, cur, credit.amountFC, session);
           logs.push(
-            `🔴 CREDIT ${credit.baseCurrency.toFixed(2)} (${cur}) → ${
+            `🔴 CREDIT ${credit.amountFC.toFixed(2)} (${cur}) → ${
               credit.account
             }`
           );
         }
 
         // 💸 VAT
-        if (vatDetails?.vatAmount > 0) {
-          const vat = vatDetails.vatAmount;
+        if (vatDetails?.vatAmountItemCurrency > 0) {
+          const vat = vatDetails.vatAmountItemCurrency;
           const rate = vatDetails.vatRate || 0;
           if (debit?.account) {
             const cur = debit.currency?.toString?.() || currencyId;
@@ -11679,7 +11872,7 @@ class MetalTransactionService {
     return updateOps;
   }
 
-  static calculateBalanceChanges(transactionType, mode, totals, partyCurrency) {
+  static calculateBalanceChanges(transactionType, mode, totals, itemCurrency) {
     const balanceMatrix = {
       purchase: {
         unfix: {
@@ -11846,7 +12039,7 @@ class MetalTransactionService {
       vatAmount: 0,
     };
 
-    return { ...changes, currency: partyCurrency }; // ✅ include currency id
+    return { ...changes, currency: itemCurrency }; // ✅ include currency id
   }
 
   static generateTransactionId() {
@@ -12714,6 +12907,8 @@ class MetalTransactionService {
       "salesman",
       "supplierInvoiceNo",
       "supplierDate",
+      "declarationNumber",
+      "importExportType",
       "notes",
       "status",
     ];
@@ -12920,17 +13115,21 @@ class MetalTransactionService {
       fixed,
       unfix,
       partyCurrency,
+      itemCurrency,
       otherCharges,
     } = transaction;
 
     const totals = this.calculateTotals(stockItems, totalSummary, false);
     const mode = this.getTransactionMode(fixed, unfix);
 
+    // Use itemCurrency for cash balance if available, otherwise fallback to partyCurrency
+    const currencyForBalance = itemCurrency || partyCurrency;
+
     const ch = this.calculateBalanceChanges(
       transactionType,
       mode,
       totals,
-      partyCurrency
+      currencyForBalance
     );
 
     const sign = -1; // always reverse
@@ -12945,7 +13144,7 @@ class MetalTransactionService {
       );
     }
 
-    // 2️⃣ Reverse CASH
+    // 2️⃣ Reverse CASH (use itemCurrency for cash balance)
     const netCash =
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
@@ -12953,9 +13152,14 @@ class MetalTransactionService {
       (ch.otherCharges || 0) +
       (ch.vatAmount || 0);
 
-    if (partyCurrency && netCash !== 0) {
-      await this.ensureCashRow(party._id, partyCurrency, session);
-      await this.incCash(party._id, partyCurrency, sign * netCash, session);
+    const currencyId = currencyForBalance?.toString?.() || null;
+    const currencyObjId = currencyId
+      ? new mongoose.Types.ObjectId(currencyId)
+      : null;
+
+    if (currencyObjId && netCash !== 0) {
+      await this.ensureCashRow(party._id, currencyId, session);
+      await this.incCash(party._id, currencyId, sign * netCash, session);
     }
 
     // 3️⃣ Reverse Debit/Credit for otherCharges
@@ -13769,14 +13973,19 @@ class MetalTransactionService {
       fixed,
       unfix,
       partyCurrency,
+      itemCurrency,
     } = transaction;
     const totals = this.calculateTotals(stockItems, totalSummary);
     const mode = this.getTransactionMode(fixed, unfix);
+    
+    // Use itemCurrency for cash balance if available, otherwise fallback to partyCurrency
+    const currencyForBalance = itemCurrency || partyCurrency;
+    
     const ch = this.calculateBalanceChanges(
       transactionType,
       mode,
       totals,
-      partyCurrency
+      currencyForBalance
     );
     const sign = isReversal ? -1 : 1;
 
@@ -13790,7 +13999,7 @@ class MetalTransactionService {
       );
     }
 
-    // CASH
+    // CASH (use itemCurrency for cash balance)
     const netCash =
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
@@ -13798,9 +14007,14 @@ class MetalTransactionService {
       (ch.discountBalance || 0) +
       (ch.vatAmount || 0);
 
-    if (partyCurrency && netCash !== 0) {
-      await this.ensureCashRow(partyId, partyCurrency, session);
-      await this.incCash(partyId, partyCurrency, sign * netCash, session);
+    const currencyId = currencyForBalance?.toString?.() || null;
+    const currencyObjId = currencyId
+      ? new mongoose.Types.ObjectId(currencyId)
+      : null;
+
+    if (currencyObjId && netCash !== 0) {
+      await this.ensureCashRow(partyId, currencyId, session);
+      await this.incCash(partyId, currencyId, sign * netCash, session);
     }
   }
 

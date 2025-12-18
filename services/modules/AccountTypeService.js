@@ -610,12 +610,20 @@ class AccountTypeService {
           name.trim().toLowerCase()
         );
 
+        // Build regex pattern that matches account mode names containing any of the search terms
+        // This allows matching variations like "BALANCE SHEET / GENERAL", "BALANCE & GENERAL", etc.
+        const escapedNames = normalizedNames.map((n) =>
+          n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        );
+        
+        // Use a more flexible regex that matches if the account mode name contains any of the search terms
+        // This handles variations like "BALANCE SHEET / GENERAL", "BALANCE & GENERAL", "BALANCE SHEET", etc.
+        const regexPattern = escapedNames.join("|");
+
         const modes = await AccountMode.find(
           {
             name: {
-              $regex: `^(${normalizedNames
-                .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-                .join("|")})$`,
+              $regex: regexPattern,
               $options: "i",
             },
           },

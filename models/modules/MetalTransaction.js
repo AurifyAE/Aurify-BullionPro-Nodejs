@@ -302,6 +302,16 @@ const otherChargeSchema = new mongoose.Schema(
         required: [true, "Party Code is required"],
         index: true,
       },
+      accountCode: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      accountName: {
+        type: String,
+        default: null,
+        trim: true,
+      },
       baseCurrency: {
         type: Number,
         default: 0,
@@ -312,10 +322,34 @@ const otherChargeSchema = new mongoose.Schema(
         default: 0,
         min: [0, "baseCurrency cannot be negative"],
       },
+      amountLC: {
+        type: Number,
+        default: 0,
+        min: [0, "Amount LC cannot be negative"],
+      },
+      amountFC: {
+        type: Number,
+        default: 0,
+        min: [0, "Amount FC cannot be negative"],
+      },
       currency: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "CurrencyMaster",
         default: null,
+      },
+      convertRate: {
+        type: Number,
+        default: 1,
+        min: [0, "Convert rate cannot be negative"],
+      },
+      defaultConvertRate: {
+        type: Number,
+        default: 1,
+        min: [0, "Default convert rate cannot be negative"],
+      },
+      fxRate: {
+        type: Number,
+        default: 0,
       },
     },
     credit: {
@@ -325,6 +359,16 @@ const otherChargeSchema = new mongoose.Schema(
         required: [true, "Party Code is required"],
         index: true,
       },
+      accountCode: {
+        type: String,
+        default: null,
+        trim: true,
+      },
+      accountName: {
+        type: String,
+        default: null,
+        trim: true,
+      },
       baseCurrency: {
         type: Number,
         default: 0,
@@ -335,10 +379,34 @@ const otherChargeSchema = new mongoose.Schema(
         default: 0,
         min: [0, "baseCurrency cannot be negative"],
       },
+      amountLC: {
+        type: Number,
+        default: 0,
+        min: [0, "Amount LC cannot be negative"],
+      },
+      amountFC: {
+        type: Number,
+        default: 0,
+        min: [0, "Amount FC cannot be negative"],
+      },
       currency: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "CurrencyMaster",
         default: null,
+      },
+      convertRate: {
+        type: Number,
+        default: 1,
+        min: [0, "Convert rate cannot be negative"],
+      },
+      defaultConvertRate: {
+        type: Number,
+        default: 1,
+        min: [0, "Default convert rate cannot be negative"],
+      },
+      fxRate: {
+        type: Number,
+        default: 0,
       },
     },
     vatDetails: {
@@ -363,6 +431,16 @@ const otherChargeSchema = new mongoose.Schema(
       vatAmount: {
         type: Number,
         default: 0,
+      },
+      vatAmountItemCurrency: {
+        type: Number,
+        default: 0,
+        min: [0, "VAT amount in item currency cannot be negative"],
+      },
+      vatAmountAED: {
+        type: Number,
+        default: 0,
+        min: [0, "VAT amount in AED cannot be negative"],
       },
     },
     remarks: {
@@ -498,6 +576,18 @@ const MetalTransactionSchema = new mongoose.Schema(
     supplierDate: {
       type: Date,
       default: null,
+    },
+    declarationNumber: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: [100, "Declaration number cannot exceed 100 characters"],
+    },
+    importExportType: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: [50, "Import/Export type cannot exceed 50 characters"],
     },
     // Credit Terms
     crDays: {
