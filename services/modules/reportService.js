@@ -429,7 +429,7 @@ export class ReportService {
       if (hasGroupByRangeValues) {
         const formattedGroupByRange = {};
         for (const [key, value] of Object.entries(groupByRange)) {
-          if (["karat", "categoryCode", "supplier", "type", "brand"].includes(key)) {
+          if (["karat", "categoryCode", "supplier", "type", "brand", "size", "color"].includes(key)) {
             formattedGroupByRange[key] = formatObjectIds(value);
           } else {
             formattedGroupByRange[key] = value;
@@ -2203,17 +2203,17 @@ export class ReportService {
     // Date filter - support asOnDate for stock balance as of a specific date
     if (filters.asOnDate) {
       // If asOnDate is provided, fetch all records up to and including that date
-      matchConditions.createdAt = {
+      matchConditions.voucherDate = {
         $lte: new Date(filters.asOnDate)
       };
     } else if (filters.startDate || filters.endDate) {
       // Otherwise use date range if provided
-      matchConditions.createdAt = {};
+      matchConditions.voucherDate = {};
       if (filters.startDate) {
-        matchConditions.createdAt.$gte = new Date(filters.startDate);
+        matchConditions.voucherDate.$gte = new Date(filters.startDate);
       }
       if (filters.endDate) {
-        matchConditions.createdAt.$lte = new Date(filters.endDate);
+        matchConditions.voucherDate.$lte = new Date(filters.endDate);
       }
     }
 
@@ -2303,149 +2303,388 @@ export class ReportService {
       },
     });
 
-    // Division filter
+    // Division filter (use MetalStock.metalType)
     if (filters.division?.length) {
       pipeline.push({
         $match: {
-          "karatDetails.division": { $in: filters.division },
+          "stock.metalType": { $in: filters.division },
         },
       });
     }
 
-    // Group by stockCode to calculate totals and averages
+    const normalizeGroupByKey = (key) => {
+      if (key === "category") return "categoryCode";
+      return key;
+    };
+
+    const groupBy = Array.isArray(filters.groupBy) && filters.groupBy.length
+      ? filters.groupBy.map(normalizeGroupByKey)
+      : ["stockCode"];
+
+    const signedGrossWeightExpr = {
+      $switch: {
+        branches: [
+          { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
+          { case: { $eq: ["$transactionType", "exportSale"] }, then: { $multiply: ["$grossWeight", -1] } },
+          { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
+          { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
+          { case: { $eq: ["$transactionType", "importPurchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
+          { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
+          { case: { $eq: ["$transactionType", "exportSaleReturn"] }, then: "$grossWeight" },
+          { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
+          { case: { $eq: ["$transactionType", "importPurchase"] }, then: "$grossWeight" },
+          { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
+          { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" },
+          { case: { $eq: ["$transactionType", "initial"] }, then: "$grossWeight" },
+        ],
+        default: 0,
+      },
+    };
+
+    const signedPcsExpr = {
+      $switch: {
+        branches: [
+          { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$pcs", -1] } },
+          { case: { $eq: ["$transactionType", "exportSale"] }, then: { $multiply: ["$pcs", -1] } },
+          { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$pcs", -1] } },
+          { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
+          { case: { $eq: ["$transactionType", "importPurchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
+          { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$pcs" },
+          { case: { $eq: ["$transactionType", "exportSaleReturn"] }, then: "$pcs" },
+          { case: { $eq: ["$transactionType", "purchase"] }, then: "$pcs" },
+          { case: { $eq: ["$transactionType", "importPurchase"] }, then: "$pcs" },
+          { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$pcs" },
+          { case: { $eq: ["$transactionType", "opening"] }, then: "$pcs" },
+        ],
+        default: 0,
+      },
+    };
+
+    const dimensionsNeedingLookup = new Set(groupBy);
+    if (filters.groupByRange?.karat?.length === 1) dimensionsNeedingLookup.add("karat");
+    if (filters.groupByRange?.categoryCode?.length === 1) dimensionsNeedingLookup.add("categoryCode");
+    if (filters.groupByRange?.type?.length === 1) dimensionsNeedingLookup.add("type");
+    if (filters.groupByRange?.size?.length === 1) dimensionsNeedingLookup.add("size");
+    if (filters.groupByRange?.color?.length === 1) dimensionsNeedingLookup.add("color");
+    if (filters.groupByRange?.brand?.length === 1) dimensionsNeedingLookup.add("brand");
+
+    if (dimensionsNeedingLookup.has("categoryCode")) {
+      pipeline.push({
+        $lookup: {
+          from: "maincategories",
+          localField: "stock.category",
+          foreignField: "_id",
+          as: "categoryDetails",
+        },
+      });
+      pipeline.push({
+        $unwind: {
+          path: "$categoryDetails",
+          preserveNullAndEmptyArrays: true,
+        },
+      });
+    }
+
+    if (dimensionsNeedingLookup.has("type")) {
+      pipeline.push({
+        $lookup: {
+          from: "types",
+          localField: "stock.type",
+          foreignField: "_id",
+          as: "typeDetails",
+        },
+      });
+      pipeline.push({
+        $unwind: {
+          path: "$typeDetails",
+          preserveNullAndEmptyArrays: true,
+        },
+      });
+    }
+
+    if (dimensionsNeedingLookup.has("size")) {
+      pipeline.push({
+        $lookup: {
+          from: "sizes",
+          localField: "stock.size",
+          foreignField: "_id",
+          as: "sizeDetails",
+        },
+      });
+      pipeline.push({
+        $unwind: {
+          path: "$sizeDetails",
+          preserveNullAndEmptyArrays: true,
+        },
+      });
+    }
+
+    if (dimensionsNeedingLookup.has("color")) {
+      pipeline.push({
+        $lookup: {
+          from: "colors",
+          localField: "stock.color",
+          foreignField: "_id",
+          as: "colorDetails",
+        },
+      });
+      pipeline.push({
+        $unwind: {
+          path: "$colorDetails",
+          preserveNullAndEmptyArrays: true,
+        },
+      });
+    }
+
+    if (dimensionsNeedingLookup.has("brand")) {
+      pipeline.push({
+        $lookup: {
+          from: "brands",
+          localField: "stock.brand",
+          foreignField: "_id",
+          as: "brandDetails",
+        },
+      });
+      pipeline.push({
+        $unwind: {
+          path: "$brandDetails",
+          preserveNullAndEmptyArrays: true,
+        },
+      });
+    }
+
+    const groupId = {};
+    const groupDimensionAcc = {};
+    const groupDimensionProject = {};
+
+    const addDimension = (dim) => {
+      if (dim === "stockCode") {
+        groupId.stockCode = "$stockCode";
+        groupDimensionAcc.stockCodeInfo = {
+          $first: {
+            _id: "$stock._id",
+            code: "$stock.code",
+            description: "$stock.description",
+          },
+        };
+        groupDimensionProject.stockCode = "$stockCodeInfo";
+        return;
+      }
+
+      if (dim === "categoryCode") {
+        groupId.categoryCode = "$stock.category";
+        groupDimensionAcc.categoryCodeInfo = {
+          $first: {
+            _id: "$categoryDetails._id",
+            code: "$categoryDetails.code",
+            description: "$categoryDetails.description",
+          },
+        };
+        groupDimensionProject.categoryCode = "$categoryCodeInfo";
+        return;
+      }
+
+      if (dim === "karat") {
+        groupId.karat = "$stock.karat";
+        groupDimensionAcc.karatInfo = {
+          $first: {
+            _id: "$karatDetails._id",
+            code: "$karatDetails.karatCode",
+            description: "$karatDetails.description",
+          },
+        };
+        groupDimensionProject.karat = "$karatInfo";
+        return;
+      }
+
+      if (dim === "type") {
+        groupId.type = "$stock.type";
+        groupDimensionAcc.typeInfo = {
+          $first: {
+            _id: "$typeDetails._id",
+            code: "$typeDetails.code",
+            description: "$typeDetails.description",
+          },
+        };
+        groupDimensionProject.type = "$typeInfo";
+        return;
+      }
+
+      if (dim === "size") {
+        groupId.size = "$stock.size";
+        groupDimensionAcc.sizeInfo = {
+          $first: {
+            _id: "$sizeDetails._id",
+            code: "$sizeDetails.code",
+            description: "$sizeDetails.description",
+          },
+        };
+        groupDimensionProject.size = "$sizeInfo";
+        return;
+      }
+
+      if (dim === "color") {
+        groupId.color = "$stock.color";
+        groupDimensionAcc.colorInfo = {
+          $first: {
+            _id: "$colorDetails._id",
+            code: "$colorDetails.code",
+            description: "$colorDetails.description",
+          },
+        };
+        groupDimensionProject.color = "$colorInfo";
+        return;
+      }
+
+      if (dim === "brand") {
+        groupId.brand = "$stock.brand";
+        groupDimensionAcc.brandInfo = {
+          $first: {
+            _id: "$brandDetails._id",
+            code: "$brandDetails.code",
+            description: "$brandDetails.description",
+          },
+        };
+        groupDimensionProject.brand = "$brandInfo";
+      }
+    };
+
+    [...dimensionsNeedingLookup].forEach(addDimension);
+
+    // Group dynamically based on groupBy
     pipeline.push({
       $group: {
-        _id: "$stockCode",
-        stockCode: { $first: "$stock.code" },
-        description: { $first: "$stock.description" },
-        metalId: { $first: "$stock._id" },
-        
-        // Calculate total gross weight based on transaction type
-        totalGrossWeight: {
-          $sum: {
-            $switch: {
-              branches: [
-                { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                { case: { $eq: ["$transactionType", "exportSale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
-                { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                { case: { $eq: ["$transactionType", "importPurchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
-                { case: { $eq: ["$transactionType", "exportSaleReturn"] }, then: "$grossWeight" },
-                { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
-                { case: { $eq: ["$transactionType", "importPurchase"] }, then: "$grossWeight" },
-                { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" },
-                { case: { $eq: ["$transactionType", "initial"] }, then: "$grossWeight" },
-              ],
-              default: 0,
-            },
+        _id: groupBy.length === 1 ? groupId[groupBy[0]] : groupId,
+        ...groupDimensionAcc,
+
+        stocks: {
+          $addToSet: {
+            _id: "$stock._id",
+            code: "$stock.code",
+            description: "$stock.description",
           },
         },
-        
-        // Calculate total pieces
-        totalPcs: {
+
+        // Net gross weight and pcs
+        totalGrossWeight: { $sum: signedGrossWeightExpr },
+        totalPcs: { $sum: signedPcsExpr },
+
+        // Net pure weight based on MetalStock.standardPurity (decimal)
+        totalPureWeight: {
           $sum: {
-            $switch: {
-              branches: [
-                { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$pcs", -1] } },
-                { case: { $eq: ["$transactionType", "exportSale"] }, then: { $multiply: ["$pcs", -1] } },
-                { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$pcs", -1] } },
-                { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
-                { case: { $eq: ["$transactionType", "importPurchaseReturn"] }, then: { $multiply: ["$pcs", -1] } },
-                { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$pcs" },
-                { case: { $eq: ["$transactionType", "exportSaleReturn"] }, then: "$pcs" },
-                { case: { $eq: ["$transactionType", "purchase"] }, then: "$pcs" },
-                { case: { $eq: ["$transactionType", "importPurchase"] }, then: "$pcs" },
-                { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$pcs" },
-                { case: { $eq: ["$transactionType", "opening"] }, then: "$pcs" },
-                // { case: { $eq: ["$transactionType", "initial"] }, then: "$pcs" },
-              ],
-              default: 0,
-            },
+            $multiply: [
+              signedGrossWeightExpr,
+              { $ifNull: ["$stock.standardPurity", 0] },
+            ],
           },
         },
-        
-        // Get purity from karat details
-        purity: { $first: "$karatDetails.standardPurity" },
-        
-        // Sum of avgMakingRate from purchase transactions
-        totalMakingRate: {
+
+        // Making totals (purchase-like only)
+        makingGrossWeight: {
           $sum: {
             $cond: [
               {
                 $in: [
                   "$transactionType",
-                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"]
-                ]
+                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"],
+                ],
               },
-              "$avgMakingRate",
-              0
-            ]
-          }
+              "$grossWeight",
+              0,
+            ],
+          },
         },
-        
-        // Sum of avgMakingAmount from purchase transactions
         totalMakingAmount: {
           $sum: {
             $cond: [
               {
                 $in: [
                   "$transactionType",
-                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"]
-                ]
+                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"],
+                ],
               },
               "$avgMakingAmount",
-              0
-            ]
-          }
-        },
-        
-        // Count of purchase transactions
-        purchaseTransactionCount: {
-          $sum: {
-            $cond: [
-              {
-                $in: [
-                  "$transactionType",
-                  ["purchase", "importPurchase", "saleReturn", "exportSaleReturn"]
-                ]
-              },
-              1,
-              0
-            ]
-          }
+              0,
+            ],
+          },
         },
       },
     });
 
-    // Calculate weighted averages for making rate and amount
+    const primaryGroupKey = groupBy[0];
+    const primaryInfoPathByKey = {
+      stockCode: "$stockCodeInfo",
+      categoryCode: "$categoryCodeInfo",
+      karat: "$karatInfo",
+      type: "$typeInfo",
+      size: "$sizeInfo",
+      color: "$colorInfo",
+      brand: "$brandInfo",
+    };
+
+    const primaryInfoPath = primaryInfoPathByKey[primaryGroupKey] || "$stockCodeInfo";
+
     pipeline.push({
       $project: {
         _id: 0,
-        stockCode: 1,
-        description: 1,
-        metalId: 1,
+        group: groupDimensionProject,
+
+        groupKey: primaryGroupKey,
+        groupId: { $ifNull: [`${primaryInfoPath}._id`, null] },
+        code: { $ifNull: [`${primaryInfoPath}.code`, null] },
+        description: { $ifNull: [`${primaryInfoPath}.description`, null] },
+
+        stockCode: { $ifNull: ["$stockCodeInfo.code", null] },
+        metalId: { $ifNull: ["$stockCodeInfo._id", null] },
+
+        stocks: {
+          $filter: {
+            input: "$stocks",
+            as: "s",
+            cond: { $ne: ["$$s._id", null] },
+          },
+        },
+        stocksCount: {
+          $size: {
+            $filter: {
+              input: "$stocks",
+              as: "s",
+              cond: { $ne: ["$$s._id", null] },
+            },
+          },
+        },
+
         grossWeight: "$totalGrossWeight",
         pcs: "$totalPcs",
-        purity: 1,
-        
-        // Calculate average making rate (sum / count of purchase transactions)
+
+        pureWeight: "$totalPureWeight",
+        purity: {
+          $cond: [
+            { $ne: ["$totalGrossWeight", 0] },
+            { $divide: ["$totalPureWeight", "$totalGrossWeight"] },
+            0,
+          ],
+        },
+
         avgMakingRate: {
           $cond: [
-            { $gt: ["$purchaseTransactionCount", 0] },
-            { $divide: ["$totalMakingRate", "$purchaseTransactionCount"] },
-            0
-          ]
+            { $gt: ["$makingGrossWeight", 0] },
+            { $divide: ["$totalMakingAmount", "$makingGrossWeight"] },
+            0,
+          ],
         },
-        
-        // Calculate average making amount (sum / count of purchase transactions)
+
         avgMakingAmount: {
           $cond: [
-            { $gt: ["$purchaseTransactionCount", 0] },
-            { $divide: ["$totalMakingAmount", "$purchaseTransactionCount"] },
-            0
-          ]
+            { $gt: ["$makingGrossWeight", 0] },
+            {
+              $multiply: [
+                { $divide: ["$totalMakingAmount", "$makingGrossWeight"] },
+                "$totalGrossWeight",
+              ],
+            },
+            0,
+          ],
         },
       },
     });
@@ -2460,7 +2699,7 @@ export class ReportService {
     // Sort by stock code
     pipeline.push({
       $sort: {
-        stockCode: 1,
+        code: 1,
       },
     });
 
