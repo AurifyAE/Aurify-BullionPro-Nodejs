@@ -72,6 +72,9 @@ export const createMetalTransaction = async (req, res, next) => {
         "importPurchase",
         "exportSaleReturn",
         "importPurchaseReturn",
+        "hedgeMetalPayment",
+        "hedgeMetalReceipt",
+        "hedgeMetalReciept", // Support both spellings
       ].includes(transactionType)
     ) {
       throw createAppError(
@@ -109,6 +112,8 @@ export const createMetalTransaction = async (req, res, next) => {
         "EXPORT-SALE",
         "IMPORT-PURCHASE-RETURN",
         "EXPORT-SALE-RETURN",
+        "HEDGE METAL RECIEPT",
+        "HEDGE METAL PAYMENT",
       ].includes(voucherType)
     ) {
       throw createAppError("Invalid voucherType", 400, "INVALID_VOUCHER_TYPE");
@@ -358,9 +363,9 @@ export const createMetalTransaction = async (req, res, next) => {
       );
 
     // === INVENTORY UPDATE ===
-    if (["purchase", "saleReturn", "importPurchase", "exportSaleReturn"].includes(transactionType)) {
+    if (["purchase", "saleReturn", "importPurchase", "exportSaleReturn", "hedgeMetalReceipt", "hedgeMetalReciept"].includes(transactionType)) {
       await InventoryService.updateInventory(metalTransaction, false); // add
-    } else if (["sale", "purchaseReturn", "importPurchaseReturn", "exportsale"].includes(transactionType)) {
+    } else if (["sale", "purchaseReturn", "importPurchaseReturn", "exportsale", "hedgeMetalPayment"].includes(transactionType)) {
       await InventoryService.updateInventory(metalTransaction, true); // deduct
     }
 

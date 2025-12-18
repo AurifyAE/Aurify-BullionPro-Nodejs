@@ -28,7 +28,7 @@ class VoucherMasterService {
     if (cached && (Date.now() - cached.timestamp) < this.cacheExpiry) {
       return cached.data;
     }
-
+    console.log(`[getVoucherConfig] Getting voucher configuration for module: ${module}`);
     const voucher = await VoucherMaster.findOne({
       module: { $regex: `^${module}$`, $options: "i" },
       isActive: true,
@@ -83,12 +83,37 @@ class VoucherMasterService {
       }
 
       // MetalTransaction-based modules
-      const metalTxnModules = ["metal-purchase", "metal-sale", "purchase-return", "sales-return"];
+      const metalTxnModules = [
+        "metal-purchase", 
+        "metal-sale", 
+        "purchase-return", 
+        "sales-return",
+        "importpurchase",
+        "importpurchasereturn",
+        "exportsale",
+        "exportsalereturn"
+      ];
+      console.log(`[getTransactionCount] Metal transaction modules:`, metalTxnModules,moduleLC);
       if (metalTxnModules.includes(moduleLC)) {
         console.log(`[getTransactionCount] Using model: MetalTransaction`);
 
-        const query = transactionType
-          ? { transactionType: { $regex: `^${transactionType}$`, $options: "i" } }
+        // Map module names to transaction types for proper filtering
+        const moduleToTransactionType = {
+          "metal-purchase": "purchase",
+          "metal-sale": "sale",
+          "purchase-return": "purchaseReturn",
+          "sales-return": "saleReturn",
+          "metal-import-purchase": "importPurchase",
+          "metal-import-purchase-return": "importPurchaseReturn",
+          "metal-export-sale": "exportSale",
+          "metal-export-sale-return": "exportSaleReturn"
+        };
+        console.log(`[getTransactionCount] Module to transaction type:`, moduleToTransactionType,transactionType);
+        // Use provided transactionType if available, otherwise map from module
+        const typeToUse = transactionType || moduleToTransactionType[moduleLC];
+        console.log(`[getTransactionCount] Type to use:`, typeToUse);
+        const query = typeToUse
+          ? { transactionType: { $regex: `^${typeToUse}$`, $options: "i" } }
           : {};
 
         console.log(`[getTransactionCount] MetalTransaction Query:`, query);
@@ -110,6 +135,7 @@ class VoucherMasterService {
         if (transactionType) {
           // Normalize transaction type to lowercase for matching
           const normalizedType = transactionType.toLowerCase().trim();
+          console.log(`[getTransactionCount] Normalized transaction type:`, normalizedType);
           query.transactionType = { $regex: `^${normalizedType}$`, $options: "i" };
         }
 
@@ -541,15 +567,13 @@ class VoucherMasterService {
       throw createAppError("Voucher not found", 404, "VOUCHER_NOT_FOUND");
     }
 
-    voucher.isActive = false;
-    voucher.status = "inactive";
-    voucher.updatedBy = updatedBy;
-    await voucher.save();
+    const module = voucher.module;
+    await VoucherMaster.findByIdAndDelete(id);
 
     // Clear cache for this module
-    this.clearCache(voucher.module);
+    this.clearCache(module);
 
-    return voucher;
+    return { message: "Voucher permanently deleted" };
   }
 
   static async hardDeleteVoucher(id) {

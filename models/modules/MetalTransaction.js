@@ -469,6 +469,9 @@ const MetalTransactionSchema = new mongoose.Schema(
         "importPurchase",
         "exportSaleReturn",
         "importPurchaseReturn",
+        "hedgeMetalPayment",
+        "hedgeMetalReceipt",
+        "hedgeMetalReciept", // Support both spellings for backward compatibility
       ],
       required: [true, "Transaction type is required"],
       index: true,
