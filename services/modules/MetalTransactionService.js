@@ -12498,7 +12498,7 @@ class MetalTransactionService {
     }
 
     const transactions = await MetalTransaction.find(query)
-      .populate("partyCode", "accountCode customerName")
+      .populate("partyCode", "")
       .populate("partyCurrency", "code symbol")
       .populate("itemCurrency", "code symbol")
       .populate("baseCurrency", "code symbol")
@@ -12529,7 +12529,7 @@ class MetalTransactionService {
   // Get metal transaction by ID
   static async getMetalTransactionById(transactionId) {
     const transaction = await MetalTransaction.findById(transactionId)
-      .populate("partyCode", "accountCode customerName addresses")
+      .populate("partyCode", "")
       .populate("partyCurrency", "code symbol")
       .populate("itemCurrency", "code symbol")
       .populate("baseCurrency", "code symbol")
@@ -13138,8 +13138,6 @@ class MetalTransactionService {
       case "saleReturn":
       case "hedgeMetalReceipt":
       case "hedgeMetalReciept": // Support both spellings
-      case "importPurchase":
-      case "exportSaleReturn":
         await InventoryService.updateInventory(
           transaction,
           false,
@@ -13150,8 +13148,6 @@ class MetalTransactionService {
       case "sale":
       case "purchaseReturn":
       case "hedgeMetalPayment":
-      case "exportSale":
-      case "importPurchaseReturn":
         await InventoryService.updateInventory(
           transaction,
           true,
