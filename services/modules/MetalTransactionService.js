@@ -11662,6 +11662,7 @@ class MetalTransactionService {
   /** 🔹 Increment a currency balance safely with arrayFilters */
   static async incCash(accountId, currencyId, delta, session) {
     const currencyObjId = new mongoose.Types.ObjectId(currencyId);
+    console.log("incCash💸💸💸", accountId, currencyId, delta);
     await Account.updateOne(
       { _id: accountId },
       {
@@ -11774,32 +11775,32 @@ class MetalTransactionService {
         const { debit, credit, vatDetails } = oc;
 
         // 🟢 Debit
-        if (debit?.account && debit?.baseCurrency > 0) {
+        if (debit?.account && debit?.amountFC > 0) {
           const cur = debit.currency?.toString?.() || currencyId;
           await this.ensureCashRow(debit.account, cur, session);
-          await this.incCash(debit.account, cur, -debit.baseCurrency, session);
+          await this.incCash(debit.account, cur, -debit.amountFC, session);
           logs.push(
-            `🟢 DEBIT ${debit.baseCurrency.toFixed(2)} (${cur}) → ${
+            `🟢 DEBIT ${debit?.amountFC} (${cur}) → ${
               debit.account
             }`
           );
         }
 
         // 🔴 Credit
-        if (credit?.account && credit?.baseCurrency > 0) {
+        if (credit?.account && credit?.amountFC > 0) {
           const cur = credit.currency?.toString?.() || currencyId;
           await this.ensureCashRow(credit.account, cur, session);
-          await this.incCash(credit.account, cur, credit.baseCurrency, session);
+          await this.incCash(credit.account, cur, credit.amountFC, session);
           logs.push(
-            `🔴 CREDIT ${credit.baseCurrency.toFixed(2)} (${cur}) → ${
+            `🔴 CREDIT ${credit.amountFC.toFixed(2)} (${cur}) → ${
               credit.account
             }`
           );
         }
 
         // 💸 VAT
-        if (vatDetails?.vatAmount > 0) {
-          const vat = vatDetails.vatAmount;
+        if (vatDetails?.vatAmountItemCurrency > 0) {
+          const vat = vatDetails.vatAmountItemCurrency;
           const rate = vatDetails.vatRate || 0;
           if (debit?.account) {
             const cur = debit.currency?.toString?.() || currencyId;
