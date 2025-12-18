@@ -294,7 +294,17 @@ class MetalTransactionService {
 
     // Generate ONLY if hedge=true and not already generated
     if (hedge && !hedgeVoucherNo) {
-      hedgeVoucherNo = await generateHedgeVoucherNumber(transactionType);
+      // For hedgeMetalPayment and hedgeMetalReceipt, use the same voucher as the transaction
+      if (transactionType === "hedgeMetalPayment" || 
+          transactionType === "hedgeMetalReceipt" || 
+          transactionType === "hedgeMetalReciept") {
+        // Use the transaction's own voucher number instead of generating a separate hedge voucher
+        hedgeVoucherNo = transaction.voucherNumber;
+        console.log(`Using transaction voucher for hedge: ${hedgeVoucherNo}`);
+      } else {
+        // For other transaction types, generate a separate hedge voucher
+        hedgeVoucherNo = await generateHedgeVoucherNumber(transactionType);
+      }
 
       // Save it immediately — 100% guaranteed
       transaction.hedgeVoucherNumber = hedgeVoucherNo;
@@ -503,6 +513,55 @@ class MetalTransactionService {
               false // skipHedgeEntry
             );
           entries.push(...(exportSaleReturnEntries || []));
+          break;
+
+        case "hedgeMetalPayment":
+          // Hedge Metal Payment works same as sale
+          const hedgeMetalPaymentEntries = await this.buildSaleEntries(
+            mode,
+            hedge,
+            transaction._id,
+            itemTotals,
+            party,
+            baseTransactionId,
+            voucherDate,
+            voucherNumber,
+            adminId,
+            item,
+            partyCurrency,
+            totalSummary,
+            otherCharges,
+            hedgeVoucherNo,
+            itemCurrency,
+            dealOrderId,
+            false // skipHedgeEntry
+          );
+          entries.push(...(hedgeMetalPaymentEntries || []));
+          break;
+
+        case "hedgeMetalReceipt":
+        case "hedgeMetalReciept": // Support both spellings
+          // Hedge Metal Receipt works same as purchase
+          const hedgeMetalReceiptEntries = await this.buildPurchaseEntries(
+            mode,
+            hedge,
+            transaction._id,
+            itemTotals,
+            party,
+            baseTransactionId,
+            voucherDate,
+            voucherNumber,
+            adminId,
+            item,
+            partyCurrency,
+            totalSummary,
+            otherCharges,
+            hedgeVoucherNo,
+            itemCurrency,
+            dealOrderId,
+            false // skipHedgeEntry - individual items skip hedge
+          );
+          entries.push(...(hedgeMetalReceiptEntries || []));
           break;
       }
     }
@@ -964,6 +1023,8 @@ class MetalTransactionService {
       "Purchase-Return",
       "Import-Purchase",
       "Import-Purchase-Return",
+      "Hedge-Metal-Receipt",
+      "Hedge-Metal-Reciept", // Support both spellings
     ];
     const purchaseReturnTypes = [
       "Purchase-Return",
@@ -975,8 +1036,10 @@ class MetalTransactionService {
     ];
     const prefix =
       transactionType === "Purchase" ||
-        transactionType === "Import-Purchase-Return" ||
-        transactionType === "Purchase-Return"
+      transactionType === "Import-Purchase-Return" ||
+      transactionType === "Purchase-Return" ||
+      transactionType === "Hedge-Metal-Receipt" ||
+      transactionType === "Hedge-Metal-Reciept"
         ? "HSM"
         : "HPM";
     const transactionId = await generateUniqueTransactionId(prefix);
@@ -1015,6 +1078,9 @@ class MetalTransactionService {
         "Sale-Return": "saleReturn",
         "Export-Sale": "exportSale",
         "Export-Sale-Return": "exportSaleReturn",
+        "Hedge-Metal-Receipt": "hedgeMetalReceipt",
+        "Hedge-Metal-Reciept": "hedgeMetalReciept", // Support both spellings
+        "Hedge-Metal-Payment": "hedgeMetalPayment",
       };
       normalizedTransactionType = transactionTypeMap[transactionType] || transactionType.toLowerCase();
     }
@@ -12240,10 +12306,13 @@ class MetalTransactionService {
         "importPurchase",
         "exportSaleReturn",
         "importPurchaseReturn",
+        "hedgeMetalPayment",
+        "hedgeMetalReceipt",
+        "hedgeMetalReciept", // Support both spellings for backward compatibility
       ].includes(transactionData.transactionType)
     ) {
       throw createAppError(
-        "Transaction type must be 'purchase', 'sale', 'purchaseReturn', or 'saleReturn'",
+        "Transaction type must be one of: 'purchase', 'sale', 'purchaseReturn', 'saleReturn', 'exportSale', 'importPurchase', 'exportSaleReturn', 'importPurchaseReturn', 'hedgeMetalPayment', 'hedgeMetalReceipt', or 'hedgeMetalReciept'",
         400,
         "INVALID_TRANSACTION_TYPE"
       );
@@ -13067,6 +13136,8 @@ class MetalTransactionService {
     switch (transaction.transactionType) {
       case "purchase":
       case "saleReturn":
+      case "hedgeMetalReceipt":
+      case "hedgeMetalReciept": // Support both spellings
       case "importPurchase":
       case "exportSaleReturn":
         await InventoryService.updateInventory(
@@ -13078,6 +13149,7 @@ class MetalTransactionService {
         break;
       case "sale":
       case "purchaseReturn":
+      case "hedgeMetalPayment":
       case "exportSale":
       case "importPurchaseReturn":
         await InventoryService.updateInventory(

@@ -25,6 +25,9 @@ const inventoryLogSchema = new mongoose.Schema(
         "purchaseReturn",
         "metalReceipt",
         "metalPayment",
+        "hedgeMetalPayment",
+        "hedgeMetalReceipt",
+        "hedgeMetalReciept", // Support both spellings for backward compatibility
       ],
       required: true,
     },
