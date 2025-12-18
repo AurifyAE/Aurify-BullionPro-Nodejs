@@ -592,41 +592,79 @@ class MetalTransactionService {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
+    const normalizedTransactionType = String(transactionType || "")
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+
+    const normalizedTypeKey = String(transactionType || "")
+      .toLowerCase()
+      .replace(/[\s_-]/g, "");
+
+    const groupA = ["purchase", "salereturn", "importpurchase", "exportsalereturn"];
+    const isGroupA = groupA.includes(normalizedTypeKey);
+
     const FX = {
       assetType: totals.currencyCode || "AED",
       currencyRate: totals.currencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
-    // PARTY-GOLD entry (purchase-fixing)
-    entries.push(
-      this.createRegistryEntry(
-        transactionType,
-        baseTransactionId,
-        metalTransactionId,
-        "PARTY-GOLD",
-        "purchase-fixing",
-        `Party gold balance - ${transactionType} from ${partyName}`,
-        party._id,
-        true,
-        totals.pureWeight,
-        totals.pureWeight,
-        {
-          debit: 0,
-          goldCredit: totals.pureWeight,
-          cashDebit: totals.goldValue,
-          grossWeight: totals.grossWeight,
-          goldBidValue: totals.bidValue,
-          ...FX,
-        },
-        voucherDate,
-        voucherNumber,
-        adminId,
-        hedgeVoucherNo
-      )
-    );
+    if (isGroupA) {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "PARTY-GOLD",
+          "purchase-fixing",
+          `Party gold balance - ${transactionType} from ${partyName}`,
+          party._id,
+          true,
+          totals.pureWeight,
+          totals.pureWeight,
+          {
+            debit: 0,
+            goldCredit: totals.pureWeight,
+            cashDebit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.bidValue,
+            ...FX,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId,
+          hedgeVoucherNo
+        )
+      );
+    } else {
+      entries.push(
+        this.createRegistryEntry(
+          transactionType,
+          baseTransactionId,
+          metalTransactionId,
+          "PARTY-GOLD",
+          "sales-fixing",
+          `Party gold balance - ${transactionType} to ${partyName}`,
+          party._id,
+          true,
+          totals.pureWeight,
+          0,
+          {
+            debit: totals.pureWeight,
+            goldDebit: totals.pureWeight,
+            cashCredit: totals.goldValue,
+            grossWeight: totals.grossWeight,
+            goldBidValue: totals.bidValue,
+            ...FX,
+          },
+          voucherDate,
+          voucherNumber,
+          adminId,
+          hedgeVoucherNo
+        )
+      );
+    }
 
-    // PARTY_HEDGE_ENTRY
     entries.push(
       this.createRegistryEntry(
         transactionType,
@@ -638,21 +676,29 @@ class MetalTransactionService {
         party._id,
         false,
         totals.pureWeight,
-        totals.goldValue,
-        {
-          goldCredit: totals.pureWeight,
-          cashDebit: totals.goldValue,
-          grossWeight: totals.grossWeight,
-          goldBidValue: totals.bidValue,
-          ...FX,
-        },
+         isGroupA ? totals.goldValue : 0,
+        isGroupA
+          ? {
+              goldCredit: totals.pureWeight,
+              cashDebit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            }
+          : {
+            debit: totals.goldValue,
+              goldDebit: totals.pureWeight,
+              cashCredit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
         voucherDate,
         hedgeVoucherNo,
         adminId
       )
     );
 
-    // PARTY_CASH_BALANCE (Cash Credit - Actual purchase)
     entries.push(
       this.createRegistryEntry(
         transactionType,
@@ -660,25 +706,35 @@ class MetalTransactionService {
         metalTransactionId,
         "001",
         "PARTY_CASH_BALANCE",
-        `Party cash balance credited — Gold ${transactionType.toLowerCase()} from ${partyName} at bid value ${totals.bidValue}`,
+        isGroupA
+          ? `Party cash balance credited — Gold ${normalizedTransactionType} from ${partyName} at bid value ${totals.bidValue}`
+          : `Party cash balance credited — Gold ${normalizedTransactionType} to ${partyName} at bid value ${totals.bidValue}`,
         party._id,
         false,
         totals.goldValue,
-        totals.goldValue,
-        {
-          goldDebit: totals.pureWeight,
-          cashDebit: totals.goldValue,
-          grossWeight: totals.grossWeight,
-          goldBidValue: totals.bidValue,
-          ...FX,
-        },
+        isGroupA ? totals.goldValue : 0,
+        isGroupA
+          ? {
+              goldDebit: totals.pureWeight,
+              cashDebit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            }
+          : {
+              debit: totals.goldValue,
+              goldCredit: totals.pureWeight,
+              cashDebit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
         voucherDate,
         voucherNumber,
         adminId
       )
     );
 
-    // HEDGE_ENTRY (Unfix write-back)
     entries.push(
       this.createRegistryEntry(
         transactionType,
@@ -690,15 +746,24 @@ class MetalTransactionService {
         party._id,
         false,
         totals.pureWeight,
-        0,
-        {
-          debit: totals.pureWeight,
-          goldDebit: totals.pureWeight,
-          cashCredit: totals.goldValue,
-          grossWeight: totals.grossWeight,
-          goldBidValue: totals.bidValue,
-          ...FX,
-        },
+         isGroupA ? totals.goldValue : 0,
+        isGroupA
+          ? {
+              debit: totals.pureWeight,
+              goldDebit: totals.pureWeight,
+              cashCredit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            }
+          : {
+              debit: totals.goldValue,
+              goldCredit: totals.pureWeight,
+              cashDebit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
         voucherDate,
         hedgeVoucherNo,
         adminId
