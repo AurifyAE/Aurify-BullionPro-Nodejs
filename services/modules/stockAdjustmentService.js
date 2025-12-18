@@ -93,6 +93,8 @@ export class StockAdjustmentService {
                 { session }
             );
 
+            console.log("Adjustment created:", adjustment[0]._id);
+
             // 5. registry entry - stock adjustment credit gold - means deducting gold from inventory  
             await this.createRegistryEntry({
                 transactionType: "adjustment",
@@ -102,11 +104,11 @@ export class StockAdjustmentService {
                 type: "GOLD_STOCK",
                 goldBidValue: 0,
                 description: "Stock Adjustment credit",
-                value: data.fromData.grossWeight ?? 0,
+                value: data.fromData.pureWeight ?? 0,
                 debit: 0,
                 credit: 0,
                 goldDebit: 0,
-                goldCredit: data.fromData.grossWeight ?? 0,
+                goldCredit: data.fromData.pureWeight ?? 0,
                 costCenter: "INVENTORY",
                 createdBy: adminId,
             })
@@ -115,45 +117,60 @@ export class StockAdjustmentService {
             await this.createRegistryEntry({
                 transactionType: "adjustment",
                 assetType: "XAU",
-                transactionId: adjustment[0]._id, 
+                transactionId: adjustment[0]._id,
                 metalId: data.toStock.stockId,
                 type: "GOLD_STOCK",
                 goldBidValue: 0,
                 description: "Stock Adjustment Debit",
-                value: data.toStock.grossWeight ?? 0,
+                value: data.toStock.pureWeight ?? 0,
                 debit: 0,
                 credit: 0,
-                goldDebit: data.toStock.grossWeight ?? 0,
+                goldDebit: data.toStock.pureWeight ?? 0,
                 goldCredit: 0,
                 costCenter: "INVENTORY",
                 createdBy: adminId,
             })
 
-            const stockDifference = (data.toStock.pureWeight ?? 0) - (data.fromData.pureWeight    ?? 0);
-            const makingAmountDifference = (data.toStock.avgAmount ?? 0) - (data.fromData.avgAmount ?? 0);
+            console.log(data.toStock)
+            console.log(data.fromData)
 
-            // if the stock diif or making amouunt differnece is zero and also negetive handle the credit and debit entry accordingly
+            const stockDifference =
+                (data.toStock.pureWeight ?? 0) -
+                (data.fromData.pureWeight ?? 0);
 
-            console.log("stockDifference:", stockDifference);
-            console.log("makingAmountDifference:", makingAmountDifference);
-            // 5. registry entry - stock adjustment diffrence 
+            const makingAmountDifference =
+                (data.toStock.avgAmount ?? 0) -
+                (data.fromData.avgAmount ?? 0);
+
+            // Normalize values (ABS only)
+            const cashCredit =
+                makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0;
+
+            const cashDebit =
+                makingAmountDifference > 0 ? makingAmountDifference : 0;
+
+            const goldCredit =
+                stockDifference > 0 ? stockDifference : 0;
+
+            const goldDebit =
+                stockDifference < 0 ? Math.abs(stockDifference) : 0;
+
             await this.createRegistryEntry({
                 transactionType: "adjustment",
                 assetType: "stock",
                 transactionId: adjustment[0]._id,
                 metalId: data.fromData.stockId,
                 type: "STOCK_ADJUSTMENT",
-                goldBidValue: 0,
-                description: "Stock Adjustment",
-                value: 0,
-                debit: makingAmountDifference >= 0 ? makingAmountDifference : 0,
-                credit: makingAmountDifference < 0 ? makingAmountDifference : 0,
-                goldDebit: stockDifference >= 0 ? stockDifference : 0,
-                goldCredit: stockDifference < 0 ? stockDifference : 0,
+                description: "Stock Adjustment Difference",
+
+                debit: cashDebit,       // ALWAYS >= 0
+                credit: cashCredit,     // ALWAYS >= 0
+                goldDebit: goldDebit,   // ALWAYS >= 0
+                goldCredit: goldCredit, // ALWAYS >= 0
+
                 costCenter: "INVENTORY",
                 createdBy: adminId,
-            })
-
+            });
 
 
             // 5. registry entry - stock adjustment making credit -- from the from stock

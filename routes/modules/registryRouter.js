@@ -21,6 +21,7 @@ import {
   getRegistryHedgeAuditTrailById,
   getRegistryFixingTransaction,
   getCashEntryAuditTrail,
+  getStockAdjustmentAuditTrail
 } from "../../controllers/modules/RegistryController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import {
@@ -120,5 +121,6 @@ router.get("/transaction/:metalTransactionId", getRegistryAuditTrailById);
 router.get("/Hedge/:metalTransactionId", getRegistryHedgeAuditTrailById);
 router.get("/fixing/:fixingTransactionId", getRegistryFixingTransaction);
 router.get("/cash-entry/:entryTransactionId", getCashEntryAuditTrail);
+router.get("/stock-adjustment/:stockAdjustmentId", getStockAdjustmentAuditTrail);
 
 export default router;
