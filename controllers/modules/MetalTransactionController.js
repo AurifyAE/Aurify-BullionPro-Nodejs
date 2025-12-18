@@ -250,6 +250,7 @@ export const createMetalTransaction = async (req, res, next) => {
     });
 
     // === MAP OTHER CHARGES ===
+    // Map all fields to ensure complete data is stored for proper editing
     const mappedOtherCharges = otherCharges.map((charge) => {
       if (!charge.code || !charge.debit || !charge.credit) {
         throw createAppError("Invalid otherCharges structure", 400);
@@ -258,26 +259,42 @@ export const createMetalTransaction = async (req, res, next) => {
         code: trim(charge.code),
         description: trim(charge.description) || "",
         percentage: toNumber(charge.percentage, 0),
-        amount: toNumber(charge.amount, 0), // Add amount field
+        amount: toNumber(charge.amount, 0),
         debit: {
           account: trim(charge.debit.account),
-          baseCurrency: toNumber(charge.debit.baseCurrency),
-          foreignCurrency: toNumber(charge.debit.foreignCurrency),
-          currency: trim(charge.debit.currency),
+          accountCode: trim(charge.debit.accountCode) || null,
+          accountName: trim(charge.debit.accountName) || null,
+          baseCurrency: toNumber(charge.debit.baseCurrency, 0),
+          foreignCurrency: toNumber(charge.debit.foreignCurrency, 0),
+          amountLC: toNumber(charge.debit.amountLC || charge.debit.baseCurrency, 0),
+          amountFC: toNumber(charge.debit.amountFC || charge.debit.foreignCurrency, 0),
+          currency: trim(charge.debit.currency) || null,
+          convertRate: toNumber(charge.debit.convertRate, 1),
+          defaultConvertRate: toNumber(charge.debit.defaultConvertRate || charge.debit.convertRate, 1),
+          fxRate: toNumber(charge.debit.fxRate, 0),
         },
         credit: {
           account: trim(charge.credit.account),
-          baseCurrency: toNumber(charge.credit.baseCurrency),
-          foreignCurrency: toNumber(charge.credit.foreignCurrency),
-          currency: trim(charge.credit.currency),
+          accountCode: trim(charge.credit.accountCode) || null,
+          accountName: trim(charge.credit.accountName) || null,
+          baseCurrency: toNumber(charge.credit.baseCurrency, 0),
+          foreignCurrency: toNumber(charge.credit.foreignCurrency, 0),
+          amountLC: toNumber(charge.credit.amountLC || charge.credit.baseCurrency, 0),
+          amountFC: toNumber(charge.credit.amountFC || charge.credit.foreignCurrency, 0),
+          currency: trim(charge.credit.currency) || null,
+          convertRate: toNumber(charge.credit.convertRate, 1),
+          defaultConvertRate: toNumber(charge.credit.defaultConvertRate || charge.credit.convertRate, 1),
+          fxRate: toNumber(charge.credit.fxRate, 0),
         },
         vatDetails: charge.vatDetails
           ? {
             vatNo: trim(charge.vatDetails.vatNo) || "",
-            invoiceNo: trim(charge.vatDetails.invoiceNo),
-            invoiceDate: toDate(charge.vatDetails.invoiceDate),
-            vatRate: toNumber(charge.vatDetails.vatRate),
-            vatAmount: toNumber(charge.vatDetails.vatAmount),
+            invoiceNo: trim(charge.vatDetails.invoiceNo) || "",
+            invoiceDate: toDate(charge.vatDetails.invoiceDate) || new Date(),
+            vatRate: toNumber(charge.vatDetails.vatRate, 0),
+            vatAmount: toNumber(charge.vatDetails.vatAmountAED || charge.vatDetails.vatAmount, 0), // Always store AED amount (vatAmount always stores AED)
+            vatAmountItemCurrency: toNumber(charge.vatDetails.vatAmountItemCurrency, 0), // VAT in item currency
+            vatAmountAED: toNumber(charge.vatDetails.vatAmountAED || charge.vatDetails.vatAmount, 0), // VAT in AED
           }
           : null,
         remarks: trim(charge.remarks) || "",
@@ -554,6 +571,7 @@ export const updateMetalTransaction = async (req, res, next) => {
     });
 
     // === MAP OTHER CHARGES ===
+    // Map all fields to ensure complete data is stored for proper editing
     const mappedOtherCharges = otherCharges.map((charge) => {
       if (!charge.code || !charge.debit || !charge.credit) {
         throw createAppError("Invalid otherCharges structure", 400);
@@ -562,26 +580,42 @@ export const updateMetalTransaction = async (req, res, next) => {
         code: trim(charge.code),
         description: trim(charge.description) || "",
         percentage: toNumber(charge.percentage, 0),
-        amount: toNumber(charge.amount, 0), // Add amount field
+        amount: toNumber(charge.amount, 0),
         debit: {
           account: trim(charge.debit.account),
-          baseCurrency: toNumber(charge.debit.baseCurrency),
-          foreignCurrency: toNumber(charge.debit.foreignCurrency),
-          currency: trim(charge.debit.currency),
+          accountCode: trim(charge.debit.accountCode) || null,
+          accountName: trim(charge.debit.accountName) || null,
+          baseCurrency: toNumber(charge.debit.baseCurrency, 0),
+          foreignCurrency: toNumber(charge.debit.foreignCurrency, 0),
+          amountLC: toNumber(charge.debit.amountLC || charge.debit.baseCurrency, 0),
+          amountFC: toNumber(charge.debit.amountFC || charge.debit.foreignCurrency, 0),
+          currency: trim(charge.debit.currency) || null,
+          convertRate: toNumber(charge.debit.convertRate, 1),
+          defaultConvertRate: toNumber(charge.debit.defaultConvertRate || charge.debit.convertRate, 1),
+          fxRate: toNumber(charge.debit.fxRate, 0),
         },
         credit: {
           account: trim(charge.credit.account),
-          baseCurrency: toNumber(charge.credit.baseCurrency),
-          foreignCurrency: toNumber(charge.credit.foreignCurrency),
-          currency: trim(charge.credit.currency),
+          accountCode: trim(charge.credit.accountCode) || null,
+          accountName: trim(charge.credit.accountName) || null,
+          baseCurrency: toNumber(charge.credit.baseCurrency, 0),
+          foreignCurrency: toNumber(charge.credit.foreignCurrency, 0),
+          amountLC: toNumber(charge.credit.amountLC || charge.credit.baseCurrency, 0),
+          amountFC: toNumber(charge.credit.amountFC || charge.credit.foreignCurrency, 0),
+          currency: trim(charge.credit.currency) || null,
+          convertRate: toNumber(charge.credit.convertRate, 1),
+          defaultConvertRate: toNumber(charge.credit.defaultConvertRate || charge.credit.convertRate, 1),
+          fxRate: toNumber(charge.credit.fxRate, 0),
         },
         vatDetails: charge.vatDetails
           ? {
             vatNo: trim(charge.vatDetails.vatNo) || "",
-            invoiceNo: trim(charge.vatDetails.invoiceNo),
-            invoiceDate: toDate(charge.vatDetails.invoiceDate),
-            vatRate: toNumber(charge.vatDetails.vatRate),
-            vatAmount: toNumber(charge.vatDetails.vatAmount),
+            invoiceNo: trim(charge.vatDetails.invoiceNo) || "",
+            invoiceDate: toDate(charge.vatDetails.invoiceDate) || new Date(),
+            vatRate: toNumber(charge.vatDetails.vatRate, 0),
+            vatAmount: toNumber(charge.vatDetails.vatAmountAED || charge.vatDetails.vatAmount, 0), // Always store AED amount (vatAmount always stores AED)
+            vatAmountItemCurrency: toNumber(charge.vatDetails.vatAmountItemCurrency, 0), // VAT in item currency
+            vatAmountAED: toNumber(charge.vatDetails.vatAmountAED || charge.vatDetails.vatAmount, 0), // VAT in AED
           }
           : null,
         remarks: trim(charge.remarks) || "",
