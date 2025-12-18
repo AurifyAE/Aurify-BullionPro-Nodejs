@@ -12498,7 +12498,7 @@ class MetalTransactionService {
     }
 
     const transactions = await MetalTransaction.find(query)
-      .populate("partyCode", "accountCode customerName")
+      .populate("partyCode", "")
       .populate("partyCurrency", "code symbol")
       .populate("itemCurrency", "code symbol")
       .populate("baseCurrency", "code symbol")
@@ -12529,7 +12529,7 @@ class MetalTransactionService {
   // Get metal transaction by ID
   static async getMetalTransactionById(transactionId) {
     const transaction = await MetalTransaction.findById(transactionId)
-      .populate("partyCode", "accountCode customerName addresses")
+      .populate("partyCode", "")
       .populate("partyCurrency", "code symbol")
       .populate("itemCurrency", "code symbol")
       .populate("baseCurrency", "code symbol")
