@@ -322,6 +322,8 @@ export const createMetalTransaction = async (req, res, next) => {
       voucherNumber: trim(voucherNumber),
       supplierInvoiceNo: trim(supplierInvoiceNo),
       supplierDate: toDate(supplierDate),
+      declarationNumber: trim(declarationNumber) || null,
+      importExportType: trim(importExportType) || null,
       metalRateUnit: metalRateUnit
         ? {
           rateType: trim(metalRateUnit.rateType),
