@@ -947,6 +947,14 @@ class MetalTransactionService {
       "Import-Purchase",
       "Import-Purchase-Return",
     ];
+    const purchaseReturnTypes = [
+      "Purchase-Return",
+      "Import-Purchase-Return",
+    ];
+    const saleReturnTypes = [
+      "Sale-Return",
+      "Export-Sale-Return",
+    ];
     const prefix =
       transactionType === "Purchase" ||
       transactionType === "Import-Purchase-Return" ||
@@ -954,9 +962,23 @@ class MetalTransactionService {
         ? "HSM"
         : "HPM";
     const transactionId = await generateUniqueTransactionId(prefix);
-    const hedgeType = purchaseTypes.includes(transactionType)
-      ? "SALE-HEDGE" // we hedge against selling action
-      : "PURCHASE-HEDGE";
+    
+    // Determine hedge type: always set opposite of the original type
+    // For returns, use return hedge types
+    let hedgeType;
+    if (purchaseReturnTypes.includes(transactionType)) {
+      // Purchase Return → hedge against sale return (opposite)
+      hedgeType = "SALE-RETURN-HEDGE";
+    } else if (saleReturnTypes.includes(transactionType)) {
+      // Sale Return → hedge against purchase return (opposite)
+      hedgeType = "PURCHASE-RETURN-HEDGE";
+    } else if (purchaseTypes.includes(transactionType)) {
+      // Purchase → hedge against sale (opposite)
+      hedgeType = "SALE-HEDGE";
+    } else {
+      // Sale → hedge against purchase (opposite)
+      hedgeType = "PURCHASE-HEDGE";
+    }
 
     // Use originalTransactionType if provided, otherwise normalize from display format
     // This ensures we save the correct transaction type (purchase, sale, etc.) for voucher counting
