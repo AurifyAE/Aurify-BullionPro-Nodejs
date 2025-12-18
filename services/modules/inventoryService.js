@@ -342,59 +342,156 @@ class InventoryService {
   static async fetchInventoryById(inventoryId) {
     try {
       const logs = await InventoryLog.aggregate([
-        // 🎯 Step 1: Match only logs for that stockId (exclude drafts from balance calculation)
+        // --------------------------------------------------
+        // 1️⃣ Match single stock (exclude drafts from balance)
+        // --------------------------------------------------
         {
           $match: {
             stockCode: new mongoose.Types.ObjectId(inventoryId),
             $or: [
-              { isDraft: { $ne: true } }, // Not a draft
-              { isDraft: { $exists: false } }, // Old entries without isDraft field
+              { isDraft: { $ne: true } },
+              { isDraft: { $exists: false } },
             ],
           },
         },
 
-        // 📌 Step 2: Sort (optional but helpful)
-        { $sort: { createdAt: -1 } },
+        // --------------------------------------------------
+        // 2️⃣ Sort latest first (same as fetchAll)
+        // --------------------------------------------------
+        { $sort: { updatedAt: -1 } },
 
-        // 📌 Step 3: Group by stockCode
+        // --------------------------------------------------
+        // 3️⃣ Flags (same as fetchAll)
+        // --------------------------------------------------
+        {
+          $addFields: {
+            isPurchase: {
+              $in: [
+                "$transactionType",
+                [
+                  "purchase",
+                  "saleReturn",
+                  "importPurchase",
+                  "importPurchaseReturn",
+                  "exportSaleReturn",
+                ],
+              ],
+            },
+            isOpeningOrAdjustment: {
+              $in: ["$transactionType", ["opening", "adjustment"]],
+            },
+          },
+        },
+
+        // --------------------------------------------------
+        // 4️⃣ Group by stockCode (CORE LOGIC)
+        // --------------------------------------------------
         {
           $group: {
             _id: "$stockCode",
+
+            // ----------------------------
+            // Gross Weight
+            // ----------------------------
             totalGrossWeight: {
               $sum: {
-                $switch: {
-                  branches: [
-                    {
-                      case: { $eq: ["$transactionType", "sale"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "purchaseReturn"] },
-                      then: { $multiply: ["$grossWeight", -1] },
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "saleReturn"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "purchase"] },
-                      then: "$grossWeight",
-                    },
-                    {
-                      case: { $eq: ["$transactionType", "opening"] },
-                      then: "$grossWeight",
-                    },
-                  ],
-                  default: 0,
-                },
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$grossWeight",
+                  { $multiply: ["$grossWeight", -1] },
+                ],
               },
             },
-            pcs: { $sum: "$pcs" },
+
+            // ----------------------------
+            // Pieces
+            // ----------------------------
+            totalPeices: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$pcs",
+                  { $multiply: ["$pcs", -1] },
+                ],
+              },
+            },
+
+            // ----------------------------
+            // OPENING + ADJUSTMENT
+            // ----------------------------
+            baseMakingRate: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isOpeningOrAdjustment",
+                      { $ne: ["$avgMakingRate", null] },
+                    ],
+                  },
+                  "$avgMakingRate",
+                  0,
+                ],
+              },
+            },
+
+            baseMakingAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isOpeningOrAdjustment",
+                      { $ne: ["$avgMakingAmount", null] },
+                    ],
+                  },
+                  "$avgMakingAmount",
+                  0,
+                ],
+              },
+            },
+
+            // ----------------------------
+            // PURCHASE AVERAGES
+            // ----------------------------
+            purchaseAvgMakingRate: {
+              $avg: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isPurchase",
+                      { $ne: ["$avgMakingRate", null] },
+                    ],
+                  },
+                  "$avgMakingRate",
+                  "$$REMOVE",
+                ],
+              },
+            },
+
+            purchaseAvgMakingAmount: {
+              $avg: {
+                $cond: [
+                  {
+                    $and: [
+                      "$isPurchase",
+                      { $ne: ["$avgMakingAmount", null] },
+                    ],
+                  },
+                  "$avgMakingAmount",
+                  "$$REMOVE",
+                ],
+              },
+            },
+
+            // ----------------------------
+            // Meta
+            // ----------------------------
             code: { $first: "$code" },
           },
         },
 
-        // 📌 Step 4: Lookup metal stock
+        // --------------------------------------------------
+        // 5️⃣ Lookups (same as fetchAll)
+        // --------------------------------------------------
         {
           $lookup: {
             from: "metalstocks",
@@ -405,7 +502,6 @@ class InventoryService {
         },
         { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
 
-        // 📌 Step 5: Lookup Karat info
         {
           $lookup: {
             from: "karatmasters",
@@ -416,7 +512,6 @@ class InventoryService {
         },
         { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
 
-        // 📌 Step 6: Lookup Metal Type
         {
           $lookup: {
             from: "divisionmasters",
@@ -425,29 +520,63 @@ class InventoryService {
             as: "metalTypeInfo",
           },
         },
-        {
-          $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true },
-        },
+        { $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true } },
 
-        // 📌 Step 7: Final Projection
+        // --------------------------------------------------
+        // 6️⃣ Final Projection (IDENTICAL RULES)
+        // --------------------------------------------------
         {
           $project: {
             _id: 0,
-            totalGrossWeight: 1,
             code: 1,
+
+            totalGrossWeight: 1,
+            totalPeices: 1,
+
+            avgMakingRate: {
+              $round: [
+                {
+                  $add: [
+                    "$baseMakingRate",
+                    { $ifNull: ["$purchaseAvgMakingRate", 0] },
+                  ],
+                },
+                2,
+              ],
+            },
+
+            avgMakingAmount: {
+              $round: [
+                {
+                  $add: [
+                    "$baseMakingAmount",
+                    { $ifNull: ["$purchaseAvgMakingAmount", 0] },
+                  ],
+                },
+                2,
+              ],
+            },
+
             totalValue: "$stock.totalValue",
             metalId: "$stock._id",
             StockName: "$stock.code",
-            pcs: 1,
+            pcs: "$stock.pcs",
+
+            // ✅ KARAT DETAILS (ADDED)
             purity: "$karatInfo.standardPurity",
-            karatDescription: "$karatInfo.description",
             karatCode: "$karatInfo.karatCode",
+            karatDescription: "$karatInfo.description",
+
+            // ✅ METAL TYPE
             metalType: "$metalTypeInfo.description",
           },
-        },
+        }
+
       ]);
 
-      // Also fetch draft logs separately (to show but not calculate)
+      // --------------------------------------------------
+      // 7️⃣ Draft logs (same behavior as before)
+      // --------------------------------------------------
       const draftLogs = await InventoryLog.find({
         stockCode: new mongoose.Types.ObjectId(inventoryId),
         isDraft: true,
@@ -459,7 +588,7 @@ class InventoryService {
 
       const result = logs?.[0] || null;
       if (result) {
-        result.draftLogs = draftLogs || []; // Add drafts separately
+        result.draftLogs = draftLogs || [];
       }
 
       return result;
@@ -471,6 +600,7 @@ class InventoryService {
       );
     }
   }
+
 
   static async addInitialInventory(metal, createdBy) {
     try {
