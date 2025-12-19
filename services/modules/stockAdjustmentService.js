@@ -307,10 +307,16 @@ export class StockAdjustmentService {
         session.startTransaction();
 
         try {
+            // --------------------------------------------------
+            // 1️ Validate ID
+            // --------------------------------------------------
             if (!mongoose.Types.ObjectId.isValid(id)) {
                 throw createAppError("Invalid stock adjustment ID", 400);
             }
 
+            // --------------------------------------------------
+            // 2️ Fetch existing adjustment
+            // --------------------------------------------------
             const existing = await StockAdjustment.findById(id).session(session);
             if (!existing) {
                 throw createAppError("Stock adjustment not found", 404);
@@ -323,14 +329,29 @@ export class StockAdjustmentService {
             const voucherNumber = existing.voucherNumber;
             const voucherDate = new Date();
 
-            /* -----------------------------
-               1. REVERSE OLD INVENTORY
-            ----------------------------- */
+            // --------------------------------------------------
+            // 3️ Fetch OLD stock masters (for reversal)
+            // --------------------------------------------------
+            const existingFromStock = await MetalStock
+                .findById(existing.from.stockId)
+                .lean();
+
+            const existingToStock = await MetalStock
+                .findById(existing.to.stockId)
+                .lean();
+
+            if (!existingFromStock || !existingToStock) {
+                throw createAppError("Existing stock reference invalid", 400);
+            }
+
+            // --------------------------------------------------
+            // 4️ REVERSE OLD INVENTORY
+            // --------------------------------------------------
             await InventoryLog.create(
                 [
                     {
                         stockCode: existing.from.stockId,
-                        code: existing.from.stockId,
+                        code: existingFromStock.code,
                         voucherCode: voucherNumber,
                         purity: existing.from.purity,
                         voucherDate,
@@ -344,7 +365,7 @@ export class StockAdjustmentService {
                     },
                     {
                         stockCode: existing.to.stockId,
-                        code: existing.to.stockId,
+                        code: existingToStock.code,
                         voucherCode: voucherNumber,
                         purity: existing.to.purity,
                         voucherDate,
@@ -357,17 +378,32 @@ export class StockAdjustmentService {
                         note: "Reversal of previous stock adjustment (TO)",
                     },
                 ],
-                { session }
+                { session, ordered: true }
             );
 
-            /* -----------------------------
-               2. APPLY NEW INVENTORY
-            ----------------------------- */
+            // --------------------------------------------------
+            // 5️ Fetch NEW stock masters (for apply)
+            // --------------------------------------------------
+            const newFromStock = await MetalStock
+                .findById(data.fromData.stockId)
+                .lean();
+
+            const newToStock = await MetalStock
+                .findById(data.toData.stockId)
+                .lean();
+
+            if (!newFromStock || !newToStock) {
+                throw createAppError("Invalid new stock reference", 400);
+            }
+
+            // --------------------------------------------------
+            // 6️ APPLY NEW INVENTORY
+            // --------------------------------------------------
             await InventoryLog.create(
                 [
                     {
                         stockCode: data.fromData.stockId,
-                        code: data.fromData.stockCode,
+                        code: newFromStock.code,
                         voucherCode: voucherNumber,
                         purity: data.fromData.purity,
                         voucherDate,
@@ -381,7 +417,7 @@ export class StockAdjustmentService {
                     },
                     {
                         stockCode: data.toData.stockId,
-                        code: data.toData.stockCode,
+                        code: newToStock.code,
                         voucherCode: voucherNumber,
                         purity: data.toData.purity,
                         voucherDate,
@@ -394,12 +430,12 @@ export class StockAdjustmentService {
                         note: "Stock increased due to updated adjustment",
                     },
                 ],
-                { session }
+                { session, ordered: true }
             );
 
-            /* -----------------------------
-               3. UPDATE SNAPSHOT
-            ----------------------------- */
+            // --------------------------------------------------
+            // 7️ UPDATE STOCK ADJUSTMENT SNAPSHOT
+            // --------------------------------------------------
             const updated = await StockAdjustment.findByIdAndUpdate(
                 id,
                 {
@@ -424,16 +460,21 @@ export class StockAdjustmentService {
                 { new: true, session }
             );
 
+            // --------------------------------------------------
+            // 8️ COMMIT
+            // --------------------------------------------------
             await session.commitTransaction();
             session.endSession();
 
             return updated;
+
         } catch (error) {
             await session.abortTransaction();
             session.endSession();
             throw error;
         }
     }
+
 
 
     static async deleteStockAdjustment(id, adminId) {
@@ -470,7 +511,7 @@ export class StockAdjustmentService {
                     {
                         stockCode: adjustment.from.stockId,
                         voucherCode: voucherNumber,
-                        code : stockFrom.code,
+                        code: stockFrom.code,
                         voucherDate,
                         voucherType: "STOCK-ADJ-CANCEL",
                         grossWeight: adjustment.from.grossWeight,
@@ -484,7 +525,7 @@ export class StockAdjustmentService {
                     {
                         stockCode: adjustment.to.stockId,
                         voucherCode: voucherNumber,
-                        code : stockTo.code,
+                        code: stockTo.code,
                         voucherDate,
                         voucherType: "STOCK-ADJ-CANCEL",
                         grossWeight: adjustment.to.grossWeight,

@@ -59,9 +59,23 @@ class InventoryService {
             // ----------------------------
             totalMakingAmount: {
               $sum: {
-                $toDouble: { $ifNull: ["$avgMakingAmount", 0] }
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $toDouble: { $ifNull: ["$avgMakingAmount", 0] } },
+                  {
+                    $subtract: [
+                      0,
+                      { $toDouble: { $ifNull: ["$avgMakingAmount", 0] } }
+                    ]
+                  }
+                ]
               }
             },
+            // totalMakingAmount: {
+            //   $sum: {
+            //     $toDouble: { $ifNull: ["$avgMakingAmount", 0] }
+            //   }
+            // },
 
             // ----------------------------
             // Meta
