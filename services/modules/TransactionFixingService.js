@@ -875,7 +875,7 @@ export const TransactionFixingService = {
       }
 
       const transactions = await TransactionFixing.find(filter)
-        .populate("partyId", "name code customerName accountCode")
+        .populate("partyId")
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email")
         .populate("orders.metalType")
@@ -908,7 +908,7 @@ export const TransactionFixingService = {
   getTransactionById: async (id) => {
     try {
       const transaction = await TransactionFixing.findById(id)
-        .populate("partyId", "name code customerName accountCode")
+        .populate("partyId")
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email")
         .populate("orders.metalType")

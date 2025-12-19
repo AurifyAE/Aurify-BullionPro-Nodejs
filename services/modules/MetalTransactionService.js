@@ -13150,6 +13150,8 @@ class MetalTransactionService {
       case "exportSaleReturn":
       case "hedgeMetalReceipt":
       case "hedgeMetalReciept": // Support both spellings
+      case "importPurchase":
+      case "exportSaleReturn":
         await InventoryService.updateInventory(
           transaction,
           false,
@@ -13162,6 +13164,8 @@ class MetalTransactionService {
       case "importPurchaseReturn":
       case "exportSale":
       case "hedgeMetalPayment":
+      case "exportSale":
+      case "importPurchaseReturn":
         await InventoryService.updateInventory(
           transaction,
           true,
