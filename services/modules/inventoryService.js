@@ -13,136 +13,71 @@ class InventoryService {
         // 1️⃣ Sort latest first
         { $sort: { updatedAt: -1 } },
 
-        // 2️⃣ Flags
-        {
-          $addFields: {
-            isPurchase: {
-              $in: [
-                "$transactionType",
-                [
-                  "purchase",
-                  "saleReturn",
-                  "importPurchase",
-                  "importPurchaseReturn",
-                  "exportSaleReturn",
-                ],
-              ],
-            },
-            isOpeningOrAdjustment: {
-              $in: ["$transactionType", ["opening", "adjustment"]],
-            },
-          },
-        },
-
-        // 3️⃣ Group by stockCode
+        // 2️⃣ Group by stockCode
         {
           $group: {
             _id: "$stockCode",
 
             // ----------------------------
-            // Gross Weight
+            // Gross Weight (SAFE)
             // ----------------------------
             totalGrossWeight: {
               $sum: {
                 $cond: [
                   { $eq: ["$action", "add"] },
-                  "$grossWeight",
-                  { $multiply: ["$grossWeight", -1] },
-                ],
-              },
+                  { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                  {
+                    $subtract: [
+                      0,
+                      { $toDouble: { $ifNull: ["$grossWeight", 0] } }
+                    ]
+                  }
+                ]
+              }
             },
 
             // ----------------------------
-            // Pieces
+            // Pieces (SAFE)
             // ----------------------------
             totalPeices: {
               $sum: {
                 $cond: [
                   { $eq: ["$action", "add"] },
-                  "$pcs",
-                  { $multiply: ["$pcs", -1] }
+                  { $toDouble: { $ifNull: ["$pcs", 0] } },
+                  {
+                    $subtract: [
+                      0,
+                      { $toDouble: { $ifNull: ["$pcs", 0] } }
+                    ]
+                  }
                 ]
               }
             },
-            // ----------------------------
-            // OPENING + ADJUSTMENT (already averaged)
-            // ----------------------------
-            baseMakingRate: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      "$isOpeningOrAdjustment",
-                      { $ne: ["$avgMakingRate", null] },
-                    ],
-                  },
-                  "$avgMakingRate",
-                  0,
-                ],
-              },
-            },
-            baseMakingAmount: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      "$isOpeningOrAdjustment",
-                      { $ne: ["$avgMakingAmount", null] },
-                    ],
-                  },
-                  "$avgMakingAmount",
-                  0,
-                ],
-              },
-            },
 
             // ----------------------------
-            // PURCHASE → AVERAGE ONLY
+            // MAKING AMOUNT (SUM ONLY)
             // ----------------------------
-            purchaseAvgMakingRate: {
-              $avg: {
-                $cond: [
-                  {
-                    $and: [
-                      "$isPurchase",
-                      { $ne: ["$avgMakingRate", null] },
-                    ],
-                  },
-                  "$avgMakingRate",
-                  "$$REMOVE",
-                ],
-              },
-            },
-            purchaseAvgMakingAmount: {
-              $avg: {
-                $cond: [
-                  {
-                    $and: [
-                      "$isPurchase",
-                      { $ne: ["$avgMakingAmount", null] },
-                    ],
-                  },
-                  "$avgMakingAmount",
-                  "$$REMOVE",
-                ],
-              },
+            totalMakingAmount: {
+              $sum: {
+                $toDouble: { $ifNull: ["$avgMakingAmount", 0] }
+              }
             },
 
             // ----------------------------
             // Meta
             // ----------------------------
-            code: { $first: "$code" },
-          },
+            code: { $first: "$code" }
+          }
         },
 
-        // 4️⃣ Lookups
+        // 3️⃣ Lookups
         {
           $lookup: {
             from: "metalstocks",
             localField: "_id",
             foreignField: "_id",
-            as: "stock",
-          },
+            as: "stock"
+          }
         },
         { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
 
@@ -151,8 +86,8 @@ class InventoryService {
             from: "karatmasters",
             localField: "stock.karat",
             foreignField: "_id",
-            as: "karatInfo",
-          },
+            as: "karatInfo"
+          }
         },
         { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
 
@@ -161,12 +96,12 @@ class InventoryService {
             from: "divisionmasters",
             localField: "stock.metalType",
             foreignField: "_id",
-            as: "metalTypeInfo",
-          },
+            as: "metalTypeInfo"
+          }
         },
         { $unwind: { path: "$metalTypeInfo", preserveNullAndEmptyArrays: true } },
 
-        // 5️⃣ Final projection
+        // 4️⃣ Final projection
         {
           $project: {
             _id: 0,
@@ -174,29 +109,28 @@ class InventoryService {
             totalGrossWeight: 1,
             totalPeices: 1,
 
-            // ✅ FINAL RULE APPLIED
+            // ✅ SUM of making amount
+            avgMakingAmount: {
+              $round: ["$totalMakingAmount", 2]
+            },
+
+            // ✅ RATE = SUM(making) / SUM(weight)
             avgMakingRate: {
               $round: [
                 {
-                  $add: [
-                    "$baseMakingRate",
-                    { $ifNull: ["$purchaseAvgMakingRate", 0] },
-                  ],
+                  $cond: [
+                    { $gt: ["$totalGrossWeight", 0] },
+                    {
+                      $divide: [
+                        "$totalMakingAmount",
+                        "$totalGrossWeight"
+                      ]
+                    },
+                    0
+                  ]
                 },
-                2,
-              ],
-            },
-
-            avgMakingAmount: {
-              $round: [
-                {
-                  $add: [
-                    "$baseMakingAmount",
-                    { $ifNull: ["$purchaseAvgMakingAmount", 0] },
-                  ],
-                },
-                2,
-              ],
+                2
+              ]
             },
 
             totalValue: "$stock.totalValue",
@@ -204,16 +138,22 @@ class InventoryService {
             StockName: "$stock.code",
             pcs: "$stock.pcs",
             purity: "$karatInfo.standardPurity",
-            metalType: "$metalTypeInfo.description",
-          },
-        },
+            metalType: "$metalTypeInfo.description"
+          }
+        }
       ]);
 
       return logs;
     } catch (err) {
-      throw createAppError("Failed to fetch inventory logs", 500, "FETCH_ERROR");
+      console.error(err);
+      throw createAppError(
+        "Failed to fetch inventory logs",
+        500,
+        "FETCH_ERROR"
+      );
     }
   }
+
 
 
   static async reverseInventory(transaction, session) {
