@@ -41,7 +41,7 @@ export class StockAdjustmentService {
                 status: "Completed",
                 voucherNumber: data.voucherNo,
                 voucherType: data.voucherType || "STOCK-ADJ",
-                division: "6901bdce363f63f474924f20",
+                division: data.division,
                 enteredBy: data.enteredBy || adminId,
             };
 
