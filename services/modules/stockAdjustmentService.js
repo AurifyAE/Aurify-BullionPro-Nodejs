@@ -453,44 +453,6 @@ export class StockAdjustmentService {
                 throw createAppError("Already cancelled", 400);
             }
 
-            const voucherNumber = adjustment.voucherNumber;
-            const voucherDate = new Date();
-
-            /* -----------------------------
-               REVERSE INVENTORY
-            ----------------------------- */
-            await InventoryLog.create(
-                [
-                    {
-                        stockCode: adjustment.from.stockId,
-                        voucherCode: voucherNumber,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ-CANCEL",
-                        grossWeight: adjustment.from.grossWeight,
-                        purity: adjustment.from.purity,
-                        pcs: 0,
-                        action: "add",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Stock reversal due to adjustment cancellation (FROM)",
-                    },
-                    {
-                        stockCode: adjustment.to.stockId,
-                        voucherCode: voucherNumber,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ-CANCEL",
-                        grossWeight: adjustment.to.grossWeight,
-                        purity: adjustment.to.purity,
-                        pcs: 0,
-                        action: "remove",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Stock reversal due to adjustment cancellation (TO)",
-                    },
-                ],
-                { session }
-            );
-
             adjustment.status = "Cancelled";
             adjustment.cancelledBy = adminId;
             adjustment.cancelledAt = new Date();
