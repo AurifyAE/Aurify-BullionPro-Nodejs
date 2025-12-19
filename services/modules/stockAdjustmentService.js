@@ -15,6 +15,7 @@ export class StockAdjustmentService {
             if (!data.fromData || !data.toStock) {
                 throw createAppError("From / To stock data missing", 400);
             }
+            console.log(data)
 
             // 2. Create Stock Adjustment (snapshot)
             const stockAdjustmentDoc = {
@@ -40,7 +41,7 @@ export class StockAdjustmentService {
                 voucherNumber: data.voucherNo,
                 voucherType: data.voucherType || "STOCK-ADJ",
                 division: "6901bdce363f63f474924f20",
-                enteredBy: adminId,
+                enteredBy: data.enteredBy || adminId,
             };
 
             const adjustment = await StockAdjustment.create(

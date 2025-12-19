@@ -95,7 +95,7 @@ const StockAdjustmentSchema = new Schema(
 
         enteredBy: {
             type: Schema.Types.ObjectId,
-            ref: "Admin",
+            ref: "Salesman",
             required: true,
             immutable: true, // audit safety
         },
