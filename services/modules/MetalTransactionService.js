@@ -13292,6 +13292,7 @@ class MetalTransactionService {
       "supplierDate",
       "declarationNumber",
       "importExportType",
+      "remarks",
       "notes",
       "status",
     ];
