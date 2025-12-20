@@ -208,6 +208,12 @@ MetalStockSchema.index({ MakingUnit: 1 });
 MetalStockSchema.index({ branch: 1, category: 1 });
 MetalStockSchema.index({ metalType: 1, karat: 1 });
 
+// Unique index
+MetalStockSchema.index(
+  { metalType: 1, code: 1 },
+  { unique: true, partialFilterExpression: { isActive: true, metalType: { $exists: true } } }
+);
+
 // Pre-save middleware
 MetalStockSchema.pre("save", async function (next) {
   try {
@@ -264,11 +270,12 @@ MetalStockSchema.pre("save", async function (next) {
 });
 
 // Static method to check if code exists
-MetalStockSchema.statics.isCodeExists = async function (
-  code,
-  excludeId = null
-) {
-  const query = { code: code.toUpperCase(), isActive: true };
+MetalStockSchema.statics.isCodeExists = async function (code, metalTypeId, excludeId = null) {
+  const normalizedCode = (code || "").toUpperCase().trim();
+  const query = { code: normalizedCode, isActive: true };
+  if (metalTypeId) {
+    query.metalType = metalTypeId;
+  }
   if (excludeId) {
     query._id = { $ne: excludeId };
   }

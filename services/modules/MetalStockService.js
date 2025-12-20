@@ -168,7 +168,10 @@ class MetalStockService {
   static async createMetalStock(metalStockData, adminId) {
     try {
       // Check if code already exists
-      const codeExists = await MetalStock.isCodeExists(metalStockData.code);
+      const codeExists = await MetalStock.isCodeExists(
+        metalStockData.code,
+        metalStockData.metalType
+      );
       if (codeExists) {
         throw createAppError(
           "Metal stock code already exists",
@@ -350,8 +353,33 @@ class MetalStockService {
       };
 
       // Check if code is being updated and if it already exists
-      if (updateData.code && updateData.code !== existingMetalStock.code) {
-        const codeExists = await MetalStock.isCodeExists(updateData.code, id);
+      const nextMetalType = updateData.metalType || existingMetalStock.metalType;
+      const requestedCode = updateData.code
+        ? updateData.code.trim().toUpperCase()
+        : null;
+      if (requestedCode && requestedCode !== existingMetalStock.code) {
+        const codeExists = await MetalStock.isCodeExists(
+          requestedCode,
+          nextMetalType,
+          id
+        );
+        if (codeExists) {
+          throw createAppError(
+            "Metal stock code already exists",
+            409,
+            "DUPLICATE_CODE"
+          );
+        }
+      } else if (
+        updateData.metalType &&
+        existingMetalStock.metalType &&
+        updateData.metalType.toString() !== existingMetalStock.metalType.toString()
+      ) {
+        const codeExists = await MetalStock.isCodeExists(
+          existingMetalStock.code,
+          updateData.metalType,
+          id
+        );
         if (codeExists) {
           throw createAppError(
             "Metal stock code already exists",
@@ -366,6 +394,7 @@ class MetalStockService {
         id,
         {
           ...updateData,
+          ...(requestedCode ? { code: requestedCode } : {}),
           updatedBy: adminId,
         },
         { new: true, runValidators: true }

@@ -13,7 +13,6 @@ const CommoditySchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
       maxlength: [20, "Code cannot exceed 20 characters"],
-      unique: true,
     },
     description: {
       type: String,
@@ -80,12 +79,17 @@ const CommoditySchema = new mongoose.Schema(
 
 
 // Static: Check if code exists
-CommoditySchema.statics.isCodeExists = async function (code, excludeId) {
-  const query = { code: (code || "").toUpperCase().trim() };
+CommoditySchema.statics.isCodeExists = async function (code, divisionId, excludeId) {
+  const query = {
+    code: (code || "").toUpperCase().trim(),
+    division: divisionId,
+  };
   if (excludeId) query._id = { $ne: excludeId };
   const existing = await this.findOne(query);
   return !!existing;
 };
+
+CommoditySchema.index({ division: 1, code: 1 }, { unique: true });
 
 const Commodity = mongoose.model("Commodity", CommoditySchema);
 export default Commodity;

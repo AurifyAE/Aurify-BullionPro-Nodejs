@@ -10,7 +10,8 @@ const MetalRateMasterSchema = new mongoose.Schema(
     rateType: {
       type: String,
       required: [true, "Rate type is required"],
-      trim: true
+      trim: true,
+      uppercase: true,
     },
     convFactGms: {
       type: Number,
@@ -97,7 +98,10 @@ MetalRateMasterSchema.index({ isDefault: 1 });
 MetalRateMasterSchema.index({ createdAt: -1 });
 
 // Compound indexes
-MetalRateMasterSchema.index({ metal: 1, rateType: 1 });
+MetalRateMasterSchema.index(
+  { metal: 1, rateType: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } }
+);
 
 // Pre-save middleware for validation and business logic
 MetalRateMasterSchema.pre('save', async function(next) {
@@ -115,10 +119,15 @@ MetalRateMasterSchema.pre('save', async function(next) {
 });
 
 // Static method to check if metal rate combination exists
-MetalRateMasterSchema.statics.isMetalRateExists = async function(metal, rateType, excludeId = null) {
-  const query = { 
-    metal: metal, 
-    rateType: rateType 
+MetalRateMasterSchema.statics.isMetalRateExists = async function(
+  metal,
+  rateType,
+  excludeId = null
+) {
+  const query = {
+    metal,
+    rateType: (rateType || "").toUpperCase().trim(),
+    isActive: true,
   };
   if (excludeId) {
     query._id = { $ne: excludeId };

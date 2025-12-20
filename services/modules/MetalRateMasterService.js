@@ -20,6 +20,10 @@ class MetalRateMasterService {
         throw createAppError("Division not found", 404, "DIVISION_NOT_FOUND");
       }
 
+      if (metalRateData.rateType) {
+        metalRateData.rateType = metalRateData.rateType.trim().toUpperCase();
+      }
+
       // Check if metal rate combination already exists
       const existingMetalRate = await MetalRateMaster.isMetalRateExists(
         metalRateData.metal,
@@ -161,6 +165,10 @@ class MetalRateMasterService {
         if (!division) {
           throw createAppError("Division not found", 404, "DIVISION_NOT_FOUND");
         }
+      }
+
+      if (updateData.rateType) {
+        updateData.rateType = updateData.rateType.trim().toUpperCase();
       }
 
       // Check for duplicate metal rate combination (if key fields are being updated)

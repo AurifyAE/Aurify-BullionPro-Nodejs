@@ -76,8 +76,11 @@ KaratMasterSchema.index({ isActive: 1 });
 KaratMasterSchema.index({ isScrap: 1 });
 KaratMasterSchema.index({ createdAt: -1 });
 
-// Compound index for unique karat code per division
-KaratMasterSchema.index({ karatCode: 1, division: 1 }, { unique: true });
+// Compound index for unique karat code per division (only for active records)
+KaratMasterSchema.index(
+  { karatCode: 1, division: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } }
+);
 
 // Pre-save middleware to ensure uppercase karat code and validate min/max
 KaratMasterSchema.pre("save", function (next) {
@@ -116,8 +119,9 @@ KaratMasterSchema.statics.isKaratCodeExists = async function (
   excludeId = null
 ) {
   const query = {
-    karatCode: karatCode.toUpperCase(),
+    karatCode: (karatCode || "").toUpperCase().trim(),
     division: divisionId,
+    isActive: true,
   };
   if (excludeId) {
     query._id = { $ne: excludeId };

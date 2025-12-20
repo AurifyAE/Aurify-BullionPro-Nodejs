@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Commodity from "../../models/modules/Commodity.js";
 import { createAppError } from "../../utils/errorHandler.js";
 
@@ -23,7 +24,7 @@ export default class CommodityService {
         throw createAppError("Missing required fields", 400, "REQUIRED_FIELD_MISSING");
       }
 
-      const exists = await Commodity.isCodeExists(code);
+      const exists = await Commodity.isCodeExists(code, division);
       if (exists) {
         throw createAppError("Commodity code already exists", 409, "DUPLICATE_CODE");
       }
@@ -58,10 +59,16 @@ export default class CommodityService {
   }
 
   // LIST WITH PAGINATION + SEARCH
-  static async listCommodities(page = 1, limit = 10, search = "") {
+  static async listCommodities(page = 1, limit = 10, search = "", divisionId = "") {
     try {
       const skip = (page - 1) * limit;
       const query = { status: true };
+      if (divisionId) {
+        if (!mongoose.Types.ObjectId.isValid(divisionId)) {
+          throw createAppError("Invalid division filter", 400, "INVALID_DIVISION_ID");
+        }
+        query.division = divisionId;
+      }
       if (search) {
         query.$or = [
           { code: new RegExp(search, "i") },
@@ -118,8 +125,13 @@ export default class CommodityService {
       const current = await Commodity.findById(id);
       if (!current) throw createAppError("Commodity not found", 404, "NOT_FOUND");
 
-      if (payload.code && payload.code.toUpperCase() !== current.code) {
-        const exists = await Commodity.isCodeExists(payload.code, id);
+      const nextDivision = payload.division || current.division;
+      const requestedCode = payload.code?.trim().toUpperCase();
+      if (requestedCode && requestedCode !== current.code) {
+        const exists = await Commodity.isCodeExists(requestedCode, nextDivision, id);
+        if (exists) throw createAppError("Commodity code already exists", 409, "DUPLICATE_CODE");
+      } else if (payload.division && payload.division.toString() !== current.division.toString()) {
+        const exists = await Commodity.isCodeExists(current.code, payload.division, id);
         if (exists) throw createAppError("Commodity code already exists", 409, "DUPLICATE_CODE");
       }
 

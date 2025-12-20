@@ -18,7 +18,8 @@ export default class CommodityController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || "";
-      const result = await CommodityService.listCommodities(page, limit, search);
+      const divisionId = req.query.divisionId || "";
+      const result = await CommodityService.listCommodities(page, limit, search, divisionId);
       res.status(200).json({ success: true, message: "Commodities retrieved successfully", data: result.items, pagination: result.pagination });
     } catch (error) {
       next(error);
