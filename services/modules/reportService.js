@@ -42,12 +42,19 @@ export class ReportService {
 
       // Validate and format input filters
       const validatedFilters = this.validateFilters(filters);
-
+      console.log('Validated Filters====================================');
+      console.log(validatedFilters);
+      console.log('====================================');
       // Construct MongoDB aggregation pipeline
       const pipeline = this.buildAccountStatementPipeline(validatedFilters);
-
+      console.log('Pipeline====================================');
+      console.log(pipeline);
+      console.log('====================================');
       // Execute aggregation query
       const reportData = await Registry.aggregate(pipeline);
+      console.log('Report Data====================================');
+      console.log(reportData);
+      console.log('====================================');
 
       // Format the retrieved data for response
       const formattedData = this.formatReportData(reportData, validatedFilters);
@@ -877,6 +884,8 @@ export class ReportService {
             docRef: "$docRef",
             branch: "$branch",
             particulars: "$description",
+            assetType: { $ifNull: ["$assetType", "AED"] },
+            currencyRate: { $ifNull: ["$currencyRate", 1] },
             cash: {
               debit: { $cond: [{ $in: ["$type", cashTypes] }, { $ifNull: ["$debit", 0] }, 0] },
               credit: { $cond: [{ $in: ["$type", cashTypes] }, { $ifNull: ["$credit", 0] }, 0] },
@@ -907,6 +916,8 @@ export class ReportService {
               docRef: "$$trans.docRef",
               branch: "$$trans.branch",
               particulars: "$$trans.particulars",
+              assetType: "$$trans.assetType",
+              currencyRate: "$$trans.currencyRate",
               cash: {
                 debit: "$$trans.cash.debit",
                 credit: "$$trans.cash.credit",
@@ -936,7 +947,7 @@ export class ReportService {
     return pipeline;
   }
 
-
+//=================Build Sales Analysis=================
   buildSalesAnalysis(filters) {
 
     const pipeline = [];
@@ -1207,7 +1218,7 @@ export class ReportService {
 
     return pipeline;
   }
-
+ //=================Calculate Sales Analysis=================
   calculateSalesAnalysis(salesReport, purchaseReport) {
     const salesTransactions = salesReport[0]?.transactions || [];
     const purchaseTransactions = purchaseReport[0]?.transactions || [];

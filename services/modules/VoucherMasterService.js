@@ -123,7 +123,7 @@ class VoucherMasterService {
       }
 
       // Hedge Metal Transaction modules - use TransactionFixing model
-      const hedgeMetalModules = ["hedge-metal-payment", "hedge-metal-receipt"];
+      const hedgeMetalModules = ["hedge-metal-payment", "hedge-metal-receipt","hedge-metal-purchase","hedge-metal-sale","hedge-metal-purchase-return","hedge-metal-sale-return","hedge-metal-import-purchase","hedge-metal-import-purchase-return","hedge-metal-export-sale","hedge-metal-export-sale-return"];
       if (hedgeMetalModules.includes(moduleLC)) {
         console.log(`[getTransactionCount] Using model: TransactionFixing (Hedge)`);
 
