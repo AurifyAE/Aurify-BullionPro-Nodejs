@@ -153,7 +153,6 @@ class RegistryService {
       .lean();
 
     if (!registries || registries.length === 0) return null;
-
     let main = null;
     const infoRegistries = registries.filter((r) => {
       if (r.type === "PARTY_CASH_BALANCE" || r.type === "PARTY_GOLD_BALANCE") {
@@ -167,10 +166,10 @@ class RegistryService {
     // 📌 FILTER OUT HEDGE REGISTRIES (reference starts with "H")
     // -----------------------------------------------------
     const validRegistries = registries.filter((r) => {
-      const ref = String(r.reference || "");
-      return !ref.startsWith("H"); // EXCLUDE HEDGE
+      const type = String(r.type || "");
+      return type != "PARTY_HEDGE_ENTRY" && type != "HEDGE_ENTRY"; // EXCLUDE HEDGE
     });
-
+    console.log(validRegistries,"validRegistries🟢🟢🟢---------------------------------------");
     // If all entries were hedges → nothing to show
     if (validRegistries.length === 0) {
       return {
