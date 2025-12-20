@@ -505,7 +505,7 @@ class InventoryService {
       // 2. Add inventory log
       await InventoryLog.create({
         code: metal.code,
-        pcs: metal.pcs,
+        pcs: 0,
         stockCode: metal._id,
         voucherCode: metal.voucherCode || "INITIAL",
         voucherDate: metal.voucherDate || new Date(),
