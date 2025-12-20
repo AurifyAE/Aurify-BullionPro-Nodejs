@@ -678,6 +678,7 @@ class MetalTransactionService {
 
       // Separate PARTY entries from non-PARTY entries for aggregation
       // NOTE: Skip PARTY_HEDGE_ENTRY per item - it will be created once after loop with summed totals
+      // NOTE: PURITY_DIFFERENCE entries remain per-item (not aggregated)
       if (itemEntries && itemEntries.length > 0) {
         itemEntries.forEach((entry) => {
           if (!entry) return;
@@ -690,11 +691,19 @@ class MetalTransactionService {
             return;
           }
           
+          // CRITICAL: PURITY_DIFFERENCE entries must remain per-item (not aggregated)
+          // Each stock item has its own purity difference entry
+          if (entry.type === "PURITY_DIFFERENCE") {
+            // Keep PURITY_DIFFERENCE per item - do not aggregate
+            entries.push(entry);
+            return;
+          }
+          
           // Collect all other PARTY entries for aggregation
           if (this.isPartyEntry(entry)) {
             partyEntries.push(entry);
           } else {
-            // Keep non-PARTY entries per item
+            // Keep non-PARTY entries per item (GOLD, GOLD_STOCK, MAKING_CHARGES, VAT_AMOUNT, etc.)
             entries.push(entry);
           }
         });
@@ -819,6 +828,7 @@ class MetalTransactionService {
     // =====================================================
     // FINAL SAFETY CHECK: Ensure ALL PARTY entries are properly aggregated
     // This is a defensive check to catch any PARTY entries that might have slipped through
+    // NOTE: PURITY_DIFFERENCE entries remain per-item and are NOT aggregated
     // =====================================================
     // Separate PARTY entries from non-PARTY entries
     const finalPartyEntries = [];
@@ -826,6 +836,13 @@ class MetalTransactionService {
     
     entries.forEach(entry => {
       if (!entry) return;
+      
+      // PURITY_DIFFERENCE entries must remain per-item (not aggregated)
+      if (entry.type === "PURITY_DIFFERENCE") {
+        finalNonPartyEntries.push(entry);
+        return;
+      }
+      
       if (this.isPartyEntry(entry)) {
         finalPartyEntries.push(entry);
       } else {
@@ -13333,12 +13350,36 @@ class MetalTransactionService {
     // 🔥 Reverse full balances using clean reversal logic
     await this.reverseBalances(oldParty, originalData, session);
 
-    // 🆕 Insert new registry entries
+    // 🔄 Ensure transaction is properly refreshed with all updated fields
+    // Reload from database to ensure stockItems, totalSummary, and all fields are current
+    const refreshedTransaction = await MetalTransaction.findById(transaction._id).session(session);
+    if (!refreshedTransaction) {
+      throw createAppError(
+        "Transaction not found after update",
+        404,
+        "TRANSACTION_NOT_FOUND"
+      );
+    }
+
+    // 🆕 Insert new registry entries using refreshed transaction
+    // This ensures all updated values (stockItems, totals, etc.) are correctly used
+    // buildRegistryEntries will properly aggregate PARTY entries and keep PURITY_DIFFERENCE per-item
     const newRegistryEntries = await this.buildRegistryEntries(
-      transaction,
+      refreshedTransaction,
       newParty,
       adminId
     );
+
+    // Validate that registry entries were created
+    if (!newRegistryEntries || newRegistryEntries.length === 0) {
+      console.warn(
+        `[UPDATE_TRANSACTION] No registry entries generated for transaction ${refreshedTransaction._id}`
+      );
+    } else {
+      console.log(
+        `[UPDATE_TRANSACTION] Generated ${newRegistryEntries.length} registry entries for transaction ${refreshedTransaction._id}`
+      );
+    }
 
     if (newRegistryEntries.length > 0) {
       await Registry.insertMany(newRegistryEntries, {
@@ -13347,21 +13388,20 @@ class MetalTransactionService {
       });
     }
 
-    // 🔥 Apply new balances (currency-wise + gold)
-    await this.updateAccountBalances(newParty, transaction, session);
+    // 🔥 Apply new balances (currency-wise + gold) using refreshed transaction
+    // Use refreshedTransaction to ensure all updated values are used
+    await this.updateAccountBalances(newParty, refreshedTransaction, session);
 
-    // 🔥 INVENTORY
-    switch (transaction.transactionType) {
+    // 🔥 INVENTORY - Use refreshedTransaction to ensure all updated values are used
+    switch (refreshedTransaction.transactionType) {
       case "purchase":
       case "saleReturn":
       case "importPurchase":
       case "exportSaleReturn":
       case "hedgeMetalReceipt":
       case "hedgeMetalReciept": // Support both spellings
-      case "importPurchase":
-      case "exportSaleReturn":
         await InventoryService.updateInventory(
-          transaction,
+          refreshedTransaction,
           false,
           adminId,
           session
@@ -13372,10 +13412,8 @@ class MetalTransactionService {
       case "importPurchaseReturn":
       case "exportSale":
       case "hedgeMetalPayment":
-      case "exportSale":
-      case "importPurchaseReturn":
         await InventoryService.updateInventory(
-          transaction,
+          refreshedTransaction,
           true,
           adminId,
           session
