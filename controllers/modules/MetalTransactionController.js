@@ -33,6 +33,7 @@ export const createMetalTransaction = async (req, res, next) => {
       supplierDate,
       declarationNumber,
       importExportType,
+      remarks,
       metalRateUnit,
       stockItems = [],
       otherCharges = [],
@@ -409,6 +410,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       supplierDate,
       declarationNumber,
       importExportType,
+      remarks,
       metalRateUnit,
       stockItems = [],
       otherCharges = [],
@@ -652,6 +654,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       declarationNumber: trim(declarationNumber) || null,
       importExportType: trim(importExportType) || null,
+      remarks: trim(remarks) || null,
       metalRateUnit: metalRateUnit
         ? {
           rateType: trim(metalRateUnit.rateType),

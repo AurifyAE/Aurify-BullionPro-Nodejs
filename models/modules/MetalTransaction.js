@@ -592,6 +592,12 @@ const MetalTransactionSchema = new mongoose.Schema(
       trim: true,
       maxlength: [50, "Import/Export type cannot exceed 50 characters"],
     },
+    remarks: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: [1000, "Remarks cannot exceed 1000 characters"],
+    },
     // Credit Terms
     crDays: {
       type: Number,
