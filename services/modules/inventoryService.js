@@ -568,6 +568,11 @@ class InventoryService {
           "METAL_NOT_FOUND"
         );
       }
+      console.log("Updating inventory for metal:", voucher);
+
+      // first clean the inventoryLog based on the voucher as well remove registry entries
+      await InventoryLog.deleteMany({ voucherCode: voucher.voucherCode });
+      await Registry.deleteMany({ reference: voucher.voucherCode });
 
       let description = "";
       let registryValue = 0;
@@ -625,6 +630,28 @@ class InventoryService {
         grossWeight: grossWeight,
         pureWeight,
       });
+
+      if (avgMakingAmount > 0) {
+        const res = await this.createRegistryEntry({
+          transactionType: "opening",
+          transactionId: await Registry.generateTransactionId(),
+          metalId: metalId,
+          InventoryLogID: invLog._id,
+          type: "MAKING_CHARGES",
+          goldBidValue: goldBidPrice,
+          description: ` Making Charges For ${metal.code} for OPENING STOCK`,
+          value: avgMakingAmount,
+          isBullion: true,
+          credit: avgMakingAmount,
+          reference: voucher.voucherCode,
+          createdBy: adminId,
+          purity: inventory.purity,
+          grossWeight: grossWeight,
+          pureWeight,
+        });
+      }
+
+
       console.log("Registry entry created:", res);
       return savedInventory;
     } catch (error) {
