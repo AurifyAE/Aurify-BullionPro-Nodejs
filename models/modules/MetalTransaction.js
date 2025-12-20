@@ -445,6 +445,7 @@ const otherChargeSchema = new mongoose.Schema(
     },
     remarks: {
       type: String,
+      default: null,
       trim: true,
       maxlength: [500, "Item notes cannot exceed 500 characters"],
     },

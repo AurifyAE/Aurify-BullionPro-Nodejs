@@ -251,7 +251,7 @@ export const createMetalTransaction = async (req, res, next) => {
           taxableAmount: toNumber(itemTotal?.taxableAmount),
           itemTotalAmount: toNumber(itemTotal?.itemTotalAmount),
         },
-        remarks: trim(remarks) || "",
+        remarks: remarks ? trim(remarks) : null,
       };
     });
 
@@ -330,6 +330,7 @@ export const createMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       declarationNumber: trim(declarationNumber) || null,
       importExportType: trim(importExportType) || null,
+      remarks: remarks ? trim(remarks) : null,
       metalRateUnit: metalRateUnit
         ? {
           rateType: trim(metalRateUnit.rateType),
@@ -575,7 +576,7 @@ export const updateMetalTransaction = async (req, res, next) => {
           taxableAmount: toNumber(itemTotal?.taxableAmount),
           itemTotalAmount: toNumber(itemTotal?.itemTotalAmount),
         },
-        remarks: trim(remarks) || "",
+        remarks: remarks ? trim(remarks) : null,
       };
     });
 
@@ -654,7 +655,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       supplierDate: toDate(supplierDate),
       declarationNumber: trim(declarationNumber) || null,
       importExportType: trim(importExportType) || null,
-      remarks: trim(remarks) || null,
+      remarks: remarks ? trim(remarks) : null,
       metalRateUnit: metalRateUnit
         ? {
           rateType: trim(metalRateUnit.rateType),

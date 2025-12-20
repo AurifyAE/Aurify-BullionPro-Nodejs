@@ -3,6 +3,7 @@ import Registry from "../../models/modules/Registry.js";
 
 import moment from "moment";
 import { log } from "console";
+import util from "util";
 import Inventory from "../../models/modules/inventory.js";
 import Account from "../../models/modules/AccountType.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
@@ -43,17 +44,17 @@ export class ReportService {
       // Validate and format input filters
       const validatedFilters = this.validateFilters(filters);
       console.log('Validated Filters====================================');
-      console.log(validatedFilters);
+      console.log(util.inspect(validatedFilters, { depth: null, colors: true, compact: false }));
       console.log('====================================');
       // Construct MongoDB aggregation pipeline
       const pipeline = this.buildAccountStatementPipeline(validatedFilters);
       console.log('Pipeline====================================');
-      console.log(pipeline);
+      console.log(util.inspect(pipeline, { depth: null, colors: true, compact: false }));
       console.log('====================================');
       // Execute aggregation query
       const reportData = await Registry.aggregate(pipeline);
       console.log('Report Data====================================');
-      console.log(reportData);
+      console.log(util.inspect(reportData, { depth: null, colors: true, compact: false }));
       console.log('====================================');
 
       // Format the retrieved data for response
