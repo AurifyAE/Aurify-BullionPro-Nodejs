@@ -83,6 +83,8 @@ export const deleteStockAdjustment = async (req, res, next) => {
         const { id } = req.params;
         const adminId = req.admin?.id;
 
+        console.log("in hereeeeeeeeeeeeeeeeeee")
+
         if (!adminId) {
             return res.status(401).json({ message: "Unauthorized" });
         }

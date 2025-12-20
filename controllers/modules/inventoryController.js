@@ -130,3 +130,54 @@ export const updateInventory = async (req, res, next) => {
     }
 };
 
+
+export const updateInventoryBatchWiseOpeningStock = async (req, res, next) => {
+    try {
+        const {
+            metalId,
+            grossWeight,
+            pieces,
+            purity,
+            pureWeight,
+            avgMakingRate: rawAvgMakingRate,
+            avgMakingAmount: rawAvgMakingAmount,
+            voucherDate,
+            voucher,
+            goldBidPrice,
+        } = req.body;
+
+        const avgMakingRate =
+            rawAvgMakingRate !== undefined && rawAvgMakingRate !== null && rawAvgMakingRate !== ""
+                ? parseFloat(rawAvgMakingRate)
+                : 0;
+
+        const avgMakingAmount =
+            rawAvgMakingAmount !== undefined && rawAvgMakingAmount !== null && rawAvgMakingAmount !== ""
+                ? parseFloat(rawAvgMakingAmount)
+                : 0;
+
+        const adminId = req.admin.id;
+
+        const updatedItem = await InventoryService.updateInventoryByFrontendInput({
+            metalId,
+            grossWeight,
+            pieces,
+            purity,
+            pureWeight,
+            avgMakingRate,
+            avgMakingAmount,
+            voucherDate,
+            voucher,
+            goldBidPrice,
+            adminId
+        });
+
+        res.status(200).json({
+            success: true,
+            message: "Inventory updated successfully",
+            data: updatedItem,
+        });
+    } catch (error) {
+        next(error);
+    }
+};

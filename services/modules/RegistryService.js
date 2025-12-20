@@ -161,7 +161,7 @@ class RegistryService {
     });
 
     const party = main.party;
-  
+
     // -----------------------------------------------------
     // 📌 FILTER OUT HEDGE REGISTRIES (reference starts with "H")
     // -----------------------------------------------------
@@ -1779,6 +1779,143 @@ class RegistryService {
       },
     };
   }
+
+  static async generateStockAdjustmentAuditTrail(stockTransactionId) {
+    if (!mongoose.Types.ObjectId.isValid(stockTransactionId)) return null;
+
+    const registries = await Registry.find({
+      transactionId: stockTransactionId,
+      isActive: true,
+    })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    if (!registries.length) return null;
+
+    const main = registries[0];
+    const entries = [];
+
+    let diffCash = 0;
+    let diffGold = 0;
+
+    for (const r of registries) {
+
+      // -------------------------
+      // MAKING CHARGES
+      // -------------------------
+      if (r.type === "MAKING_CHARGES") {
+        if (r.debit > 0) {
+          entries.push({
+            accCode: "INV001",
+            description: "Making Charges Debit",
+            currencyDebit: r.debit,
+            currencyCredit: 0,
+            metalDebit: 0,
+            metalCredit: 0,
+          });
+        }
+
+        if (r.credit > 0) {
+          entries.push({
+            accCode: "INV001",
+            description: "Making Charges Credit",
+            currencyDebit: 0,
+            currencyCredit: r.credit,
+            metalDebit: 0,
+            metalCredit: 0,
+          });
+        }
+      }
+
+      // -------------------------
+      // GOLD STOCK
+      // -------------------------
+      if (r.type === "GOLD_STOCK") {
+        if (r.goldDebit > 0) {
+          entries.push({
+            accCode: "INV001",
+            description: "Gold Stock Debit",
+            currencyDebit: 0,
+            currencyCredit: 0,
+            metalDebit: r.goldDebit,
+            metalCredit: 0,
+          });
+        }
+
+        if (r.goldCredit > 0) {
+          entries.push({
+            accCode: "INV001",
+            description: "Gold Stock Credit",
+            currencyDebit: 0,
+            currencyCredit: 0,
+            metalDebit: 0,
+            metalCredit: r.goldCredit,
+          });
+        }
+      }
+
+      // -------------------------
+      // STOCK DIFFERENCE
+      // -------------------------
+      if (r.type === "STOCK_ADJUSTMENT") {
+        diffCash += (r.debit || 0) - (r.credit || 0);
+        diffGold += (r.goldDebit || 0) - (r.goldCredit || 0);
+      }
+    }
+
+    // -------------------------
+    // FINAL STOCK DIFFERENCE ROW
+    // -------------------------
+    if (Math.abs(diffCash) > 0.0001 || Math.abs(diffGold) > 0.0001) {
+      entries.push({
+        accCode: "INV001",
+        description: "Stock Difference",
+        currencyDebit: diffCash < 0 ? Math.abs(diffCash) : 0,
+        currencyCredit: diffCash > 0 ? diffCash : 0,
+        metalDebit: diffGold > 0 ? diffGold : 0,
+        metalCredit: diffGold < 0 ? Math.abs(diffGold) : 0,
+      });
+    }
+
+    // -------------------------
+    // TOTALS
+    // -------------------------
+    const totals = entries.reduce(
+      (a, e) => {
+        a.currencyDebit += e.currencyDebit;
+        a.currencyCredit += e.currencyCredit;
+        a.metalDebit += e.metalDebit;
+        a.metalCredit += e.metalCredit;
+        return a;
+      },
+      { currencyDebit: 0, currencyCredit: 0, metalDebit: 0, metalCredit: 0 }
+    );
+
+    return {
+      metalTransactionId: null,
+      transactionId: main.transactionId,
+      reference: "STOCK-ADJ",
+      date: main.transactionDate,
+      party: {
+        name: "Inventory Adjustment",
+        code: "INVENTORY",
+      },
+      entries,
+      totals: {
+        currencyDebit: Number(totals.currencyDebit.toFixed(2)),
+        currencyCredit: Number(totals.currencyCredit.toFixed(2)),
+        metalDebit: Number(totals.metalDebit.toFixed(3)),
+        metalCredit: Number(totals.metalCredit.toFixed(3)),
+        currencyBalance: Number(
+          (totals.currencyDebit - totals.currencyCredit).toFixed(2)
+        ),
+        metalBalance: Number(
+          (totals.metalDebit - totals.metalCredit).toFixed(3)
+        ),
+      },
+    };
+  }
+
 }
 
 export default RegistryService;

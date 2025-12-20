@@ -208,6 +208,32 @@ export const getCashEntryAuditTrail = async (req, res, next) => {
   }
 };
 
+export const getStockAdjustmentAuditTrail = async (req, res, next) => {
+  try {
+    console.log(req.params)
+    const { stockAdjustmentId } = req.params;
+
+    const data =
+      await RegistryService.generateStockAdjustmentAuditTrail(stockAdjustmentId);
+
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        message: "No audit trail found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Registry audit trail retrieved successfully",
+      data,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+
 // Update registry
 export const updateRegistry = async (req, res, next) => {
   try {
@@ -791,8 +817,8 @@ export const getStatementByParty = async (req, res) => {
     const conversionRate =
       foreignCur && localCur
         ? (foreignCur.currency?.conversionRate ||
-            foreignCur.conversionRate ||
-            1) / (localCur.convertRate || 1)
+          foreignCur.conversionRate ||
+          1) / (localCur.convertRate || 1)
         : 1;
 
     res.status(200).json({
