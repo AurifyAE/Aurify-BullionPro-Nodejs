@@ -187,6 +187,20 @@ class RegistryService {
           currencyCredit: 0,
           metalDebit: 0,
           metalCredit: 0,
+          currencyBalance: 0,
+          metalBalance: 0,
+        },
+        sums: {
+          cash: {
+            debit: 0,
+            credit: 0,
+            balance: 0,
+          },
+          gold: {
+            debit: 0,
+            credit: 0,
+            balance: 0,
+          },
         },
       };
     }
@@ -281,6 +295,14 @@ class RegistryService {
     let partyGoldCredit = 0;
 
     // -----------------------------------------------------
+    // 📌 3.1) TOTAL CASH AND GOLD ACCUMULATORS (ALL ENTRIES)
+    // -----------------------------------------------------
+    let totalCashDebit = 0;
+    let totalCashCredit = 0;
+    let totalGoldDebit = 0;
+    let totalGoldCredit = 0;
+
+    // -----------------------------------------------------
     // 📌 4) PROCESS EACH VALID (NON-HEDGE) REGISTRY - GROUP BY TYPE
     // -----------------------------------------------------
     const transactionType = (main?.transactionType || "").toLowerCase();
@@ -326,33 +348,54 @@ class RegistryService {
 
       switch (mode) {
         case "party-cash":
-          partyCurrencyDebit += reg.debit || 0;
-          partyCurrencyCredit += reg.credit || 0;
+          const partyCashDr = reg.debit || 0;
+          const partyCashCr = reg.credit || 0;
+          partyCurrencyDebit += partyCashDr;
+          partyCurrencyCredit += partyCashCr;
+          // Track total cash
+          totalCashDebit += partyCashDr;
+          totalCashCredit += partyCashCr;
           break;
 
         case "party-gold":
-          partyGoldDebit += reg.debit || 0;
-          partyGoldCredit += reg.credit || 0;
+          const partyGoldDr = reg.debit || 0;
+          const partyGoldCr = reg.credit || 0;
+          partyGoldDebit += partyGoldDr;
+          partyGoldCredit += partyGoldCr;
+          // Track total gold
+          totalGoldDebit += partyGoldDr;
+          totalGoldCredit += partyGoldCr;
           break;
 
         case "combined":
-          addToGroup(
-            t,
-            desc,
-            accCode,
-            reg.cashDebit || 0,
-            reg.cashCredit || 0,
-            reg.goldDebit || 0,
-            reg.goldCredit || 0
-          );
+          const cashDr = reg.cashDebit || 0;
+          const cashCr = reg.cashCredit || 0;
+          const goldDr = reg.goldDebit || 0;
+          const goldCr = reg.goldCredit || 0;
+          // Track total cash and gold
+          totalCashDebit += cashDr;
+          totalCashCredit += cashCr;
+          totalGoldDebit += goldDr;
+          totalGoldCredit += goldCr;
+          addToGroup(t, desc, accCode, cashDr, cashCr, goldDr, goldCr);
           break;
 
         case "gold-only":
-          addToGroup(t, desc, accCode, 0, 0, reg.debit || 0, reg.credit || 0);
+          const goldOnlyDr = reg.debit || 0;
+          const goldOnlyCr = reg.credit || 0;
+          // Track total gold
+          totalGoldDebit += goldOnlyDr;
+          totalGoldCredit += goldOnlyCr;
+          addToGroup(t, desc, accCode, 0, 0, goldOnlyDr, goldOnlyCr);
           break;
 
         case "cash-only":
-          addToGroup(t, desc, accCode, reg.debit || 0, reg.credit || 0, 0, 0);
+          const cashOnlyDr = reg.debit || 0;
+          const cashOnlyCr = reg.credit || 0;
+          // Track total cash
+          totalCashDebit += cashOnlyDr;
+          totalCashCredit += cashOnlyCr;
+          addToGroup(t, desc, accCode, cashOnlyDr, cashOnlyCr, 0, 0);
           break;
 
         default:
@@ -416,8 +459,15 @@ class RegistryService {
       if (Math.abs(value) < 0.5) return 0; // treat small numbers as zero
       return Number(value.toFixed(decimals));
     }
+    
     // -----------------------------------------------------
-    // 📌 7) FINAL RETURN RESPONSE
+    // 📌 7) CALCULATE CASH AND GOLD SUMS
+    // -----------------------------------------------------
+    const cashBalance = totalCashDebit - totalCashCredit;
+    const goldBalance = totalGoldDebit - totalGoldCredit;
+    
+    // -----------------------------------------------------
+    // 📌 8) FINAL RETURN RESPONSE
     // -----------------------------------------------------
     return {
       metalTransactionId,
@@ -436,6 +486,18 @@ class RegistryService {
         metalCredit: Number(totals.metalCredit.toFixed(3)),
         currencyBalance: normalizeBalance(currencyBalance, 2),
         metalBalance: normalizeBalance(metalBalance, 3),
+      },
+      sums: {
+        cash: {
+          debit: Number(totalCashDebit.toFixed(2)),
+          credit: Number(totalCashCredit.toFixed(2)),
+          balance: normalizeBalance(cashBalance, 2),
+        },
+        gold: {
+          debit: Number(totalGoldDebit.toFixed(3)),
+          credit: Number(totalGoldCredit.toFixed(3)),
+          balance: normalizeBalance(goldBalance, 3),
+        },
       },
     };
   }

@@ -13,7 +13,7 @@ import FixingPrice from "../../models/modules/FixingPrice.js";
 import { generateHedgeVoucherNumber } from "../../utils/hedgeVoucher.js";
 import TransactionFixing from "../../models/modules/TransactionFixing.js";
 import DealOrderService from "./dealOrderService.js";
-  
+
 dotenv.config();
 const generateUniqueTransactionId = async (prefix) => {
   let id, exists;
@@ -185,8 +185,8 @@ class MetalTransactionService {
         500,
         "DELETE_TransactionFixing_FAILED"
       );
-    } 
-  } 
+    }
+  }
 
   static async deleteStcoks(voucherCode) {
     try {
@@ -285,6 +285,48 @@ class MetalTransactionService {
   }
 
   /**
+   * Helper function to extract remarks from item (handles Mongoose subdocuments)
+   */
+  static getItemRemarks(item) {
+    if (!item) return null;
+    // Handle Mongoose subdocument
+    if (item.get && typeof item.get === 'function') {
+      return item.get('remarks') || null;
+    }
+    // Handle plain object
+    return item.remarks || null;
+  }
+
+  /**
+   * Helper function to format description with remarks
+   * For PARTY entries: return transaction remarks only
+   * For other entries: return stock item remarks only
+   */
+  static formatDescriptionWithRemarks(baseDescription, isPartyEntry, transactionRemarks, itemRemarks) {
+    if (isPartyEntry) {
+      // For PARTY entries, return transaction remarks only
+      if (transactionRemarks && typeof transactionRemarks === 'string' && transactionRemarks.trim()) {
+        return transactionRemarks.trim();
+      }
+      // If no transaction remarks, return empty string
+      return "";
+    } else {
+      // For non-PARTY entries, return stock item remarks only
+      // Handle both string (item?.remarks) and item object cases
+      let remarks = itemRemarks;
+      if (itemRemarks && typeof itemRemarks === 'object' && !Array.isArray(itemRemarks)) {
+        // If itemRemarks is the item object itself, extract remarks
+        remarks = this.getItemRemarks(itemRemarks);
+      }
+      if (remarks && typeof remarks === 'string' && remarks.trim()) {
+        return remarks.trim();
+      }
+      // If no item remarks, return empty string
+      return "";
+    }
+  }
+
+  /**
    * Helper function to aggregate PARTY entries by type
    * Sums all numeric fields and keeps metadata from the first entry
    */
@@ -306,7 +348,7 @@ class MetalTransactionService {
       } else {
         // Aggregate with existing entry
         const existing = entriesByType.get(key);
-      
+
         // Sum numeric fields
         existing.value = (existing.value || 0) + (entry.value || 0);
         existing.credit = (existing.credit || 0) + (entry.credit || 0);
@@ -317,7 +359,7 @@ class MetalTransactionService {
         existing.goldCredit = (existing.goldCredit || 0) + (entry.goldCredit || 0);
         existing.grossWeight = (existing.grossWeight || 0) + (entry.grossWeight || 0);
         existing.pureWeight = (existing.pureWeight || 0) + (entry.pureWeight || 0);
-        
+
         // Keep goldBidValue from first entry (all items in transaction have same goldBidValue)
         // If existing doesn't have goldBidValue, use the entry's value
         if (!existing.goldBidValue && entry.goldBidValue) {
@@ -397,15 +439,16 @@ class MetalTransactionService {
       otherCharges = [],
       itemCurrency,
       dealOrderId,
+      remarks: transactionRemarks, // Main transaction remarks for PARTY entries
     } = transaction;
     let hedgeVoucherNo = transaction.hedgeVoucherNumber;
 
     // Generate ONLY if hedge=true and not already generated
     if (hedge && !hedgeVoucherNo) {
       // For hedgeMetalPayment and hedgeMetalReceipt, use the same voucher as the transaction
-      if (transactionType === "hedgeMetalPayment" || 
-          transactionType === "hedgeMetalReceipt" || 
-          transactionType === "hedgeMetalReciept") {
+      if (transactionType === "hedgeMetalPayment" ||
+        transactionType === "hedgeMetalReceipt" ||
+        transactionType === "hedgeMetalReciept") {
         // Use the transaction's own voucher number instead of generating a separate hedge voucher
         hedgeVoucherNo = transaction.voucherNumber;
         console.log(`Using transaction voucher for hedge: ${hedgeVoucherNo}`);
@@ -459,7 +502,8 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             dealOrderId,
-            false // skipHedgeEntry - individual items skip hedge
+            false, // skipHedgeEntry - individual items skip hedge
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
 
           itemEntries = purchaseEntries || [];
@@ -483,7 +527,8 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             dealOrderId,
-            false // skipHedgeEntry
+            false, // skipHedgeEntry
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
           itemEntries = saleEntries || [];
           break;
@@ -506,7 +551,8 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             dealOrderId,
-            false // skipHedgeEntry
+            false, // skipHedgeEntry
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
           itemEntries = purchaseReturnEntries || [];
           break;
@@ -529,7 +575,8 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             dealOrderId,
-            false // skipHedgeEntry
+            false, // skipHedgeEntry
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
           itemEntries = saleReturnEntries || [];
           break;
@@ -552,7 +599,8 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             null, // dealOrderId
-            false // skipHedgeEntry
+            false, // skipHedgeEntry
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
 
           itemEntries = importPurchase || [];
@@ -576,7 +624,8 @@ class MetalTransactionService {
               otherCharges,
               hedgeVoucherNo,
               itemCurrency,
-              false // skipHedgeEntry
+              false, // skipHedgeEntry
+              transactionRemarks // Pass transaction remarks for PARTY entries
             );
           itemEntries = importPurchaseReturnEntries || [];
           break;
@@ -598,7 +647,8 @@ class MetalTransactionService {
             otherCharges,
             hedgeVoucherNo,
             itemCurrency,
-            false // skipHedgeEntry
+            false, // skipHedgeEntry
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
           itemEntries = exportSale || [];
           break;
@@ -621,7 +671,8 @@ class MetalTransactionService {
               otherCharges,
               hedgeVoucherNo,
               itemCurrency,
-              false // skipHedgeEntry
+              false, // skipHedgeEntry
+              transactionRemarks // Pass transaction remarks for PARTY entries
             );
           itemEntries = exportSaleReturnEntries || [];
           break;
@@ -645,7 +696,8 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             dealOrderId,
-            false // skipHedgeEntry
+            false, // skipHedgeEntry
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
           itemEntries = hedgeMetalPaymentEntries || [];
           break;
@@ -670,7 +722,8 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             dealOrderId,
-            false // skipHedgeEntry - individual items skip hedge
+            false, // skipHedgeEntry - individual items skip hedge
+            transactionRemarks // Pass transaction remarks for PARTY entries
           );
           itemEntries = hedgeMetalReceiptEntries || [];
           break;
@@ -682,7 +735,7 @@ class MetalTransactionService {
       if (itemEntries && itemEntries.length > 0) {
         itemEntries.forEach((entry) => {
           if (!entry) return;
-          
+
           // CRITICAL: Skip PARTY_HEDGE_ENTRY per item completely
           // These will be created once after the loop with summed totals from all items
           if (entry.type === "PARTY_HEDGE_ENTRY") {
@@ -690,7 +743,7 @@ class MetalTransactionService {
             // It will be created once after aggregation with summed totals
             return;
           }
-          
+
           // CRITICAL: PURITY_DIFFERENCE entries must remain per-item (not aggregated)
           // Each stock item has its own purity difference entry
           if (entry.type === "PURITY_DIFFERENCE") {
@@ -698,7 +751,7 @@ class MetalTransactionService {
             entries.push(entry);
             return;
           }
-          
+
           // Collect all other PARTY entries for aggregation
           if (this.isPartyEntry(entry)) {
             partyEntries.push(entry);
@@ -717,9 +770,9 @@ class MetalTransactionService {
       // Ensure hedge voucher number is generated if not already set
       if (!hedgeVoucherNo) {
         // For hedgeMetalPayment and hedgeMetalReceipt, use the same voucher as the transaction
-        if (transactionType === "hedgeMetalPayment" || 
-            transactionType === "hedgeMetalReceipt" || 
-            transactionType === "hedgeMetalReciept") {
+        if (transactionType === "hedgeMetalPayment" ||
+          transactionType === "hedgeMetalReceipt" ||
+          transactionType === "hedgeMetalReciept") {
           // Use the transaction's own voucher number instead of generating a separate hedge voucher
           hedgeVoucherNo = transaction.voucherNumber;
           console.log(`Using transaction voucher for hedge: ${hedgeVoucherNo}`);
@@ -735,7 +788,7 @@ class MetalTransactionService {
 
         console.log(`Hedge Voucher Created (in hedge section): ${hedgeVoucherNo}`);
       }
-      
+
       // Get transaction type for hedge
       let hedgeTransactionType = "Purchase";
       if (transactionType === "sale") hedgeTransactionType = "Sale";
@@ -769,6 +822,7 @@ class MetalTransactionService {
         metalTransactionId: transaction._id,
         party,
         totals: sumTotals,
+        transactionRemarks: transactionRemarks, // Pass transaction remarks for PARTY entries
         voucherDate,
         voucherNumber,
         hedgeVoucherNo,
@@ -833,23 +887,23 @@ class MetalTransactionService {
     // Separate PARTY entries from non-PARTY entries
     const finalPartyEntries = [];
     const finalNonPartyEntries = [];
-    
+
     entries.forEach(entry => {
       if (!entry) return;
-      
+
       // PURITY_DIFFERENCE entries must remain per-item (not aggregated)
       if (entry.type === "PURITY_DIFFERENCE") {
         finalNonPartyEntries.push(entry);
         return;
       }
-      
+
       if (this.isPartyEntry(entry)) {
         finalPartyEntries.push(entry);
       } else {
         finalNonPartyEntries.push(entry);
       }
     });
-    
+
     // If there are any PARTY entries in the final array, aggregate them
     // This ensures that even if some PARTY entries slipped through earlier, they get aggregated now
     if (finalPartyEntries.length > 0) {
@@ -872,6 +926,7 @@ class MetalTransactionService {
     hedgeVoucherNo,
     adminId,
     dealOrderId = null,
+    transactionRemarks = null, // Transaction remarks for PARTY entries
   }) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -906,7 +961,7 @@ class MetalTransactionService {
       .toLowerCase()
       .replace(/\s+/g, "-");
 
-    const groupA = ["purchase", "salereturn", "importpurchase", "exportsalereturn","hedgemetalreceipt"];
+    const groupA = ["purchase", "salereturn", "importpurchase", "exportsalereturn", "hedgemetalreceipt"];
     const isGroupA = groupA.includes(normalizedTypeKey);
 
     const FX = {
@@ -923,7 +978,12 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           fixingEntryType,
-          `Party gold balance - ${transactionType} from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party gold balance - ${transactionType} from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            null // No item remarks for aggregated hedge entries
+          ),
           party._id,
           true,
           totals.pureWeight,
@@ -950,7 +1010,12 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           fixingEntryType,
-          `Party gold balance - ${transactionType} to ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party gold balance - ${transactionType} to ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            null // No item remarks for aggregated hedge entries
+          ),
           party._id,
           true,
           totals.pureWeight,
@@ -978,7 +1043,12 @@ class MetalTransactionService {
         metalTransactionId,
         "001",
         "PARTY_HEDGE_ENTRY",
-        `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
+        this.formatDescriptionWithRemarks(
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
+          true, // isPartyEntry
+          transactionRemarks,
+          null // No item remarks for aggregated hedge entries
+        ),
         party._id,
         false,
         totals.pureWeight,
@@ -1011,9 +1081,14 @@ class MetalTransactionService {
         metalTransactionId,
         "001",
         "PARTY_CASH_BALANCE",
-        isGroupA
-          ? `Party cash balance credited — Gold ${normalizedTransactionType} from ${partyName} at bid value ${totals.bidValue}`
-          : `Party cash balance credited — Gold ${normalizedTransactionType} to ${partyName} at bid value ${totals.bidValue}`,
+        this.formatDescriptionWithRemarks(
+          isGroupA
+            ? `Party cash balance credited — Gold ${normalizedTransactionType} from ${partyName} at bid value ${totals.bidValue}`
+            : `Party cash balance credited — Gold ${normalizedTransactionType} to ${partyName} at bid value ${totals.bidValue}`,
+          true, // isPartyEntry
+          transactionRemarks,
+          null // No item remarks for aggregated hedge entries
+        ),
         party._id,
         false,
         totals.goldValue,
@@ -1047,7 +1122,12 @@ class MetalTransactionService {
         metalTransactionId,
         "001",
         "HEDGE_ENTRY",
-        `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
+        this.formatDescriptionWithRemarks(
+          `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
+          false, // isPartyEntry - use item remarks (but null for aggregated)
+          transactionRemarks,
+          null // No item remarks for aggregated hedge entries
+        ),
         party._id,
         false,
         totals.pureWeight,
@@ -1160,7 +1240,12 @@ class MetalTransactionService {
           metalTransactionId,
           "012",
           "PARTY_CASH_BALANCE",
-          `Round off adjustment - ${transactionType} from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Round off adjustment - ${transactionType} from ${partyName}`,
+            true, // isPartyEntry
+            null, // transactionRemarks - round off doesn't have remarks
+            null // itemRemarks
+          ),
           party._id,
           false,
           absRoundOff,
@@ -1188,7 +1273,12 @@ class MetalTransactionService {
           metalTransactionId,
           "013",
           "DISCOUNT_ON_SALES/PURCHASE",
-          `Discount on ${transactionType} - Round off from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Discount on ${transactionType} - Round off from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            null, // transactionRemarks - round off doesn't have remarks
+            null // itemRemarks
+          ),
           party._id,
           false,
           absRoundOff,
@@ -1263,14 +1353,14 @@ class MetalTransactionService {
     ];
     const prefix =
       transactionType === "Purchase" ||
-      transactionType === "Import-Purchase-Return" ||
-      transactionType === "Purchase-Return" ||
-      transactionType === "Hedge-Metal-Receipt" ||
-      transactionType === "Hedge-Metal-Reciept"
+        transactionType === "Import-Purchase-Return" ||
+        transactionType === "Purchase-Return" ||
+        transactionType === "Hedge-Metal-Receipt" ||
+        transactionType === "Hedge-Metal-Reciept"
         ? "HSM"
         : "HPM";
     const transactionId = await generateUniqueTransactionId(prefix);
-    
+
     // Determine hedge type: always set opposite of the original type
     // For returns, use return hedge types
     let hedgeType;
@@ -1352,7 +1442,8 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     dealOrderId = null,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     console.log(itemCurrency);
     let transactionType = "Purchase";
@@ -1389,7 +1480,8 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       )
       : this.buildPurchaseUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1406,7 +1498,8 @@ class MetalTransactionService {
         totalSummary, // 12
         otherCharges, // 13
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       );
   }
 
@@ -1427,7 +1520,8 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     dealOrderId = null,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     console.log(itemCurrency);
     let transactionType = "Import-Purchase";
@@ -1464,7 +1558,8 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       )
       : this.buildImportPurchaseUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1481,7 +1576,8 @@ class MetalTransactionService {
         totalSummary, // 12
         otherCharges, // 13
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       );
   }
 
@@ -1501,7 +1597,8 @@ class MetalTransactionService {
     otherCharges = [],
     hedgeVoucherNo,
     itemCurrency,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     let transactionType = "Sale";
     if (mode === "fix") {
@@ -1536,7 +1633,8 @@ class MetalTransactionService {
         partyCurrency,
         totalSummary,
         otherCharges,
-        transactionType
+        transactionType,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       )
       : this.buildExportSaleUnfixEntries(
         hedgeVoucherNo,
@@ -1552,7 +1650,8 @@ class MetalTransactionService {
         partyCurrency,
         totalSummary,
         otherCharges,
-        transactionType
+        transactionType,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       );
   }
 
@@ -1573,7 +1672,8 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     dealOrderId = null,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     let transactionType = "Sale";
     if (mode === "fix") {
@@ -1609,7 +1709,7 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        dealOrderId
+        transactionRemarks // Pass transaction remarks for PARTY entries
       )
       : this.buildSaleUnfixEntries(
         hedgeVoucherNo,
@@ -1626,7 +1726,8 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       );
   }
 
@@ -1646,7 +1747,8 @@ class MetalTransactionService {
     otherCharges = [],
     hedgeVoucherNo,
     itemCurrency,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     let transactionType = "Import-Purchase-Return";
     if (mode === "fix") {
@@ -1716,7 +1818,8 @@ class MetalTransactionService {
     otherCharges = [],
     hedgeVoucherNo,
     itemCurrency,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     console.log(itemCurrency);
     let transactionType = "Export-Sale-Return";
@@ -1789,7 +1892,8 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     dealOrderId = null,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     let transactionType = "Purchase-Return";
     if (mode === "fix") {
@@ -1824,7 +1928,8 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       )
       : this.buildPurchaseReturnUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1841,7 +1946,8 @@ class MetalTransactionService {
         totalSummary, // 12
         otherCharges, // 13
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       );
   }
 
@@ -1862,7 +1968,8 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     dealOrderId = null,
-    skipHedgeEntry = true // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     console.log(itemCurrency);
     let transactionType = "Sale-Return";
@@ -1899,7 +2006,8 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       )
       : this.buildSaleReturnUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1916,7 +2024,8 @@ class MetalTransactionService {
         totalSummary, // 12
         otherCharges, // 13
         transactionType,
-        dealOrderId
+        dealOrderId,
+        transactionRemarks // Pass transaction remarks for PARTY entries
       );
   }
 
@@ -1933,7 +2042,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     transactionType,
-    dealOrderId = null
+    dealOrderId = null,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -1956,7 +2066,12 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           "purchase-fixing",
-          `Party gold balance - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party gold balance - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.pureWeight,
@@ -1987,7 +2102,12 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "PARTY_CASH_BALANCE",
-          `Party cash balance - Gold purchase from ${partyName} at bid ${totals.bidValue}`,
+          this.formatDescriptionWithRemarks(
+            `Party cash balance - Gold purchase from ${partyName} at bid ${totals.bidValue}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.goldValue,
@@ -2018,7 +2138,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party making charges - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -2044,7 +2169,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "MAKING_CHARGES",
-          `Making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -2075,7 +2205,12 @@ class MetalTransactionService {
           metalTransactionId,
           "010",
           "FX_EXCHANGE",
-          `Foreign Exchange Gain - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Gain - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.FXGain,
@@ -2104,7 +2239,12 @@ class MetalTransactionService {
           metalTransactionId,
           "011",
           "FX_EXCHANGE",
-          `Foreign Exchange Loss - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Loss - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.FXLoss,
@@ -2256,7 +2396,12 @@ class MetalTransactionService {
           metalTransactionId,
           "009",
           "PARTY_VAT_AMOUNT",
-          `Party VAT amount - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party VAT amount - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.vatAmount,
@@ -2282,7 +2427,12 @@ class MetalTransactionService {
           metalTransactionId,
           "009",
           "VAT_AMOUNT",
-          `VAT amount - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `VAT amount - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.vatAmount,
@@ -2313,7 +2463,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party premium - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.premium,
@@ -2338,7 +2493,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Premium - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Premium - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.premium,
@@ -2366,7 +2526,12 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party discount - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.discount,
@@ -2392,7 +2557,12 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Discount - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Discount - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.discount,
@@ -2422,7 +2592,12 @@ class MetalTransactionService {
           metalTransactionId,
           "004",
           "GOLD",
-          `Gold inventory - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Gold inventory - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           null,
           true,
           totals.pureWeightStd,
@@ -2465,8 +2640,13 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          this.formatDescriptionWithRemarks(
+            `Purity difference - Purchase Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+            } ${diff})`,
+            false, // isPartyEntry - use item remarks (PURITY_DIFFERENCE is per-item)
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           isDebit,
           absDiff,
@@ -2504,7 +2684,12 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Gold stock - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           null,
           true,
           totals.pureWeightStd,
@@ -2544,7 +2729,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     transactionType,
-    dealOrderId = null
+    dealOrderId = null,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -2568,7 +2754,12 @@ class MetalTransactionService {
             metalTransactionId,
             "001",
             "PARTY_GOLD_BALANCE",
-            `Party gold balance — ${totals.pureWeight}g gold at bid ${totals.bidValue} USD/oz`,
+            this.formatDescriptionWithRemarks(
+              `Party gold balance — ${totals.pureWeight}g gold at bid ${totals.bidValue} USD/oz`,
+              true, // isPartyEntry
+              transactionRemarks,
+              this.getItemRemarks(item)
+            ),
             party._id,
             false,
             totals.pureWeight,
@@ -2604,7 +2795,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party making charges - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -2630,7 +2826,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "MAKING_CHARGES",
-          `Making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -2783,7 +2984,12 @@ class MetalTransactionService {
           metalTransactionId,
           "009",
           "PARTY_VAT_AMOUNT",
-          `Party VAT amount - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party VAT amount - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.vatAmount,
@@ -2809,7 +3015,12 @@ class MetalTransactionService {
           metalTransactionId,
           "009",
           "VAT_AMOUNT",
-          `VAT amount - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `VAT amount - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.vatAmount,
@@ -2953,7 +3164,12 @@ class MetalTransactionService {
           metalTransactionId,
           "004",
           "GOLD",
-          `Gold inventory - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Gold inventory - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           null,
           true,
           totals.pureWeight,
@@ -2975,7 +3191,7 @@ class MetalTransactionService {
       );
     }
 
-     // ------------------------------
+    // ------------------------------
     // 9) PURITY DIFFERENCE — MAIN UPDATE
     // ------------------------------
     if (
@@ -2993,8 +3209,13 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+          this.formatDescriptionWithRemarks(
+            `Purity difference - Purchase to ${partyName} (${diff > 0 ? "Gain" : "Loss"
           } ${diff})`,
+            false, // isPartyEntry - use item remarks (PURITY_DIFFERENCE is per-item)
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           isDebit,
           absDiff,
@@ -3027,7 +3248,12 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Gold stock - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.pureWeightStd,
@@ -3065,7 +3291,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     transactionType,
-    dealOrderId = null
+    dealOrderId = null,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -3087,7 +3314,12 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           "purchase-fixing",
-          `Party gold balance - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party gold balance - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.pureWeight,
@@ -3118,7 +3350,12 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "PARTY_CASH_BALANCE",
-          `Party cash balance -  Gold purchase from ${partyName} at a bid value of ${totals.bidValue}`,
+          this.formatDescriptionWithRemarks(
+            `Party cash balance -  Gold purchase from ${partyName} at a bid value of ${totals.bidValue}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.goldValue,
@@ -3148,7 +3385,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party making charges - Purchase from ${partyName}`,
+            true, // isPartyEntry - use transaction remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -3173,7 +3415,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "MAKING_CHARGES",
-          `Making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -3204,7 +3451,12 @@ class MetalTransactionService {
           metalTransactionId,
           "010",
           "FX_EXCHANGE",
-          `Foreign Exchange Gain - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Gain - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.FXGain,
@@ -3237,7 +3489,12 @@ class MetalTransactionService {
           metalTransactionId,
           "011",
           "FX_EXCHANGE",
-          `Foreign Exchange Loss - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Loss - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.FXLoss,
@@ -3274,7 +3531,12 @@ class MetalTransactionService {
               metalTransactionId,
               "009",
               "OTHER-CHARGE",
-              `${description || "Other Charge"} - Debit`,
+              this.formatDescriptionWithRemarks(
+                `${description || "Other Charge"} - Debit`,
+                false, // isPartyEntry - use item remarks
+                transactionRemarks,
+                this.getItemRemarks(item)
+              ),
               debit.account,
               false,
               debit.baseCurrency,
@@ -3300,7 +3562,12 @@ class MetalTransactionService {
               metalTransactionId,
               "007",
               "OTHER-CHARGE",
-              `${description || "Other Charge"} - Credit`,
+              this.formatDescriptionWithRemarks(
+                `${description || "Other Charge"} - Credit`,
+                false, // isPartyEntry - use item remarks
+                transactionRemarks,
+                this.getItemRemarks(item)
+              ),
               credit.account,
               false,
               credit.baseCurrency,
@@ -3330,7 +3597,12 @@ class MetalTransactionService {
                 metalTransactionId,
                 "093",
                 "OTHER-CHARGE",
-                `${vatDescription} - Debit`,
+                this.formatDescriptionWithRemarks(
+                  `${vatDescription} - Debit`,
+                  false, // isPartyEntry - use item remarks
+                  transactionRemarks,
+                  this.getItemRemarks(item)
+                ),
                 debit.account,
                 false,
                 vatDetails.vatAmount,
@@ -3356,7 +3628,12 @@ class MetalTransactionService {
                 metalTransactionId,
                 "093",
                 "OTHER-CHARGE",
-                `${vatDescription} - Credit`,
+                this.formatDescriptionWithRemarks(
+                  `${vatDescription} - Credit`,
+                  false, // isPartyEntry - use item remarks
+                  transactionRemarks,
+                  this.getItemRemarks(item)
+                ),
                 credit.account,
                 false,
                 vatDetails.vatAmount,
@@ -3393,7 +3670,12 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "PARTY_VAT_AMOUNT",
-            `Party VAT amount - Purchase from ${partyName}`,
+            this.formatDescriptionWithRemarks(
+              `Party VAT amount - Purchase from ${partyName}`,
+              true, // isPartyEntry
+              transactionRemarks,
+              this.getItemRemarks(item)
+            ),
             party._id,
             false,
             totals.vatAmount,
@@ -3419,7 +3701,12 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `VAT amount - Purchase from ${partyName}`,
+            this.formatDescriptionWithRemarks(
+              `VAT amount - Purchase from ${partyName}`,
+              false, // isPartyEntry - use item remarks
+              transactionRemarks,
+              this.getItemRemarks(item)
+            ),
             party._id,
             true,
             totals.vatAmount,
@@ -3451,7 +3738,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party premium - Purchase from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.premium,
@@ -3476,7 +3768,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Premium - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.premium,
@@ -3560,7 +3857,12 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD",
-          `Gold inventory - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Gold inventory - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           null,
           true,
           totals.pureWeightStd,
@@ -3600,8 +3902,13 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase to ${partyName} (${diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          this.formatDescriptionWithRemarks(
+            `Purity difference - Purchase to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+            } ${diff})`,
+            false, // isPartyEntry - use item remarks (PURITY_DIFFERENCE is per-item)
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           isDebit,
           absDiff,
@@ -3635,7 +3942,12 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "GOLD_STOCK",
-          `Gold stock -  Purchase return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Gold stock - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           null,
           true,
           totals.pureWeightStd,
@@ -3675,7 +3987,8 @@ class MetalTransactionService {
     totalSummary, // 12
     otherCharges, // 13
     transactionType,
-    dealOrderId = null
+    dealOrderId = null,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -3699,7 +4012,12 @@ class MetalTransactionService {
             metalTransactionId,
             "001",
             "PARTY_GOLD_BALANCE",
-            `Party gold balance — ${totals.pureWeight}g gold at bid ${totals.bidValue} USD/oz`,
+            this.formatDescriptionWithRemarks(
+              `Party gold balance — ${totals.pureWeight}g gold at bid ${totals.bidValue} USD/oz`,
+              true, // isPartyEntry
+              transactionRemarks,
+              this.getItemRemarks(item)
+            ),
             party._id,
             false,
             totals.pureWeight,
@@ -3734,7 +4052,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party making charges - Purchase from ${partyName}`,
+            true, // isPartyEntry - use transaction remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -3759,7 +4082,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "MAKING_CHARGES",
-          `Making charges - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -4713,7 +5041,7 @@ class MetalTransactionService {
       );
     }
 
-      // ======================
+    // ======================
     // 8) PURITY DIFFERENCE
     // ======================
 
@@ -5513,7 +5841,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges,
     transactionType,
-    dealOrderId
+    dealOrderId,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -5536,7 +5865,12 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           "purchase-fixing",
-          `Party gold balance - Purchase return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party gold balance - Purchase return from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.pureWeight,
@@ -5567,7 +5901,12 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "PARTY_CASH_BALANCE",
-          `Party cash balance - Purchase return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party cash balance - Purchase return from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.goldValue,
@@ -5599,7 +5938,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_MAKING_CHARGES",
-          `Making charges - Purchase return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party making charges - Purchase return from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -5626,7 +5970,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "MAKING_CHARGES",
-          `Party making charges - Purchase return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Purchase return from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -5657,7 +6006,12 @@ class MetalTransactionService {
           metalTransactionId,
           "010",
           "FX_EXCHANGE",
-          `Foreign Exchange Gain - Purchase return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Gain - Purchase return from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.FXGain,
@@ -5686,7 +6040,12 @@ class MetalTransactionService {
           metalTransactionId,
           "011",
           "FX_EXCHANGE",
-          `Foreign Exchange Loss - Purchase return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Loss - Purchase return from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.FXLoss,
@@ -6055,8 +6414,13 @@ class MetalTransactionService {
           metalTransactionId,
           "006",
           "PURITY_DIFFERENCE",
-          `Purity difference - Purchase Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
-          } ${diff})`,
+          this.formatDescriptionWithRemarks(
+            `Purity difference - Purchase Return to ${partyName} (${diff > 0 ? "Gain" : "Loss"
+            } ${diff})`,
+            false, // isPartyEntry - use item remarks (PURITY_DIFFERENCE is per-item)
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           isDebit,
           absDiff,
@@ -6094,7 +6458,12 @@ class MetalTransactionService {
           metalTransactionId,
           "005",
           "GOLD_STOCK",
-          `Gold stock - Purchase from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Gold stock - Purchase from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.pureWeightStd,
@@ -6133,7 +6502,8 @@ class MetalTransactionService {
     totalSummary, // 12
     otherCharges, // 13
     transactionType,
-    dealOrderId
+    dealOrderId,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -6832,7 +7202,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges = [],
-    transactionType
+    transactionType,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -6854,7 +7225,12 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           "sales-fixing",
-          `Party gold balance - Export Sale to ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party gold balance - Export Sale to ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.pureWeight,
@@ -6885,7 +7261,12 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "PARTY_CASH_BALANCE",
-          `Party cash balance - Export Sale to ${partyName} at bid ${totals.bidValue}`,
+          this.formatDescriptionWithRemarks(
+            `Party cash balance - Export Sale to ${partyName} at bid ${totals.bidValue}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.goldValue,
@@ -6917,7 +7298,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_MAKING_CHARGES",
-          `Making charges - Export Sale to ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Export Sale to ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -6944,7 +7330,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "MAKING_CHARGES",
-          `Party making charges - Export Sale to ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party making charges - Export Sale to ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -6974,7 +7365,12 @@ class MetalTransactionService {
           metalTransactionId,
           "010",
           "FX_EXCHANGE",
-          `Foreign Exchange Gain - Export Sale to ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Gain - Export Sale to ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.FXGain,
@@ -7003,7 +7399,12 @@ class MetalTransactionService {
           metalTransactionId,
           "011",
           "FX_EXCHANGE",
-          `Foreign Exchange Loss - Export Sale to ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Loss - Export Sale to ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.FXLoss,
@@ -7443,7 +7844,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges = [],
-    transactionType
+    transactionType,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -7611,7 +8013,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_MAKING_CHARGES",
-          `Making charges - Export Sale Unfix from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Export Sale Unfix from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -7638,7 +8045,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "MAKING_CHARGES",
-          `Making charges - Export Sale Unfix for ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Export Sale Unfix for ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -7668,7 +8080,12 @@ class MetalTransactionService {
           metalTransactionId,
           "010",
           "FX_EXCHANGE",
-          `FX Gain - Export Sale Unfix from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `FX Gain - Export Sale Unfix from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.FXGain,
@@ -7696,7 +8113,12 @@ class MetalTransactionService {
           metalTransactionId,
           "011",
           "FX_EXCHANGE",
-          `FX Loss - Export Sale Unfix from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `FX Loss - Export Sale Unfix from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.FXLoss,
@@ -8134,7 +8556,8 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges,
-    transactionType
+    transactionType,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -8749,7 +9172,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges,
     transactionType,
-    dealOrderId = null
+    dealOrderId = null,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -10594,7 +11018,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     transactionType,
-    dealOrderId = null
+    dealOrderId = null,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -11226,7 +11651,8 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     transactionType,
-    dealOrderId = null
+    dealOrderId = null,
+    transactionRemarks = null // Transaction remarks for PARTY entries
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -11249,7 +11675,12 @@ class MetalTransactionService {
           metalTransactionId,
           "PARTY-GOLD",
           "sale-fixing",
-          `Party gold balance - Sale return to ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party gold balance - Sale return to ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.pureWeight,
@@ -11279,7 +11710,12 @@ class MetalTransactionService {
           metalTransactionId,
           "001",
           "PARTY_CASH_BALANCE",
-          `Party cash balance - Gold Sale return to ${partyName} `,
+          this.formatDescriptionWithRemarks(
+            `Party cash balance - Gold Sale return to ${partyName} `,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.goldValue,
@@ -11310,7 +11746,12 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Sale return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Party making charges - Sale return from ${partyName}`,
+            true, // isPartyEntry
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.makingCharges,
@@ -11336,7 +11777,12 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "MAKING_CHARGES",
-          `Making charges - Sale return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Making charges - Sale return from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.makingCharges,
@@ -11367,7 +11813,12 @@ class MetalTransactionService {
           metalTransactionId,
           "010",
           "FX_EXCHANGE",
-          `Foreign Exchange Gain - Sale return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Gain - Sale return from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           false,
           totals.FXGain,
@@ -11396,7 +11847,12 @@ class MetalTransactionService {
           metalTransactionId,
           "011",
           "FX_EXCHANGE",
-          `Foreign Exchange Loss - Sale return from ${partyName}`,
+          this.formatDescriptionWithRemarks(
+            `Foreign Exchange Loss - Sale return from ${partyName}`,
+            false, // isPartyEntry - use item remarks
+            transactionRemarks,
+            this.getItemRemarks(item)
+          ),
           party._id,
           true,
           totals.FXLoss,
@@ -14124,10 +14580,10 @@ class MetalTransactionService {
           transactionId: transactionId,
           type: "gold",
           description: `${isPurchaseReturn
-              ? "Purchase Return"
-              : isSaleReturn
-                ? "Sale Return"
-                : transaction.transactionType
+            ? "Purchase Return"
+            : isSaleReturn
+              ? "Sale Return"
+              : transaction.transactionType
             } - ${stockItem.description || "Metal Item"}`,
           paryty: transaction.partyCode,
           value: pureWeight,
@@ -14145,10 +14601,10 @@ class MetalTransactionService {
           transactionId: transactionId,
           type: "stock_balance",
           description: `${isPurchaseReturn
-              ? "Purchase Return"
-              : isSaleReturn
-                ? "Sale Return"
-                : transaction.transactionType
+            ? "Purchase Return"
+            : isSaleReturn
+              ? "Sale Return"
+              : transaction.transactionType
             } Stock Balance - ${stockItem.description || "Metal Item"}`,
           paryty: transaction.partyCode,
           value: pureWeight,
@@ -14168,10 +14624,10 @@ class MetalTransactionService {
           transactionId: transactionId,
           type: "MAKING_CHARGES",
           description: `${transaction.transactionType === "purchaseReturn"
-              ? "Purchase Return"
-              : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
             } - Making Charges`,
           paryty: transaction.partyCode,
           value: totalMakingCharges,
@@ -14198,10 +14654,10 @@ class MetalTransactionService {
           transactionId: transactionId,
           type: "OTHER_CHARGES",
           description: `${transaction.transactionType === "purchaseReturn"
-              ? "Purchase Return"
-              : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
             } - Other Charges`,
           paryty: transaction.partyCode,
           value: totalOtherCharges,
@@ -14228,10 +14684,10 @@ class MetalTransactionService {
           transactionId: transactionId,
           type: "VAT_AMOUNT",
           description: `${transaction.transactionType === "purchaseReturn"
-              ? "Purchase Return"
-              : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
             } - VAT Amount`,
           paryty: transaction.partyCode,
           value: totalVatAmount,
@@ -14259,10 +14715,10 @@ class MetalTransactionService {
           transactionId: transactionId,
           type: "premium",
           description: `${transaction.transactionType === "purchaseReturn"
-              ? "Purchase Return"
-              : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
             } - Premium Amount`,
           paryty: transaction.partyCode,
           value: totalPremiumAmount,
@@ -14289,10 +14745,10 @@ class MetalTransactionService {
         transactionId: transactionId,
         type: "party_gold_balance",
         description: `${transaction.transactionType === "purchaseReturn"
-            ? "Purchase Return"
-            : transaction.transactionType === "saleReturn"
-              ? "Sale Return"
-              : transaction.transactionType
+          ? "Purchase Return"
+          : transaction.transactionType === "saleReturn"
+            ? "Sale Return"
+            : transaction.transactionType
           } - Party Gold Balance`,
         paryty: transaction.partyCode,
         value: totalPureWeight,
@@ -14320,10 +14776,10 @@ class MetalTransactionService {
           transactionId: transactionId,
           type: "party_cash_balance",
           description: `${transaction.transactionType === "purchaseReturn"
-              ? "Purchase Return"
-              : transaction.transactionType === "saleReturn"
-                ? "Sale Return"
-                : transaction.transactionType
+            ? "Purchase Return"
+            : transaction.transactionType === "saleReturn"
+              ? "Sale Return"
+              : transaction.transactionType
             } - Party Cash Balance`,
           paryty: transaction.partyCode,
           value: totalAmountAED,
