@@ -114,10 +114,27 @@ class MetalStockService {
       const stockTransactionId = await Registry.generateTransactionId();
       const goldTransactionId = await Registry.generateTransactionId();
 
+      // Map operation to transactionType
+      let transactionType;
+      switch (operation) {
+        case "CREATE":
+          transactionType = "opening";
+          break;
+        case "UPDATE":
+          transactionType = "adjustment";
+          break;
+        case "DELETE":
+          transactionType = "adjustment";
+          break;
+        default:
+          transactionType = "stockOperation";
+      }
+
       // Create Stock Balance Registry Entry
       if (stockValue !== 0) {
         const stockRegistry = new Registry({
           transactionId: stockTransactionId,
+          transactionType: transactionType,
           costCenter: costCenterCode,
           type: "STOCK_BALANCE",
           description: `${description} - Stock Value`,
@@ -135,6 +152,7 @@ class MetalStockService {
       if (goldValue !== 0) {
         const goldRegistry = new Registry({
           transactionId: goldTransactionId,
+          transactionType: transactionType,
           costCenter: costCenterCode,
           type: "GOLD",
           description: `${description} - Gold Value (${standardPurity}%)`,

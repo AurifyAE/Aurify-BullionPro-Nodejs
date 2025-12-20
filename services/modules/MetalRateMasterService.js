@@ -38,10 +38,13 @@ class MetalRateMasterService {
         );
       }
 
-      // If setting as default, unset all other default rates
+      // If setting as default, unset all other default rates for the same division
       if (metalRateData.isDefault === true) {
         await MetalRateMaster.updateMany(
-          { isDefault: true },
+          { 
+            metal: metalRateData.metal,
+            isDefault: true 
+          },
           { isDefault: false }
         );
       }
@@ -191,10 +194,17 @@ class MetalRateMasterService {
         }
       }
 
-      // If setting as default, unset all other default rates (except the current one)
+      // Determine which division to check for defaults
+      const targetDivision = updateData.metal || metalRate.metal;
+      
+      // If setting as default, unset all other default rates for the same division
       if (updateData.isDefault === true) {
         await MetalRateMaster.updateMany(
-          { _id: { $ne: id }, isDefault: true },
+          { 
+            _id: { $ne: id },
+            metal: targetDivision,
+            isDefault: true 
+          },
           { isDefault: false }
         );
       }

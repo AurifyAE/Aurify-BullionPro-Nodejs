@@ -105,11 +105,13 @@ MetalRateMasterSchema.index(
 
 // Pre-save middleware for validation and business logic
 MetalRateMasterSchema.pre('save', async function(next) {
-  // Ensure only one default metal rate exists globally (across all metal rate types)
-  if (this.isDefault && this.isModified('isDefault')) {
+  // Ensure only one default metal rate exists per division
+  if (this.isDefault && (this.isModified('isDefault') || this.isModified('metal'))) {
+    const divisionId = this.metal;
     await this.constructor.updateMany(
       { 
         _id: { $ne: this._id },
+        metal: divisionId,
         isDefault: true
       },
       { isDefault: false }

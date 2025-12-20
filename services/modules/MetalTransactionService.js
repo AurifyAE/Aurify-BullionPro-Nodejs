@@ -13,7 +13,7 @@ import FixingPrice from "../../models/modules/FixingPrice.js";
 import { generateHedgeVoucherNumber } from "../../utils/hedgeVoucher.js";
 import TransactionFixing from "../../models/modules/TransactionFixing.js";
 import DealOrderService from "./dealOrderService.js";
-
+  
 dotenv.config();
 const generateUniqueTransactionId = async (prefix) => {
   let id, exists;
@@ -143,6 +143,7 @@ class MetalTransactionService {
       );
     }
   }
+
   static async deleteTransactionFixingEntry(metalTransaction, session = null) {
     try {
       // Delete TransactionFixing entries
@@ -184,8 +185,9 @@ class MetalTransactionService {
         500,
         "DELETE_TransactionFixing_FAILED"
       );
-    }
-  }
+    } 
+  } 
+
   static async deleteStcoks(voucherCode) {
     try {
       // Delete Inventory Logs
@@ -265,6 +267,112 @@ class MetalTransactionService {
     }
   }
 
+  /**
+   * Helper function to check if an entry is a PARTY-related entry
+   * PARTY entries include: PARTY_*, purchase-fixing, sales-fixing, sale-fixing, purchase-unfix, sale-unfix
+   */
+  static isPartyEntry(entry) {
+    if (!entry || !entry.type) return false;
+    const type = entry.type.toString();
+    return (
+      type.startsWith("PARTY_") ||
+      type === "purchase-fixing" ||
+      type === "sales-fixing" ||
+      type === "sale-fixing" ||
+      type === "purchase-unfix" ||
+      type === "sale-unfix"
+    );
+  }
+
+  /**
+   * Helper function to aggregate PARTY entries by type
+   * Sums all numeric fields and keeps metadata from the first entry
+   */
+  static aggregatePartyEntries(partyEntries) {
+    if (!partyEntries || partyEntries.length === 0) return [];
+
+    // Group entries by type
+    const entriesByType = new Map();
+
+    partyEntries.forEach((entry) => {
+      const key = entry.type;
+      if (!entriesByType.has(key)) {
+        // Initialize with first entry (clone it)
+        entriesByType.set(key, {
+          ...entry,
+          // Initialize aggregation counters
+          _count: 1,
+        });
+      } else {
+        // Aggregate with existing entry
+        const existing = entriesByType.get(key);
+      
+        // Sum numeric fields
+        existing.value = (existing.value || 0) + (entry.value || 0);
+        existing.credit = (existing.credit || 0) + (entry.credit || 0);
+        existing.debit = (existing.debit || 0) + (entry.debit || 0);
+        existing.cashDebit = (existing.cashDebit || 0) + (entry.cashDebit || 0);
+        existing.cashCredit = (existing.cashCredit || 0) + (entry.cashCredit || 0);
+        existing.goldDebit = (existing.goldDebit || 0) + (entry.goldDebit || 0);
+        existing.goldCredit = (existing.goldCredit || 0) + (entry.goldCredit || 0);
+        existing.grossWeight = (existing.grossWeight || 0) + (entry.grossWeight || 0);
+        existing.pureWeight = (existing.pureWeight || 0) + (entry.pureWeight || 0);
+        
+        // Keep goldBidValue from first entry (all items in transaction have same goldBidValue)
+        // If existing doesn't have goldBidValue, use the entry's value
+        if (!existing.goldBidValue && entry.goldBidValue) {
+          existing.goldBidValue = entry.goldBidValue;
+        }
+        // Note: We don't sum or average goldBidValue since all items have the same value
+
+        // For purity, use weighted average (if we have weights)
+        if (entry.pureWeight && entry.pureWeight > 0 && entry.purity) {
+          const totalPureWeight = existing.pureWeight || 0;
+          const existingPurity = existing.purity || 0;
+          const existingPureWeight = totalPureWeight - entry.pureWeight;
+          if (totalPureWeight > 0) {
+            existing.purity =
+              (existingPureWeight * existingPurity + entry.pureWeight * entry.purity) /
+              totalPureWeight;
+          }
+        } else if (entry.purity && !existing.purity) {
+          existing.purity = entry.purity;
+        }
+
+        existing._count += 1;
+      }
+    });
+
+    // Convert map to array and update descriptions
+    const aggregatedEntries = [];
+    entriesByType.forEach((entry, type) => {
+      const count = entry._count;
+      // Remove internal counter
+      delete entry._count;
+
+      // Update description to indicate aggregation if multiple items
+      if (count > 1 && entry.description) {
+        // Check if description already mentions "All Items" to avoid duplication
+        if (!entry.description.includes("(All Items)") && !entry.description.includes("all items")) {
+          // Try to update description intelligently
+          // Update description to include "(All Items)"
+          entry.description = entry.description.replace(
+            /(Party\s+[^-]+)\s*-\s*([^-]+)/i,
+            `$1 - $2 (All Items)`
+          );
+          // If the regex didn't match, append "(All Items)"
+          if (!entry.description.includes("(All Items)")) {
+            entry.description = `${entry.description} (All Items)`;
+          }
+        }
+      }
+
+      aggregatedEntries.push(entry);
+    });
+
+    return aggregatedEntries;
+  }
+
   static async buildRegistryEntries(metalTransaction, party, adminId) {
     let transaction = metalTransaction;
 
@@ -317,6 +425,7 @@ class MetalTransactionService {
     const mode = this.getTransactionMode(fixed, unfix);
 
     const entries = [];
+    const partyEntries = []; // Collect PARTY entries for aggregation
 
     // Calculate sum totals for ALL stock items (for hedge entries)
     const sumTotals = this.calculateTotals(stockItems, totalSummary, true);
@@ -328,6 +437,8 @@ class MetalTransactionService {
       // Build itemTotals from stockItems
       const itemTotals = this.calculateTotals([item], totalSummary, true);
       console.log(itemTotals);
+
+      let itemEntries = [];
 
       switch (transactionType) {
         case "purchase":
@@ -351,7 +462,7 @@ class MetalTransactionService {
             false // skipHedgeEntry - individual items skip hedge
           );
 
-          entries.push(...(purchaseEntries || []));
+          itemEntries = purchaseEntries || [];
           break;
 
         case "sale":
@@ -374,7 +485,7 @@ class MetalTransactionService {
             dealOrderId,
             false // skipHedgeEntry
           );
-          entries.push(...(saleEntries || []));
+          itemEntries = saleEntries || [];
           break;
 
         case "purchaseReturn":
@@ -397,7 +508,7 @@ class MetalTransactionService {
             dealOrderId,
             false // skipHedgeEntry
           );
-          entries.push(...(purchaseReturnEntries || []));
+          itemEntries = purchaseReturnEntries || [];
           break;
 
         case "saleReturn":
@@ -420,7 +531,7 @@ class MetalTransactionService {
             dealOrderId,
             false // skipHedgeEntry
           );
-          entries.push(...(saleReturnEntries || []));
+          itemEntries = saleReturnEntries || [];
           break;
 
         case "importPurchase":
@@ -444,7 +555,7 @@ class MetalTransactionService {
             false // skipHedgeEntry
           );
 
-          entries.push(...(importPurchase || []));
+          itemEntries = importPurchase || [];
           break;
 
         case "importPurchaseReturn":
@@ -467,7 +578,7 @@ class MetalTransactionService {
               itemCurrency,
               false // skipHedgeEntry
             );
-          entries.push(...(importPurchaseReturnEntries || []));
+          itemEntries = importPurchaseReturnEntries || [];
           break;
 
         case "exportSale":
@@ -489,7 +600,7 @@ class MetalTransactionService {
             itemCurrency,
             false // skipHedgeEntry
           );
-          entries.push(...(exportSale || []));
+          itemEntries = exportSale || [];
           break;
 
         case "exportSaleReturn":
@@ -512,7 +623,7 @@ class MetalTransactionService {
               itemCurrency,
               false // skipHedgeEntry
             );
-          entries.push(...(exportSaleReturnEntries || []));
+          itemEntries = exportSaleReturnEntries || [];
           break;
 
         case "hedgeMetalPayment":
@@ -536,7 +647,7 @@ class MetalTransactionService {
             dealOrderId,
             false // skipHedgeEntry
           );
-          entries.push(...(hedgeMetalPaymentEntries || []));
+          itemEntries = hedgeMetalPaymentEntries || [];
           break;
 
         case "hedgeMetalReceipt":
@@ -561,8 +672,32 @@ class MetalTransactionService {
             dealOrderId,
             false // skipHedgeEntry - individual items skip hedge
           );
-          entries.push(...(hedgeMetalReceiptEntries || []));
+          itemEntries = hedgeMetalReceiptEntries || [];
           break;
+      }
+
+      // Separate PARTY entries from non-PARTY entries for aggregation
+      // NOTE: Skip PARTY_HEDGE_ENTRY per item - it will be created once after loop with summed totals
+      if (itemEntries && itemEntries.length > 0) {
+        itemEntries.forEach((entry) => {
+          if (!entry) return;
+          
+          // CRITICAL: Skip PARTY_HEDGE_ENTRY per item completely
+          // These will be created once after the loop with summed totals from all items
+          if (entry.type === "PARTY_HEDGE_ENTRY") {
+            // Completely skip per-item PARTY_HEDGE_ENTRY - do not add to partyEntries or entries
+            // It will be created once after aggregation with summed totals
+            return;
+          }
+          
+          // Collect all other PARTY entries for aggregation
+          if (this.isPartyEntry(entry)) {
+            partyEntries.push(entry);
+          } else {
+            // Keep non-PARTY entries per item
+            entries.push(entry);
+          }
+        });
       }
     }
 
@@ -570,6 +705,28 @@ class MetalTransactionService {
     // HEDGE ENTRIES - Created ONCE with SUM of all items
     // =====================================================
     if (hedge && sumTotals.pureWeight > 0) {
+      // Ensure hedge voucher number is generated if not already set
+      if (!hedgeVoucherNo) {
+        // For hedgeMetalPayment and hedgeMetalReceipt, use the same voucher as the transaction
+        if (transactionType === "hedgeMetalPayment" || 
+            transactionType === "hedgeMetalReceipt" || 
+            transactionType === "hedgeMetalReciept") {
+          // Use the transaction's own voucher number instead of generating a separate hedge voucher
+          hedgeVoucherNo = transaction.voucherNumber;
+          console.log(`Using transaction voucher for hedge: ${hedgeVoucherNo}`);
+        } else {
+          // For other transaction types, generate a separate hedge voucher
+          hedgeVoucherNo = await generateHedgeVoucherNumber(transactionType);
+        }
+
+        // Save it immediately
+        transaction.hedgeVoucherNumber = hedgeVoucherNo;
+        transaction.hedge = true;
+        await transaction.save();
+
+        console.log(`Hedge Voucher Created (in hedge section): ${hedgeVoucherNo}`);
+      }
+      
       // Get transaction type for hedge
       let hedgeTransactionType = "Purchase";
       if (transactionType === "sale") hedgeTransactionType = "Sale";
@@ -609,7 +766,33 @@ class MetalTransactionService {
         adminId,
         dealOrderId,
       });
-      entries.push(...hedgeRegistryEntries);
+
+      // Separate PARTY entries from hedge entries for aggregation
+      if (hedgeRegistryEntries && hedgeRegistryEntries.length > 0) {
+        hedgeRegistryEntries.forEach((entry) => {
+          if (entry && this.isPartyEntry(entry)) {
+            // Collect hedge PARTY entries for aggregation with regular PARTY entries
+            partyEntries.push(entry);
+          } else {
+            // Keep non-PARTY hedge entries (like HEDGE_ENTRY) separate
+            entries.push(entry);
+          }
+        });
+      }
+    }
+
+    // =====================================================
+    // AGGREGATE PARTY ENTRIES - Create ONE entry per type
+    // This includes both regular PARTY entries and hedge PARTY entries
+    // All PARTY entries (including PARTY_HEDGE_ENTRY) are aggregated by type
+    // =====================================================
+    if (partyEntries.length > 0) {
+      // Aggregate all PARTY entries by type
+      // This will combine ALL PARTY entries of the same type into single aggregated entries
+      // For example: multiple PARTY_HEDGE_ENTRY entries → ONE aggregated PARTY_HEDGE_ENTRY
+      //              multiple PARTY_CASH_BALANCE entries → ONE aggregated PARTY_CASH_BALANCE
+      const aggregatedPartyEntries = this.aggregatePartyEntries(partyEntries);
+      entries.push(...aggregatedPartyEntries);
     }
 
     // =====================================================
@@ -631,6 +814,30 @@ class MetalTransactionService {
         dealOrderId,
       });
       entries.push(...roundOffEntries);
+    }
+
+    // =====================================================
+    // FINAL SAFETY CHECK: Ensure ALL PARTY entries are properly aggregated
+    // This is a defensive check to catch any PARTY entries that might have slipped through
+    // =====================================================
+    // Separate PARTY entries from non-PARTY entries
+    const finalPartyEntries = [];
+    const finalNonPartyEntries = [];
+    
+    entries.forEach(entry => {
+      if (!entry) return;
+      if (this.isPartyEntry(entry)) {
+        finalPartyEntries.push(entry);
+      } else {
+        finalNonPartyEntries.push(entry);
+      }
+    });
+    
+    // If there are any PARTY entries in the final array, aggregate them
+    // This ensures that even if some PARTY entries slipped through earlier, they get aggregated now
+    if (finalPartyEntries.length > 0) {
+      const finalAggregatedPartyEntries = this.aggregatePartyEntries(finalPartyEntries);
+      return [...finalNonPartyEntries, ...finalAggregatedPartyEntries].filter(Boolean);
     }
 
     return entries.filter(Boolean);
