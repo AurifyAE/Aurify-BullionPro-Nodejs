@@ -7,6 +7,7 @@ import FundTransfer from "../../models/modules/FundTransfer.js";
 import MetalStock from "../../models/modules/MetalStock.js";
 import Registry from "../../models/modules/Registry.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
+import StockAdjustment from "../../models/modules/StockAdjustment.js";
 
 class VoucherMasterService {
   // Cache for voucher configurations to reduce DB queries
@@ -84,16 +85,16 @@ class VoucherMasterService {
 
       // MetalTransaction-based modules
       const metalTxnModules = [
-        "metal-purchase", 
-        "metal-sale", 
-        "purchase-return", 
+        "metal-purchase",
+        "metal-sale",
+        "purchase-return",
         "sales-return",
         "importpurchase",
         "importpurchasereturn",
         "exportsale",
         "exportsalereturn"
       ];
-      console.log(`[getTransactionCount] Metal transaction modules:`, metalTxnModules,moduleLC);
+      console.log(`[getTransactionCount] Metal transaction modules:`, metalTxnModules, moduleLC);
       if (metalTxnModules.includes(moduleLC)) {
         console.log(`[getTransactionCount] Using model: MetalTransaction`);
 
@@ -108,7 +109,7 @@ class VoucherMasterService {
           "metal-export-sale": "exportSale",
           "metal-export-sale-return": "exportSaleReturn"
         };
-        console.log(`[getTransactionCount] Module to transaction type:`, moduleToTransactionType,transactionType);
+        console.log(`[getTransactionCount] Module to transaction type:`, moduleToTransactionType, transactionType);
         // Use provided transactionType if available, otherwise map from module
         const typeToUse = transactionType || moduleToTransactionType[moduleLC];
         console.log(`[getTransactionCount] Type to use:`, typeToUse);
@@ -184,6 +185,19 @@ class VoucherMasterService {
 
         console.log(`[getTransactionCount] FundTransfer Query:`, query);
         const count = await FundTransfer.countDocuments(query);
+        console.log(`[getTransactionCount] FundTransfer Count:`, count);
+        return count;
+      }
+
+      if (moduleLC === "stock-adjustment") {
+        console.log(`[getTransactionCount] Using model: stock-adjustment`);
+
+        const query = transactionType
+          ? { type: { $regex: `^${transactionType}$`, $options: "i" } }
+          : {};
+
+        console.log(`[getTransactionCount] FundTransfer Query:`, query);
+        const count = await StockAdjustment.countDocuments();
         console.log(`[getTransactionCount] FundTransfer Count:`, count);
         return count;
       }
