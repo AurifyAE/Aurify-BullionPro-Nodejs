@@ -20,6 +20,7 @@ import VoucherRoute from "./routes/modules/VoucherMasterRoute.js";
 import accountRoutes from "./routes/modules/accountMasterRoutes.js";
 import entryRoutes from "./routes/modules/entryMasterRoutes.js";
 import fundTransferRoutes from "./routes/modules/fundTransferRoutes.js";
+import openingBalanceRoutes from "./routes/modules/openingBalanceRoute.js";
 import inventoryRoutes from "./routes/modules/inventoryRoutes.js";
 import stockAdjustmentRoutes from "./routes/modules/stockAdjustmentRoutes.js";
 import reportsRoutes from "./routes/modules/reportsRoutes.js";
@@ -98,6 +99,7 @@ app.use("/api/v1/voucher", VoucherRoute);
 app.use("/api/v1/account", accountRoutes);
 app.use("/api/v1/entry", entryRoutes);
 app.use("/api/v1/fund-transfer", fundTransferRoutes);
+app.use("/api/v1/opening-balance", openingBalanceRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
 app.use("/api/v1/stock-adjustments", stockAdjustmentRoutes);
 app.use("/api/v1/reports", reportsRoutes)
