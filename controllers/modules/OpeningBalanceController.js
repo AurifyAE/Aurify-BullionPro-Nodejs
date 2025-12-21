@@ -66,3 +66,39 @@ export const getAllPartyOpeningBalances = async (req, res, next) => {
     }
 };
 
+
+export const updateOpeningBalance = async (req, res, next) => {
+    try {
+        const { voucherId } = req.params;
+
+        const {
+            value,
+            transactionType,
+            assetType,
+            assetCode,
+            voucherDate,
+            description,
+        } = req.body;
+
+        const updated =
+            await openingBalanceService.updatePartyOpeningBalance({
+                voucherId,
+                value,
+                transactionType,
+                assetType,
+                assetCode,
+                voucherDate,
+                description,
+            });
+
+        res.status(200).json({
+            success: true,
+            data: updated,
+            message: "Opening balance updated successfully",
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+

@@ -70,6 +70,23 @@ class openingBalanceService {
             .lean();
         return records;
     }
+
+    static async updatePartyOpeningBalance({
+        voucherId,
+        value,
+        transactionType,
+        assetType,
+        assetCode,
+        voucherDate,
+        description,
+    }) {
+        // Fetch existing opening
+        const existing = await OpeningBalance.find({ voucherCode: voucherId });
+        console.log(existing)
+        if (!existing) {
+            throw createAppError("Opening balance not found", 404);
+        }
+    }
 }
 
 export default openingBalanceService;
