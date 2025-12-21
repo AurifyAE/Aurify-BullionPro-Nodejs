@@ -1,11 +1,13 @@
 import Registry from "../../models/modules/Registry.js";
 import Account from "../../models/modules/AccountType.js";
 import CurrencyMaster from "../../models/modules/CurrencyMaster.js";
+import DocumentType from "../../models/modules/DocumentType.js";
 import RegistryService from "./RegistryService.js";
 import InventoryService from "./inventoryService.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import Entry from "../../models/modules/EntryModel.js";
+import mongoose from "mongoose";
 
 class EntryService {
   // Helper to check if date is today
@@ -676,16 +678,137 @@ class EntryService {
   // FETCH ENTRY BY ID
   // ------------------------------------------------------------------------
   static async getEntryById(id) {
-    return await Entry.findById(id)
-      .lean()
-      .populate("party", "customerName accountCode")
-      .populate("enteredBy", "name")
-      .populate("cash.currency", "currencyCode")
-      .populate("cash.account", "customerName accountCode")
-      .populate("cash.chequeBank", "customerName accountCode")
-      .populate("cash.transferAccount", "customerName accountCode")
-      .populate("stockItems.stock", "code name")
-      .populate("attachments.uploadedBy", "name");
+    const entry = await Entry.findById(id)
+      .populate({
+        path: "party",
+        populate: [
+          { path: "accountType" },
+          { path: "createdBy", select: "name email" },
+          { path: "updatedBy", select: "name email" },
+        ],
+      })
+      .populate("enteredBy", "name email")
+      .populate("voucherId")
+      .populate("cash.currency")
+      .populate("cash.account")
+      .populate("cash.chequeBank")
+      .populate("cash.transferAccount")
+      .populate("cash.pdcIssueAccount")
+      .populate("cash.pdcReceiptAccount")
+      .populate("stockItems.stock")
+      .populate("attachments.uploadedBy", "name email")
+      .lean();
+
+    if (!entry) {
+      throw createAppError("Entry not found", 404, "NOT_FOUND");
+    }
+
+    // Populate nested arrays within party if they exist
+    if (entry.party) {
+      const populatePromises = [];
+
+      // Helper function to check if a field needs population
+      // With .lean(), unpopulated fields are strings (ObjectId strings) or objects with only _id
+      // Populated fields are objects with multiple properties
+      const needsPopulation = (field) => {
+        if (!field) return false;
+        // If it's a string, it's an ObjectId string and needs population
+        if (typeof field === 'string') return true;
+        // If it's an object, check if it's already populated (has more than just _id)
+        if (typeof field === 'object') {
+          const keys = Object.keys(field);
+          // If it has more than 2 keys (usually _id + other fields), it's populated
+          return keys.length <= 2;
+        }
+        return true;
+      };
+
+      // Get the ID from a field (handles both ObjectId and string)
+      const getId = (field) => {
+        if (!field) return null;
+        if (typeof field === 'string') return field;
+        return field._id || field;
+      };
+
+      // Populate balances.cashBalance.currency
+      if (entry.party.balances?.cashBalance?.length > 0) {
+        entry.party.balances.cashBalance.forEach((balance, index) => {
+          if (needsPopulation(balance.currency)) {
+            const currencyId = getId(balance.currency);
+            if (currencyId) {
+              populatePromises.push(
+                CurrencyMaster.findById(currencyId).lean().then((currency) => {
+                  if (currency) entry.party.balances.cashBalance[index].currency = currency;
+                })
+              );
+            }
+          }
+        });
+      }
+
+      // Populate acDefinition.currencies.currency
+      if (entry.party.acDefinition?.currencies?.length > 0) {
+        entry.party.acDefinition.currencies.forEach((currencyDef, index) => {
+          if (needsPopulation(currencyDef.currency)) {
+            const currencyId = getId(currencyDef.currency);
+            if (currencyId) {
+              populatePromises.push(
+                CurrencyMaster.findById(currencyId).lean().then((currency) => {
+                  if (currency) entry.party.acDefinition.currencies[index].currency = currency;
+                })
+              );
+            }
+          }
+        });
+      }
+
+      // Populate kycDetails.documentType
+      if (entry.party.kycDetails?.length > 0) {
+        entry.party.kycDetails.forEach((kyc, index) => {
+          if (needsPopulation(kyc.documentType)) {
+            const docTypeId = getId(kyc.documentType);
+            if (docTypeId) {
+              populatePromises.push(
+                DocumentType.findById(docTypeId).lean().then((docType) => {
+                  if (docType) entry.party.kycDetails[index].documentType = docType;
+                })
+              );
+            }
+          }
+        });
+      }
+
+      // Populate bankDetails.pdcIssue and pdcReceipt
+      if (entry.party.bankDetails?.length > 0) {
+        entry.party.bankDetails.forEach((bank, index) => {
+          if (needsPopulation(bank.pdcIssue)) {
+            const accountId = getId(bank.pdcIssue);
+            if (accountId) {
+              populatePromises.push(
+                Account.findById(accountId).lean().then((account) => {
+                  if (account) entry.party.bankDetails[index].pdcIssue = account;
+                })
+              );
+            }
+          }
+          if (needsPopulation(bank.pdcReceipt)) {
+            const accountId = getId(bank.pdcReceipt);
+            if (accountId) {
+              populatePromises.push(
+                Account.findById(accountId).lean().then((account) => {
+                  if (account) entry.party.bankDetails[index].pdcReceipt = account;
+                })
+              );
+            }
+          }
+        });
+      }
+
+      // Execute all population queries in parallel
+      await Promise.all(populatePromises);
+    }
+
+    return entry;
   }
 
   // ------------------------------------------------------------------------
