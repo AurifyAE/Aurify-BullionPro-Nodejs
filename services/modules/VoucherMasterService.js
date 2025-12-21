@@ -8,6 +8,7 @@ import MetalStock from "../../models/modules/MetalStock.js";
 import Registry from "../../models/modules/Registry.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
 import StockAdjustment from "../../models/modules/StockAdjustment.js";
+import OpeningBalance from "../../models/modules/OpeningBalance.js";
 
 class VoucherMasterService {
   // Cache for voucher configurations to reduce DB queries
@@ -177,17 +178,25 @@ class VoucherMasterService {
 
       // Opening Balance
       if (moduleLC === "opening-balance") {
-        console.log(`[getTransactionCount] Using model: FundTransfer`);
+        console.log("[getTransactionCount] Using model: OpeningBalance");
 
-        const query = transactionType
-          ? { type: { $regex: `^${transactionType}$`, $options: "i" } }
-          : {};
+        const match = {};
 
-        console.log(`[getTransactionCount] FundTransfer Query:`, query);
-        const count = await FundTransfer.countDocuments(query);
-        console.log(`[getTransactionCount] FundTransfer Count:`, count);
-        return count;
+        if (transactionType) {
+          match.voucherType = {
+            $regex: `^${transactionType}$`,
+            $options: "i",
+          };
+        }
+
+        const distinctVouchers = await OpeningBalance.distinct(
+          "voucherCode",
+        );
+
+        const count = distinctVouchers.length;
+        return count; // next voucher number
       }
+
 
       if (moduleLC === "stock-adjustment") {
         console.log(`[getTransactionCount] Using model: stock-adjustment`);

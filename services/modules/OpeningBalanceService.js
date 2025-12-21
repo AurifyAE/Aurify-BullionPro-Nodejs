@@ -4,6 +4,7 @@ class openingBalanceService {
     static async createPartyOpeningBalance({
         partyId,
         value,
+        transactionType,
         adminId,
         assetType,
         assetCode,
@@ -12,23 +13,25 @@ class openingBalanceService {
         description,
     }) {
         // ❗ Check opening per party + asset
-        const exists = await OpeningBalance.findOne({
-            partyId,
-            assetType,
-            assetCode,
-        });
+        // const exists = await OpeningBalance.findOne({
+        //     partyId,
+        //     assetType,
+        //     assetCode,
+        // });
 
-        if (exists) {
-            const error = new Error(
-                `Opening balance already exists for ${assetType} (${assetCode})`
-            );
-            error.code = "OPENING_EXISTS";
-            throw error;
-        }
+        // if (exists) {
+        //     const error = new Error(
+        //         `Opening balance already exists for ${assetType} (${assetCode})`
+        //     );
+        //     error.code = "OPENING_EXISTS";
+        //     throw error;
+        // }
+        console.log("Creating opening balance for party:", value, partyId, assetType, assetCode);
 
         const opening = new OpeningBalance({
             partyId,
             value,
+            transactionType,
             adminId,
             assetType,   // GOLD | CASH
             assetCode,   // XAU | AED | INR

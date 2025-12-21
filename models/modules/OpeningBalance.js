@@ -12,6 +12,11 @@ const openingBalanceSchema = new mongoose.Schema(
             type: Number,
             required: true,
         },
+        transactionType: {
+            type: String,
+            enum: ["credit", "debit"],
+            required: true,
+        },
 
         adminId: {
             type: mongoose.Schema.Types.ObjectId,

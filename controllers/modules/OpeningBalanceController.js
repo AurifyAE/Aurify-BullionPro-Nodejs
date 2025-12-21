@@ -5,6 +5,7 @@ export const createPartyOpeningBalance = async (req, res, next) => {
         const {
             partyId,
             value,
+            transactionType,
             assetType,
             assetCode,
             voucher,
@@ -13,6 +14,10 @@ export const createPartyOpeningBalance = async (req, res, next) => {
         } = req.body;
 
         const adminId = req.admin.id;
+
+        if (!["credit", "debit"].includes(transactionType)) {
+            return res.status(400).json({ message: "Invalid transaction type" });
+        }
 
         if (!partyId || value === undefined || !assetType || !assetCode) {
             return res.status(400).json({
@@ -23,6 +28,7 @@ export const createPartyOpeningBalance = async (req, res, next) => {
         await openingBalanceService.createPartyOpeningBalance({
             partyId,
             value,
+            transactionType,
             adminId,
             assetType,
             assetCode,
