@@ -7,6 +7,7 @@ import util from "util";
 import Inventory from "../../models/modules/inventory.js";
 import Account from "../../models/modules/AccountType.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
+import { uaeDateToUTC, getPreviousDayEndInUTC, utcToUAEDate } from "../../utils/dateUtils.js";
 const { ObjectId } = mongoose.Types;
 // ReportService class to handle stock ledger and movement reports
 export class ReportService {
@@ -38,15 +39,247 @@ export class ReportService {
     }
   }
 
+  // Shared constants for transaction type classification
+  getAccountStatementTransactionTypes() {
+    return {
+      goldTypes: ["PARTY_GOLD_BALANCE"],
+      cashTypes: [
+        "PARTY_CASH_BALANCE",
+        "PARTY_MAKING_CHARGES",
+        "PARTY_PREMIUM",
+        "PARTY_DISCOUNT",
+        "PARTY_VAT_AMOUNT",
+        "OTHER-CHARGE",
+      ],
+      // Combined types that have both cash and gold in a single entry
+      // These transactions use cashDebit/cashCredit and goldDebit/goldCredit fields
+      mixedTypes: [
+        "PARTY_PURCHASE_FIX",
+        "PARTY_SALE_FIX",
+        "PARTY_HEDGE_ENTRY",
+      ]
+    };
+  }
+
+  async getAccountStatementOpeningBalance(toDate, filters = {}) {
+    try {
+      if (!toDate) return null;
+
+      // Use shared transaction type definitions
+      const { goldTypes, cashTypes, mixedTypes } = this.getAccountStatementTransactionTypes();
+
+      // const goldTypes = ["PARTY_GOLD_BALANCE"];
+      // const cashTypes = [
+      //   "PARTY_CASH_BALANCE", 
+       
+      //   "PARTY_MAKING_CHARGES",  // Party-specific making charges
+       
+      //   "PARTY_PREMIUM",  // Party-specific premium
+      
+      //   "PARTY_DISCOUNT"  // Party-specific discount
+      // ];
+      // Transaction types that can have both cash and gold components
+      // const mixedTypes = ["PARTY_PURCHASE_FIX", "PARTY_SALE_FIX", "PARTY_HEDGE_ENTRY"];
+      
+      // Calculate previous day end (end of the day before toDate) in UAE timezone
+      // If toDate is Dec 21 (UAE time), calculate opening balance up to Dec 20 23:59:59.999 UAE time
+      // toDate is treated as UAE local time, converted to UTC for MongoDB query
+      const previousDayEnd = getPreviousDayEndInUTC(toDate);
+      
+      console.log('toDate (UAE local):', toDate);
+      console.log('previousDayEnd (UTC for MongoDB):', previousDayEnd.toISOString());
+      
+      const pipeline = [
+        {
+          $match: {
+            isActive: true,
+            $or: [
+              { type: { $in: goldTypes } },
+              { type: { $in: cashTypes } },
+              { type: { $in: mixedTypes } }
+            ],
+            // Include all transactions up to and including the end of previous day
+            // If toDate is Dec 21, this gets all transactions <= Dec 20 23:59:59.999
+            transactionDate: { $lte: previousDayEnd }
+          }
+        },
+        {
+          $lookup: {
+            from: "accounts",
+            localField: "party",
+            foreignField: "_id",
+            as: "partyDetails"
+          }
+        },
+        {
+          $unwind: {
+            path: "$partyDetails",
+            preserveNullAndEmptyArrays: true
+          }
+        }
+      ];
+
+      // Apply voucher filter if provided
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        pipeline.push({ $match: { $or: regexFilters } });
+      }
+
+      // Apply account type filter if provided
+      if (filters.accountType?.length > 0) {
+        pipeline.push({
+          $match: {
+            "party": { $in: filters.accountType },
+          },
+        });
+      }
+
+      pipeline.push({
+        $addFields: {
+          partyId: "$party",
+          partyName: "$partyDetails.customerName"
+        }
+      });
+      
+      // Filter by assetType based on baseCurrency and foreignCurrency settings
+      // When baseCurrency is false and foreignCurrency is true, exclude AED transactions
+      if (filters.baseCurrency === false && filters.foreignCurrency === true && filters.foreignCurrencySelected) {
+        // Exclude AED assetType transactions - only show foreign currency transactions
+        // Mixed types are always included (they may have foreign currency in cashDebit/cashCredit)
+        pipeline.push({
+          $match: {
+            $or: [
+              // Include transactions with matching foreign currency assetType
+              { assetType: filters.foreignCurrencySelected },
+              // Always include mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY)
+              // They may have foreign currency in their cashDebit/cashCredit fields
+              { type: { $in: mixedTypes } }
+            ]
+          }
+        });
+      }
+
+      pipeline.push({
+        $group: {
+          _id: {
+            partyId: "$partyId",
+            partyName: "$partyName"
+          },
+          cashDebit: {
+            $sum: {
+              $cond: [
+                { $in: ["$type", mixedTypes] },
+                { $ifNull: ["$cashDebit", 0] }, // Mixed types: use cashDebit
+                {
+                  $cond: [
+                    { $in: ["$type", cashTypes] },
+                    { $ifNull: ["$debit", 0] }, // Cash types: use debit
+                    0
+                  ]
+                }
+              ]
+            }
+          },
+          cashCredit: {
+            $sum: {
+              $cond: [
+                { $in: ["$type", mixedTypes] },
+                { $ifNull: ["$cashCredit", 0] }, // Mixed types: use cashCredit
+                {
+                  $cond: [
+                    { $in: ["$type", cashTypes] },
+                    { $ifNull: ["$credit", 0] }, // Cash types: use credit
+                    0
+                  ]
+                }
+              ]
+            }
+          },
+          goldDebit: {
+            $sum: {
+              $cond: [
+                { $in: ["$type", mixedTypes] },
+                { $ifNull: ["$goldDebit", 0] }, // Mixed types: use goldDebit
+                {
+                  $cond: [
+                    { $in: ["$type", goldTypes] },
+                    { $ifNull: ["$debit", 0] }, // Gold types: use debit
+                    0
+                  ]
+                }
+              ]
+            }
+          },
+          goldCredit: {
+            $sum: {
+              $cond: [
+                { $in: ["$type", mixedTypes] },
+                { $ifNull: ["$goldCredit", 0] }, // Mixed types: use goldCredit
+                {
+                  $cond: [
+                    { $in: ["$type", goldTypes] },
+                    { $ifNull: ["$credit", 0] }, // Gold types: use credit
+                    0
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      });
+
+      pipeline.push({
+        $project: {
+          _id: 0,
+          partyId: "$_id.partyId",
+          partyName: "$_id.partyName",
+          cashBalance: { $subtract: ["$cashDebit", "$cashCredit"] },
+          goldBalance: { $subtract: ["$goldDebit", "$goldCredit"] }
+        }
+      });
+
+      const openingBalances = await Registry.aggregate(pipeline);
+      
+      // Format opening balances
+      return openingBalances.map(party => ({
+        partyId: party.partyId,
+        partyName: party.partyName,
+        cashBalance: party.cashBalance || 0,
+        goldBalance: party.goldBalance || 0,
+        cashBalanceType: (party.cashBalance || 0) >= 0 ? "CR" : "DR",
+        goldBalanceType: (party.goldBalance || 0) >= 0 ? "CR" : "DR"
+      }));
+    } catch (error) {
+      console.error("Error calculating opening balance:", error);
+      return null;
+    }
+  }
+
   async getAccountStatementReports(filters) {
     try {
+      // IMPORTANT: This function always treats mixed transaction types correctly
+      // Mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY) contain
+      // both cash and gold components in a single transaction and use:
+      // - cashDebit/cashCredit fields for cash amounts
+      // - goldDebit/goldCredit fields for gold amounts
+      // These are handled automatically in buildAccountStatementPipeline()
 
       // Validate and format input filters
       const validatedFilters = this.validateFilters(filters);
+      
+      // Pass baseCurrency, foreignCurrency, and foreignCurrencySelected to validatedFilters
+      // These are needed for assetType filtering
+      validatedFilters.baseCurrency = filters.baseCurrency;
+      validatedFilters.foreignCurrency = filters.foreignCurrency;
+      validatedFilters.foreignCurrencySelected = filters.foreignCurrencySelected;
+      
       console.log('Validated Filters====================================');
       console.log(util.inspect(validatedFilters, { depth: null, colors: true, compact: false }));
       console.log('====================================');
       // Construct MongoDB aggregation pipeline
+      // This pipeline automatically handles mixed types using shared transaction type definitions
       const pipeline = this.buildAccountStatementPipeline(validatedFilters);
       console.log('Pipeline====================================');
       console.log(util.inspect(pipeline, { depth: null, colors: true, compact: false }));
@@ -57,12 +290,37 @@ export class ReportService {
       console.log(util.inspect(reportData, { depth: null, colors: true, compact: false }));
       console.log('====================================');
 
+      // Calculate opening balance if excludeOpen is false
+      // excludeOpen is not validated in validateFilters, so use it directly from filters
+      let openingBalance = null;
+      if (filters.excludeOpen !== true && (validatedFilters.endDate || filters.toDate)) {
+        // Use the original toDate string (YYYY-MM-DD) from filters if available
+        // Otherwise, convert the UTC Date back to UAE date string
+        let toDateString = filters.toDate;
+        if (!toDateString && validatedFilters.endDate) {
+          // Convert UTC Date back to UAE local date string
+          toDateString = utcToUAEDate(validatedFilters.endDate);
+        }
+        if (toDateString) {
+          // Pass filters to apply voucher, accountType, and currency filters to opening balance
+          // Include baseCurrency and foreignCurrency settings for assetType filtering
+          const openingBalanceFilters = {
+            ...validatedFilters,
+            baseCurrency: filters.baseCurrency,
+            foreignCurrency: filters.foreignCurrency,
+            foreignCurrencySelected: filters.foreignCurrencySelected
+          };
+          openingBalance = await this.getAccountStatementOpeningBalance(toDateString, openingBalanceFilters);
+        }
+      }
+
       // Format the retrieved data for response
       const formattedData = this.formatReportData(reportData, validatedFilters);
-
+      console.log(openingBalance,'openingBalance');
       return {
         success: true,
         data: reportData,
+        openingBalance: openingBalance,
         filters: validatedFilters,
         totalRecords: reportData.length,
       };
@@ -377,14 +635,27 @@ export class ReportService {
       costCenter,
     } = filters;
 
-    // Initialize dates
+    // Initialize dates - treat input dates as UAE local time, convert to UTC for MongoDB
     let startDate = null;
     let endDate = null;
     let asOnDateParsed = null;
 
-    if (fromDate) startDate = moment(fromDate).startOf("day").toDate();
-    if (toDate) endDate = moment(toDate).endOf("day").toDate();
-    if (asOnDate) asOnDateParsed = moment(asOnDate).endOf("day").toDate();
+    // Treat fromDate/toDate as UAE local time strings (YYYY-MM-DD)
+    // Convert to UTC Date objects for MongoDB queries
+    if (fromDate) {
+      // If it's already a Date object, convert to string first, then to UAE->UTC
+      const dateStr = fromDate instanceof Date ? moment(fromDate).format('YYYY-MM-DD') : fromDate;
+      startDate = uaeDateToUTC(dateStr, 'start');
+    }
+    if (toDate) {
+      // If it's already a Date object, convert to string first, then to UAE->UTC
+      const dateStr = toDate instanceof Date ? moment(toDate).format('YYYY-MM-DD') : toDate;
+      endDate = uaeDateToUTC(dateStr, 'end');
+    }
+    if (asOnDate) {
+      const dateStr = asOnDate instanceof Date ? moment(asOnDate).format('YYYY-MM-DD') : asOnDate;
+      asOnDateParsed = uaeDateToUTC(dateStr, 'end');
+    }
     
     if (startDate && endDate && startDate > endDate) {
       throw new Error("From date cannot be greater than to date");
@@ -794,29 +1065,32 @@ export class ReportService {
   }
 
   buildAccountStatementPipeline(filters) {
-
-
-    const goldTypes = ["PARTY_GOLD_BALANCE"];
-    const cashTypes = ["PARTY_CASH_BALANCE", "MAKING_CHARGES", "PREMIUM", "DISCOUNT"];
+    // Use shared transaction type definitions to ensure consistency
+    const { goldTypes, cashTypes, mixedTypes } = this.getAccountStatementTransactionTypes();
     const pipeline = [];
 
     // --- Step 1: Initial Filtering ---
+    // IMPORTANT: Always include mixedTypes in the match conditions
+    // Mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY) must be included
+    // as they contain both cash and gold components in a single transaction
     const matchConditions = {
       isActive: true,
       $or: [
         { type: { $in: goldTypes } },
-        { type: { $in: cashTypes } }
+        { type: { $in: cashTypes } },
+        { type: { $in: mixedTypes } } // Always include mixed types
       ]
     };
 
-    // Date filter
+    // Date filter - filters.startDate and filters.endDate are already in UTC (from validateFilters)
+    // They were converted from UAE local time to UTC in validateFilters
     if (filters.startDate || filters.endDate) {
       matchConditions.transactionDate = {};
       if (filters.startDate) {
-        matchConditions.transactionDate.$gte = new Date(filters.startDate);
+        matchConditions.transactionDate.$gte = filters.startDate;
       }
       if (filters.endDate) {
-        matchConditions.transactionDate.$lte = new Date(filters.endDate);
+        matchConditions.transactionDate.$lte = filters.endDate;
       }
     }
 
@@ -870,7 +1144,42 @@ export class ReportService {
       matchConditions.party = filters.party;
     }
 
+    // Always include mixed types in the match conditions
+    // Mixed types contain both cash and gold components and must be included
     pipeline.push({ $match: matchConditions });
+    
+    // Filter by assetType based on baseCurrency and foreignCurrency settings
+    // When baseCurrency is false and foreignCurrency is true, exclude AED assetType transactions
+    // Frontend will show AED columns with foreign currency converted to AED
+    if (filters.baseCurrency === false && filters.foreignCurrency === true && filters.foreignCurrencySelected) {
+      // Exclude AED assetType transactions - only show foreign currency transactions
+      // Mixed types are always included (they may have foreign currency in cashDebit/cashCredit)
+      pipeline.push({
+        $match: {
+          $or: [
+            // Include transactions with matching foreign currency assetType
+            { assetType: filters.foreignCurrencySelected },
+            // Always include mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY)
+            // They may have foreign currency in their cashDebit/cashCredit fields
+            { type: { $in: mixedTypes } }
+          ],
+          // Exclude AED assetType (unless it's a mixed type)
+          $and: [
+            {
+              $or: [
+                { assetType: { $ne: "AED" } }, // Non-AED assetType
+                { type: { $in: mixedTypes } } // Or mixed type (which we always include)
+              ]
+            }
+          ]
+        }
+      });
+    }
+
+    // Sort by transactionDate before grouping to ensure proper order
+    pipeline.push({
+      $sort: { transactionDate: 1 } // 1 = ascending (oldest first)
+    });
 
     // Group by party to list transactions
     pipeline.push({
@@ -881,20 +1190,74 @@ export class ReportService {
         },
         transactions: {
           $push: {
+            transactionDate: "$transactionDate", // Keep original date for sorting
             docDate: "$docDate",
             docRef: "$docRef",
             branch: "$branch",
             particulars: "$description",
+            transactionType: "$type", // Include transaction type to distinguish between transactions with same reference
             assetType: { $ifNull: ["$assetType", "AED"] },
             currencyRate: { $ifNull: ["$currencyRate", 1] },
             cash: {
-              debit: { $cond: [{ $in: ["$type", cashTypes] }, { $ifNull: ["$debit", 0] }, 0] },
-              credit: { $cond: [{ $in: ["$type", cashTypes] }, { $ifNull: ["$credit", 0] }, 0] },
+              // For mixed types (PARTY_PURCHASE_FIX, PARTY_HEDGE_ENTRY), use cashDebit/cashCredit fields
+              // For cash-only types, use debit/credit fields
+              debit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$cashDebit", 0] }, // Mixed types: use cashDebit
+                  {
+                    $cond: [
+                      { $in: ["$type", cashTypes] },
+                      { $ifNull: ["$debit", 0] }, // Cash types: use debit
+                      0
+                    ]
+                  }
+                ]
+              },
+              credit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$cashCredit", 0] }, // Mixed types: use cashCredit
+                  {
+                    $cond: [
+                      { $in: ["$type", cashTypes] },
+                      { $ifNull: ["$credit", 0] }, // Cash types: use credit
+                      0
+                    ]
+                  }
+                ]
+              },
               balance: "$runningBalance"
             },
             goldInGMS: {
-              debit: { $cond: [{ $in: ["$type", goldTypes] }, { $ifNull: ["$debit", 0] }, 0] },
-              credit: { $cond: [{ $in: ["$type", goldTypes] }, { $ifNull: ["$credit", 0] }, 0] },
+              // For mixed types (PARTY_PURCHASE_FIX, PARTY_HEDGE_ENTRY), use goldDebit/goldCredit fields
+              // For gold-only types, use debit/credit fields
+              debit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$goldDebit", 0] }, // Mixed types: use goldDebit
+                  {
+                    $cond: [
+                      { $in: ["$type", goldTypes] },
+                      { $ifNull: ["$debit", 0] }, // Gold types: use debit
+                      0
+                    ]
+                  }
+                ]
+              },
+              credit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$goldCredit", 0] }, // Mixed types: use goldCredit
+                  {
+                    $cond: [
+                      { $in: ["$type", goldTypes] },
+                      { $ifNull: ["$credit", 0] }, // Gold types: use credit
+                      0
+                    ]
+                  }
+                ]
+              },
               balance: "$runningBalance"
             }
           }
@@ -913,10 +1276,12 @@ export class ReportService {
             input: "$transactions",
             as: "trans",
             in: {
+              transactionDate: "$$trans.transactionDate", // UTC date for sorting
               docDate: "$$trans.docDate",
               docRef: "$$trans.docRef",
               branch: "$$trans.branch",
               particulars: "$$trans.particulars",
+              transactionType: "$$trans.transactionType", // Include transaction type
               assetType: "$$trans.assetType",
               currencyRate: "$$trans.currencyRate",
               cash: {
