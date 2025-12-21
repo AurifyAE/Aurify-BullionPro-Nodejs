@@ -1,4 +1,5 @@
 import OpeningBalance from "../../models/modules/OpeningBalance.js";
+import { updatePartyOpeningBalance } from "../../utils/updatePartyOpeningBalance.js.js";
 
 class openingBalanceService {
     static async createPartyOpeningBalance({
@@ -41,10 +42,27 @@ class openingBalanceService {
             description,
         });
 
+        const signedValue = transactionType === "debit" ? - Math.abs(value) : Math.abs(value);
+
+        // 2️ Update account balances
+        await updatePartyOpeningBalance({
+            partyId,
+            assetType,
+            assetCode,
+            value: signedValue, // already signed
+        });
+
+
         await opening.save();
     }
 
+    /**
+     * Retrieve all opening balances for all parties
+     * @returns {Promise<Array>}
+     */
     static async getAllPartyOpeningBalances() {
+        // Fetch all opening balances
+        // Populate partyId with customerName and accountCode
         const records = await OpeningBalance.find()
             .populate("partyId", "customerName accountCode")
             .populate("adminId", "name")
