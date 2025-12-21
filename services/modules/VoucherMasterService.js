@@ -124,7 +124,7 @@ class VoucherMasterService {
       }
 
       // Hedge Metal Transaction modules - use TransactionFixing model
-      const hedgeMetalModules = ["hedge-metal-payment", "hedge-metal-receipt","hedge-metal-purchase","hedge-metal-sale","hedge-metal-purchase-return","hedge-metal-sale-return","hedge-metal-import-purchase","hedge-metal-import-purchase-return","hedge-metal-export-sale","hedge-metal-export-sale-return"];
+      const hedgeMetalModules = ["hedge-metal-payment", "hedge-metal-receipt", "hedge-metal-purchase", "hedge-metal-sale", "hedge-metal-purchase-return", "hedge-metal-sale-return", "hedge-metal-import-purchase", "hedge-metal-import-purchase-return", "hedge-metal-export-sale", "hedge-metal-export-sale-return"];
       if (hedgeMetalModules.includes(moduleLC)) {
         console.log(`[getTransactionCount] Using model: TransactionFixing (Hedge)`);
 
@@ -204,35 +204,56 @@ class VoucherMasterService {
 
       // Metal Stock
       if (moduleLC === "metal-stock") {
-        console.log(`[getTransactionCount] Using model: MetalStock`);
-        const value = "opening"
+        console.log(`[getTransactionCount] Using model: InventoryLog`);
 
-        const query = transactionType
-          ? { transactionType: { $regex: `^${value}$`, $options: "i" } }
-          : {};
+        const vouchers = await InventoryLog.distinct("voucherCode", {
+          transactionType: "opening",
+          isDraft: false,
+        });
 
-        console.log(`[getTransactionCount] MetalStock Query:`, query);
-        const count = await InventoryLog.countDocuments(query);
-        console.log(`[getTransactionCount] MetalStock Count:`, count);
+        const count = vouchers.length;
+
+        console.log(`[getTransactionCount] Distinct Voucher Count:`, count);
+
         return count;
       }
+
       if (moduleLC === "opening-stock-balance") {
+        console.log("oneeeeee")
         console.log(`[getTransactionCount] Using model: registry`);
 
-        const query = {
-          $or: [
-            { costCenter: "INVENTORY" },
-            { reference: { $regex: "^OSB", $options: "i" } },
-          ],
-        };
+        const prefix = "MOP";
 
-        console.log(`[getTransactionCount] Registry Query:`, query);
+        // 1️ Find latest voucher for this module
+        const lastEntry = await Registry.findOne(
+          {
+            reference: { $regex: `^${prefix}`, $options: "i" },
+            costCenter: "INVENTORY",
+            status: "completed",
+            isDraft: false,
+          },
+          { reference: 1 }
+        )
+          .sort({ createdAt: -1 }) // latest first
+          .lean();
 
-        const count = await Registry.countDocuments(query);
-        console.log(`[getTransactionCount] Registry Count:`, count);
+        console.log(`[getTransactionCount] Last Entry:`, lastEntry);
 
-        return count;
+        // 2️ Extract number & increment
+        let nextCount = 1;
+
+        if (lastEntry?.reference) {
+          const match = lastEntry.reference.match(/\d+$/); // get trailing number
+          if (match) {
+            nextCount = parseInt(match[0], 10) + 1;
+          }
+        }
+
+        console.log(`[getTransactionCount] Next Voucher Count:`, nextCount);
+
+        return nextCount;
       }
+
 
       // Draft Metal module - Get last voucher number instead of counting
       // This prevents duplicate numbers when drafts are deleted
