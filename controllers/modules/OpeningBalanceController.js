@@ -46,3 +46,17 @@ export const createPartyOpeningBalance = async (req, res, next) => {
         next(error);
     }
 };
+
+export const getAllPartyOpeningBalances = async (req, res, next) => {
+    try {
+        const openings = await openingBalanceService.getAllPartyOpeningBalances();
+
+        res.status(200).json({
+            success: true,
+            data: openings,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+

@@ -40,6 +40,15 @@ class openingBalanceService {
 
         await opening.save();
     }
+
+    static async getAllPartyOpeningBalances() {
+        const records = await OpeningBalance.find()
+            .populate("partyId", "customerName accountCode")
+            .populate("adminId", "name")
+            .sort({ voucherDate: -1 })
+            .lean();
+        return records;
+    }
 }
 
 export default openingBalanceService;
