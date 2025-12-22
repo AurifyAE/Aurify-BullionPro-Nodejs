@@ -49,10 +49,8 @@ class openingBalanceService {
             partyId,
             assetType,
             assetCode,
-            value: signedValue, // already signed
+            value: signedValue, 
         });
-
-
         await opening.save();
     }
 
