@@ -263,7 +263,7 @@ const entrySchema = new mongoose.Schema(
         },
         pdcStatus: {
           type: String,
-          enum: ["pending", "cleared", "bounced", null],
+          enum: ["pending", "cleared", "bounced", "cancelled", null],
           default: null,
         },
         pdcIssueAccount: {
@@ -272,6 +272,15 @@ const entrySchema = new mongoose.Schema(
           default: null,
         },
         pdcReceiptAccount: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Account",
+          default: null,
+        },
+        maturityPostingDate: {
+          type: Date,
+          default: null,
+        },
+        bankAccountId: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "Account",
           default: null,
