@@ -227,9 +227,10 @@ export const createTradeDebtor = async (req, res, next) => {
         };
 
         // Helper to convert empty strings to null for Number fields
+        // Note: 0 is a valid value, so we check explicitly for null/undefined/empty
         const sanitizeNumberField = (value) => {
           if (
-            !value ||
+            value == null ||
             value === "" ||
             value === "null" ||
             value === "undefined"
@@ -271,7 +272,8 @@ export const createTradeDebtor = async (req, res, next) => {
               "MISSING_PDC_ISSUE"
             );
           }
-          if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
+          // Allow 0 as a valid value for maturityDays
+          if (sanitizedBank.maturityDays == null) {
             throw createAppError(
               "Maturity Days is required for bank account mode",
               400,
@@ -285,7 +287,8 @@ export const createTradeDebtor = async (req, res, next) => {
               "MISSING_PDC_RECEIPT"
             );
           }
-          if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
+          // Allow 0 as a valid value for pdcReceiptMaturityDays
+          if (sanitizedBank.pdcReceiptMaturityDays == null) {
             throw createAppError(
               "PDC Receipt Maturity Days is required for bank account mode",
               400,
@@ -980,9 +983,10 @@ export const updateTradeDebtor = async (req, res, next) => {
       };
 
       // Helper to convert empty strings to null for Number fields
+      // Note: 0 is a valid value, so we check explicitly for null/undefined/empty
       const sanitizeNumberField = (value) => {
         if (
-          !value ||
+          value == null ||
           value === "" ||
           value === "null" ||
           value === "undefined"
@@ -1023,7 +1027,8 @@ export const updateTradeDebtor = async (req, res, next) => {
               "MISSING_PDC_ISSUE"
             );
           }
-          if (!sanitizedBank.maturityDays || sanitizedBank.maturityDays === null) {
+          // Allow 0 as a valid value for maturityDays
+          if (sanitizedBank.maturityDays == null) {
             throw createAppError(
               "Maturity Days is required for bank account mode",
               400,
@@ -1037,7 +1042,8 @@ export const updateTradeDebtor = async (req, res, next) => {
               "MISSING_PDC_RECEIPT"
             );
           }
-          if (!sanitizedBank.pdcReceiptMaturityDays || sanitizedBank.pdcReceiptMaturityDays === null) {
+          // Allow 0 as a valid value for pdcReceiptMaturityDays
+          if (sanitizedBank.pdcReceiptMaturityDays == null) {
             throw createAppError(
               "PDC Receipt Maturity Days is required for bank account mode",
               400,

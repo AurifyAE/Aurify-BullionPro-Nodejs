@@ -368,11 +368,12 @@ export class ReportService {
       });
     }
 
-    // Sort by transactionDate and reference (voucher) before grouping to ensure proper order
-    // Sort by date first (ascending - oldest first), then by voucher reference
+    // Sort by transactionDate (includes time) and reference (voucher) before grouping to ensure proper order
+    // Sort by date/time first (ascending - oldest first), then by voucher reference
+    // This ensures "first in first show" based on actual transaction time
     pipeline.push({
       $sort: { 
-        transactionDate: 1, // 1 = ascending (oldest first)
+        transactionDate: 1, // 1 = ascending (oldest first) - includes time component
         reference: 1 // Then sort by voucher reference (ascending)
       }
     });
@@ -386,12 +387,14 @@ export class ReportService {
         },
         transactions: {
           $push: {
-            transactionDate: "$transactionDate", // Keep original date for sorting
+            transactionDate: "$transactionDate", // Keep original date for sorting (includes time)
             docDate: "$docDate",
             docRef: "$docRef",
             branch: "$branch",
             particulars: "$description",
             transactionType: "$type", // Include transaction type to distinguish between transactions with same reference
+            metalTransactionId: "$metalTransactionId", // For grouping PUM and HPM together
+            transactionId: "$transactionId", // Alternative grouping key
             assetType: { $ifNull: ["$assetType", "AED"] },
             currencyRate: { $ifNull: ["$currencyRate", 1] },
             cash: {
@@ -472,12 +475,14 @@ export class ReportService {
             input: "$transactions",
             as: "trans",
             in: {
-              transactionDate: "$$trans.transactionDate", // UTC date for sorting
+              transactionDate: "$$trans.transactionDate", // UTC date for sorting (includes time)
               docDate: "$$trans.docDate",
               docRef: "$$trans.docRef",
               branch: "$$trans.branch",
               particulars: "$$trans.particulars",
               transactionType: "$$trans.transactionType", // Include transaction type
+              metalTransactionId: "$$trans.metalTransactionId", // For grouping PUM and HPM
+              transactionId: "$$trans.transactionId", // Alternative grouping key
               assetType: "$$trans.assetType",
               currencyRate: "$$trans.currencyRate",
               cash: {
@@ -571,7 +576,7 @@ export class ReportService {
       return {
         success: true,
         data: reportData,
-        openingBalance: openingBalance,
+        // openingBalance: openingBalance,
         filters: validatedFilters,
         totalRecords: reportData.length,
       };
