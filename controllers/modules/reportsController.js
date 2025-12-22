@@ -64,6 +64,7 @@ export const accountStatements = async (req, res) => {
         ? `Metal stock ledger report generated successfully with ${reportData.totalRecords} records`
         : "No transactions found for the specified criteria",
       data: reportData.data,
+      openingBalance: reportData.openingBalance,
       totalRecords: reportData.totalRecords,
       filters: reportData.filters
     });
