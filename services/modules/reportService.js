@@ -256,7 +256,258 @@ export class ReportService {
       return null;
     }
   }
+  buildAccountStatementPipeline(filters) {
+    // Use shared transaction type definitions to ensure consistency
+    const { goldTypes, cashTypes, mixedTypes } = this.getAccountStatementTransactionTypes();
+    const pipeline = [];
 
+    // --- Step 1: Initial Filtering ---
+    // IMPORTANT: Always include mixedTypes in the match conditions
+    // Mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY) must be included
+    // as they contain both cash and gold components in a single transaction
+    const matchConditions = {
+      isActive: true,
+      $or: [
+        { type: { $in: goldTypes } },
+        { type: { $in: cashTypes } },
+        { type: { $in: mixedTypes } } // Always include mixed types
+      ]
+    };
+
+    // Date filter - filters.startDate and filters.endDate are already in UTC (from validateFilters)
+    // They were converted from UAE local time to UTC in validateFilters
+    if (filters.startDate || filters.endDate) {
+      matchConditions.transactionDate = {};
+      if (filters.startDate) {
+        matchConditions.transactionDate.$gte = filters.startDate;
+      }
+      if (filters.endDate) {
+        matchConditions.transactionDate.$lte = filters.endDate;
+      }
+    }
+
+    // Lookup to get party names from accounts collection
+    pipeline.push({
+      $lookup: {
+        from: "accounts",
+        localField: "party",
+        foreignField: "_id",
+        as: "partyDetails"
+      }
+    });
+
+    // Unwind the partyDetails array to de-normalize
+    pipeline.push({
+      $unwind: {
+        path: "$partyDetails",
+        preserveNullAndEmptyArrays: true
+      }
+    });
+    // Voucher prefix filter
+    // Voucher prefix filter
+    if (filters.voucher?.length > 0) {
+      const regexFilters = filters.voucher.map((v) => ({
+        reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+      }));
+      pipeline.push({ $match: { $or: regexFilters } });
+    }
+
+
+    if (filters.accountType?.length > 0) {
+      pipeline.push({
+        $match: {
+          "party": { $in: filters.accountType },
+        },
+      });
+    }
+    // Add party name and ID to the document
+    pipeline.push({
+      $addFields: {
+        partyName: "$partyDetails.customerName",
+        partyId: "$party",
+        docDate: { $dateToString: { format: "%d/%m/%Y", date: "$transactionDate" } },
+        docRef: "$reference",
+        branch: "HO"
+      }
+    });
+
+    // Party-wise filter (optional)
+    if (filters.party) {
+      matchConditions.party = filters.party;
+    }
+
+    // Always include mixed types in the match conditions
+    // Mixed types contain both cash and gold components and must be included
+    pipeline.push({ $match: matchConditions });
+    
+    // Filter by assetType based on baseCurrency and foreignCurrency settings
+    // When baseCurrency is false and foreignCurrency is true, exclude AED assetType transactions
+    // Frontend will show AED columns with foreign currency converted to AED
+    if (filters.baseCurrency === false && filters.foreignCurrency === true && filters.foreignCurrencySelected) {
+      // Exclude AED assetType transactions - only show foreign currency transactions
+      // Mixed types are always included (they may have foreign currency in cashDebit/cashCredit)
+      pipeline.push({
+        $match: {
+          $or: [
+            // Include transactions with matching foreign currency assetType
+            { assetType: filters.foreignCurrencySelected },
+            // Always include mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY)
+            // They may have foreign currency in their cashDebit/cashCredit fields
+            { type: { $in: mixedTypes } }
+          ],
+          // Exclude AED assetType (unless it's a mixed type)
+          $and: [
+            {
+              $or: [
+                { assetType: { $ne: "AED" } }, // Non-AED assetType
+                { type: { $in: mixedTypes } } // Or mixed type (which we always include)
+              ]
+            }
+          ]
+        }
+      });
+    }
+
+    // Sort by transactionDate and reference (voucher) before grouping to ensure proper order
+    // Sort by date first (ascending - oldest first), then by voucher reference
+    pipeline.push({
+      $sort: { 
+        transactionDate: 1, // 1 = ascending (oldest first)
+        reference: 1 // Then sort by voucher reference (ascending)
+      }
+    });
+
+    // Group by party to list transactions
+    pipeline.push({
+      $group: {
+        _id: {
+          partyId: "$partyId",
+          partyName: "$partyName"
+        },
+        transactions: {
+          $push: {
+            transactionDate: "$transactionDate", // Keep original date for sorting
+            docDate: "$docDate",
+            docRef: "$docRef",
+            branch: "$branch",
+            particulars: "$description",
+            transactionType: "$type", // Include transaction type to distinguish between transactions with same reference
+            assetType: { $ifNull: ["$assetType", "AED"] },
+            currencyRate: { $ifNull: ["$currencyRate", 1] },
+            cash: {
+              // For mixed types (PARTY_PURCHASE_FIX, PARTY_HEDGE_ENTRY), use cashDebit/cashCredit fields
+              // For cash-only types, use debit/credit fields
+              debit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$cashDebit", 0] }, // Mixed types: use cashDebit
+                  {
+                    $cond: [
+                      { $in: ["$type", cashTypes] },
+                      { $ifNull: ["$debit", 0] }, // Cash types: use debit
+                      0
+                    ]
+                  }
+                ]
+              },
+              credit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$cashCredit", 0] }, // Mixed types: use cashCredit
+                  {
+                    $cond: [
+                      { $in: ["$type", cashTypes] },
+                      { $ifNull: ["$credit", 0] }, // Cash types: use credit
+                      0
+                    ]
+                  }
+                ]
+              },
+              balance: "$runningBalance"
+            },
+            goldInGMS: {
+              // For mixed types (PARTY_PURCHASE_FIX, PARTY_HEDGE_ENTRY), use goldDebit/goldCredit fields
+              // For gold-only types, use debit/credit fields
+              debit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$goldDebit", 0] }, // Mixed types: use goldDebit
+                  {
+                    $cond: [
+                      { $in: ["$type", goldTypes] },
+                      { $ifNull: ["$debit", 0] }, // Gold types: use debit
+                      0
+                    ]
+                  }
+                ]
+              },
+              credit: {
+                $cond: [
+                  { $in: ["$type", mixedTypes] },
+                  { $ifNull: ["$goldCredit", 0] }, // Mixed types: use goldCredit
+                  {
+                    $cond: [
+                      { $in: ["$type", goldTypes] },
+                      { $ifNull: ["$credit", 0] }, // Gold types: use credit
+                      0
+                    ]
+                  }
+                ]
+              },
+              balance: "$runningBalance"
+            }
+          }
+        }
+      }
+    });
+
+    // Project to format the output and add balance type
+    pipeline.push({
+      $project: {
+        _id: 0,
+        partyId: "$_id.partyId",
+        partyName: "$_id.partyName",
+        transactions: {
+          $map: {
+            input: "$transactions",
+            as: "trans",
+            in: {
+              transactionDate: "$$trans.transactionDate", // UTC date for sorting
+              docDate: "$$trans.docDate",
+              docRef: "$$trans.docRef",
+              branch: "$$trans.branch",
+              particulars: "$$trans.particulars",
+              transactionType: "$$trans.transactionType", // Include transaction type
+              assetType: "$$trans.assetType",
+              currencyRate: "$$trans.currencyRate",
+              cash: {
+                debit: "$$trans.cash.debit",
+                credit: "$$trans.cash.credit",
+                balance: {
+                  $concat: [
+                    { $toString: { $ifNull: ["$$trans.cash.balance", 0] } },
+                    { $cond: [{ $gt: ["$$trans.cash.balance", 0] }, " CR", " DR"] }
+                  ]
+                }
+              },
+              goldInGMS: {
+                debit: "$$trans.goldInGMS.debit",
+                credit: "$$trans.goldInGMS.credit",
+                balance: {
+                  $concat: [
+                    { $toString: { $ifNull: ["$$trans.goldInGMS.balance", 0] } },
+                    { $cond: [{ $gt: ["$$trans.goldInGMS.balance", 0] }, " CR", " DR"] }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return pipeline;
+  }
   async getAccountStatementReports(filters) {
     try {
       // IMPORTANT: This function always treats mixed transaction types correctly
@@ -268,7 +519,7 @@ export class ReportService {
 
       // Validate and format input filters
       const validatedFilters = this.validateFilters(filters);
-      
+
       // Pass baseCurrency, foreignCurrency, and foreignCurrencySelected to validatedFilters
       // These are needed for assetType filtering
       validatedFilters.baseCurrency = filters.baseCurrency;
@@ -1064,254 +1315,7 @@ export class ReportService {
 
   }
 
-  buildAccountStatementPipeline(filters) {
-    // Use shared transaction type definitions to ensure consistency
-    const { goldTypes, cashTypes, mixedTypes } = this.getAccountStatementTransactionTypes();
-    const pipeline = [];
 
-    // --- Step 1: Initial Filtering ---
-    // IMPORTANT: Always include mixedTypes in the match conditions
-    // Mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY) must be included
-    // as they contain both cash and gold components in a single transaction
-    const matchConditions = {
-      isActive: true,
-      $or: [
-        { type: { $in: goldTypes } },
-        { type: { $in: cashTypes } },
-        { type: { $in: mixedTypes } } // Always include mixed types
-      ]
-    };
-
-    // Date filter - filters.startDate and filters.endDate are already in UTC (from validateFilters)
-    // They were converted from UAE local time to UTC in validateFilters
-    if (filters.startDate || filters.endDate) {
-      matchConditions.transactionDate = {};
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
-      }
-    }
-
-    // Lookup to get party names from accounts collection
-    pipeline.push({
-      $lookup: {
-        from: "accounts",
-        localField: "party",
-        foreignField: "_id",
-        as: "partyDetails"
-      }
-    });
-
-    // Unwind the partyDetails array to de-normalize
-    pipeline.push({
-      $unwind: {
-        path: "$partyDetails",
-        preserveNullAndEmptyArrays: true
-      }
-    });
-    // Voucher prefix filter
-    // Voucher prefix filter
-    if (filters.voucher?.length > 0) {
-      const regexFilters = filters.voucher.map((v) => ({
-        reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
-      }));
-      pipeline.push({ $match: { $or: regexFilters } });
-    }
-
-
-    if (filters.accountType?.length > 0) {
-      pipeline.push({
-        $match: {
-          "party": { $in: filters.accountType },
-        },
-      });
-    }
-    // Add party name and ID to the document
-    pipeline.push({
-      $addFields: {
-        partyName: "$partyDetails.customerName",
-        partyId: "$party",
-        docDate: { $dateToString: { format: "%d/%m/%Y", date: "$transactionDate" } },
-        docRef: "$reference",
-        branch: "HO"
-      }
-    });
-
-    // Party-wise filter (optional)
-    if (filters.party) {
-      matchConditions.party = filters.party;
-    }
-
-    // Always include mixed types in the match conditions
-    // Mixed types contain both cash and gold components and must be included
-    pipeline.push({ $match: matchConditions });
-    
-    // Filter by assetType based on baseCurrency and foreignCurrency settings
-    // When baseCurrency is false and foreignCurrency is true, exclude AED assetType transactions
-    // Frontend will show AED columns with foreign currency converted to AED
-    if (filters.baseCurrency === false && filters.foreignCurrency === true && filters.foreignCurrencySelected) {
-      // Exclude AED assetType transactions - only show foreign currency transactions
-      // Mixed types are always included (they may have foreign currency in cashDebit/cashCredit)
-      pipeline.push({
-        $match: {
-          $or: [
-            // Include transactions with matching foreign currency assetType
-            { assetType: filters.foreignCurrencySelected },
-            // Always include mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY)
-            // They may have foreign currency in their cashDebit/cashCredit fields
-            { type: { $in: mixedTypes } }
-          ],
-          // Exclude AED assetType (unless it's a mixed type)
-          $and: [
-            {
-              $or: [
-                { assetType: { $ne: "AED" } }, // Non-AED assetType
-                { type: { $in: mixedTypes } } // Or mixed type (which we always include)
-              ]
-            }
-          ]
-        }
-      });
-    }
-
-    // Sort by transactionDate before grouping to ensure proper order
-    pipeline.push({
-      $sort: { transactionDate: 1 } // 1 = ascending (oldest first)
-    });
-
-    // Group by party to list transactions
-    pipeline.push({
-      $group: {
-        _id: {
-          partyId: "$partyId",
-          partyName: "$partyName"
-        },
-        transactions: {
-          $push: {
-            transactionDate: "$transactionDate", // Keep original date for sorting
-            docDate: "$docDate",
-            docRef: "$docRef",
-            branch: "$branch",
-            particulars: "$description",
-            transactionType: "$type", // Include transaction type to distinguish between transactions with same reference
-            assetType: { $ifNull: ["$assetType", "AED"] },
-            currencyRate: { $ifNull: ["$currencyRate", 1] },
-            cash: {
-              // For mixed types (PARTY_PURCHASE_FIX, PARTY_HEDGE_ENTRY), use cashDebit/cashCredit fields
-              // For cash-only types, use debit/credit fields
-              debit: {
-                $cond: [
-                  { $in: ["$type", mixedTypes] },
-                  { $ifNull: ["$cashDebit", 0] }, // Mixed types: use cashDebit
-                  {
-                    $cond: [
-                      { $in: ["$type", cashTypes] },
-                      { $ifNull: ["$debit", 0] }, // Cash types: use debit
-                      0
-                    ]
-                  }
-                ]
-              },
-              credit: {
-                $cond: [
-                  { $in: ["$type", mixedTypes] },
-                  { $ifNull: ["$cashCredit", 0] }, // Mixed types: use cashCredit
-                  {
-                    $cond: [
-                      { $in: ["$type", cashTypes] },
-                      { $ifNull: ["$credit", 0] }, // Cash types: use credit
-                      0
-                    ]
-                  }
-                ]
-              },
-              balance: "$runningBalance"
-            },
-            goldInGMS: {
-              // For mixed types (PARTY_PURCHASE_FIX, PARTY_HEDGE_ENTRY), use goldDebit/goldCredit fields
-              // For gold-only types, use debit/credit fields
-              debit: {
-                $cond: [
-                  { $in: ["$type", mixedTypes] },
-                  { $ifNull: ["$goldDebit", 0] }, // Mixed types: use goldDebit
-                  {
-                    $cond: [
-                      { $in: ["$type", goldTypes] },
-                      { $ifNull: ["$debit", 0] }, // Gold types: use debit
-                      0
-                    ]
-                  }
-                ]
-              },
-              credit: {
-                $cond: [
-                  { $in: ["$type", mixedTypes] },
-                  { $ifNull: ["$goldCredit", 0] }, // Mixed types: use goldCredit
-                  {
-                    $cond: [
-                      { $in: ["$type", goldTypes] },
-                      { $ifNull: ["$credit", 0] }, // Gold types: use credit
-                      0
-                    ]
-                  }
-                ]
-              },
-              balance: "$runningBalance"
-            }
-          }
-        }
-      }
-    });
-
-    // Project to format the output and add balance type
-    pipeline.push({
-      $project: {
-        _id: 0,
-        partyId: "$_id.partyId",
-        partyName: "$_id.partyName",
-        transactions: {
-          $map: {
-            input: "$transactions",
-            as: "trans",
-            in: {
-              transactionDate: "$$trans.transactionDate", // UTC date for sorting
-              docDate: "$$trans.docDate",
-              docRef: "$$trans.docRef",
-              branch: "$$trans.branch",
-              particulars: "$$trans.particulars",
-              transactionType: "$$trans.transactionType", // Include transaction type
-              assetType: "$$trans.assetType",
-              currencyRate: "$$trans.currencyRate",
-              cash: {
-                debit: "$$trans.cash.debit",
-                credit: "$$trans.cash.credit",
-                balance: {
-                  $concat: [
-                    { $toString: { $ifNull: ["$$trans.cash.balance", 0] } },
-                    { $cond: [{ $gt: ["$$trans.cash.balance", 0] }, " CR", " DR"] }
-                  ]
-                }
-              },
-              goldInGMS: {
-                debit: "$$trans.goldInGMS.debit",
-                credit: "$$trans.goldInGMS.credit",
-                balance: {
-                  $concat: [
-                    { $toString: { $ifNull: ["$$trans.goldInGMS.balance", 0] } },
-                    { $cond: [{ $gt: ["$$trans.goldInGMS.balance", 0] }, " CR", " DR"] }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    });
-
-    return pipeline;
-  }
 
 //=================Build Sales Analysis=================
   buildSalesAnalysis(filters) {

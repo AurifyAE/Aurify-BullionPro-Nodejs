@@ -299,19 +299,12 @@ class MetalTransactionService {
 
   /**
    * Helper function to format description with remarks
-   * For PARTY entries: return transaction remarks only
-   * For other entries: return stock item remarks only
+   * For PARTY entries: use stock item remarks
+   * For BULLION entries: use main transaction remarks
    */
   static formatDescriptionWithRemarks(baseDescription, isPartyEntry, transactionRemarks, itemRemarks) {
     if (isPartyEntry) {
-      // For PARTY entries, return transaction remarks only
-      if (transactionRemarks && typeof transactionRemarks === 'string' && transactionRemarks.trim()) {
-        return transactionRemarks.trim();
-      }
-      // If no transaction remarks, return empty string
-      return "";
-    } else {
-      // For non-PARTY entries, return stock item remarks only
+      // For PARTY entries, use stock item remarks
       // Handle both string (item?.remarks) and item object cases
       let remarks = itemRemarks;
       if (itemRemarks && typeof itemRemarks === 'object' && !Array.isArray(itemRemarks)) {
@@ -321,8 +314,15 @@ class MetalTransactionService {
       if (remarks && typeof remarks === 'string' && remarks.trim()) {
         return remarks.trim();
       }
-      // If no item remarks, return empty string
-      return "";
+      // If no item remarks, fallback to base description
+      return baseDescription || "";
+    } else {
+      // For BULLION entries, use main transaction remarks
+      if (transactionRemarks && typeof transactionRemarks === 'string' && transactionRemarks.trim()) {
+        return transactionRemarks.trim();
+      }
+      // If no transaction remarks, fallback to base description
+      return baseDescription || "";
     }
   }
 
