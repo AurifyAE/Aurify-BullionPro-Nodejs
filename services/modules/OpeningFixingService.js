@@ -86,15 +86,25 @@ class OpeningFixingService {
             const goldDebit = isLong ? pureWeight : 0;
             const goldCredit = isLong ? 0 : pureWeight;
 
-            const cashDebit = isLong ? 0 : metalValue;
-            const cashCredit = isLong ? metalValue : 0;
+            const cashDebit = isLong ? 0 : body.metalValue;
+            const cashCredit = isLong ? body.metalValue : 0;
 
-   
+            console.log(metalValue)
+            console.log(body)
+
+            // ✅ log in the exact order you want
+            console.log(
+                goldCredit,
+                goldDebit,
+                cashCredit,
+                cashDebit
+            );
+
 
             const registryEntry = await Registry.create(
                 [
                     {
-                        transactionId: voucherNumber,
+                        transactionId: fixing[0]._id,
                         transactionType: "opening",
 
                         assetType: "XAU",
@@ -119,7 +129,7 @@ class OpeningFixingService {
                         value: metalValue,
                         goldBidValue: null,
 
-                        debit:  cashDebit,
+                        debit: cashDebit,
                         credit: cashCredit,
 
                         reference: voucherNumber,
