@@ -169,7 +169,7 @@ class RegistryService {
       const type = String(r.type || "");
       return type != "PARTY_HEDGE_ENTRY" && type != "HEDGE_ENTRY"; // EXCLUDE HEDGE
     });
-    console.log(validRegistries,"validRegistries🟢🟢🟢---------------------------------------");
+    console.log(validRegistries, "validRegistries🟢🟢🟢---------------------------------------");
     // If all entries were hedges → nothing to show
     if (validRegistries.length === 0) {
       return {
@@ -459,13 +459,13 @@ class RegistryService {
       if (Math.abs(value) < 0.5) return 0; // treat small numbers as zero
       return Number(value.toFixed(decimals));
     }
-    
+
     // -----------------------------------------------------
     // 📌 7) CALCULATE CASH AND GOLD SUMS
     // -----------------------------------------------------
     const cashBalance = totalCashDebit - totalCashCredit;
     const goldBalance = totalGoldDebit - totalGoldCredit;
-    
+
     // -----------------------------------------------------
     // 📌 8) FINAL RETURN RESPONSE
     // -----------------------------------------------------
@@ -1977,6 +1977,50 @@ class RegistryService {
       },
     };
   }
+
+  static async generatePurchaseFixingAuditTrail(purchaseFixingId) {
+    if (!mongoose.Types.ObjectId.isValid(purchaseFixingId)) return null;
+
+    const registry = await Registry.findOne({
+      transactionId: purchaseFixingId,
+      isActive: true,
+    }).lean();
+
+    if (!registry) return null;
+
+    const currencyDebit = registry.cashDebit || 0;
+    const currencyCredit = registry.cashCredit || 0;
+
+    const metalDebit = registry.goldDebit || 0;
+    const metalCredit = registry.goldCredit || 0;
+
+    return {
+      transactionId: registry.transactionId,
+      date: registry.transactionDate || registry.createdAt,
+      party: {
+        name: registry.party?.name || "Inventory",
+      },
+      reference: registry.reference || registry.transactionId,
+
+      entries: [
+        {
+          description: registry.description || "OPENING FIXING POSITION",
+          accCode: registry.costCenter || "INVENTORY",
+          currencyDebit,
+          currencyCredit,
+          metalDebit,
+          metalCredit,
+        },
+      ],
+
+      totals: {
+        currencyBalance: currencyDebit - currencyCredit,
+        metalBalance: metalDebit - metalCredit,
+      },
+    };
+  }
+
+
 
 }
 

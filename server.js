@@ -36,6 +36,7 @@ import salesmanRoutes from "./routes/modules/salesManRoutes.js";
 import documentTypeRoutes from "./routes/modules/documentTypeRoutes.js";
 import dealOrderRoutes from "./routes/modules/dealOrderRoutes.js";
 import draftingRoutes from "./routes/modules/draftingRoutes.js";
+import openingFixingRoutes from "./routes/modules/openingFixingRoutes.js";
 import { mongodb } from "./config/db.js";
 import { errorHandler } from "./utils/errorHandler.js";
 
@@ -115,6 +116,8 @@ app.use("/api/v1/salesman", salesmanRoutes);
 app.use("/api/v1/document-type", documentTypeRoutes);
 app.use("/api/v1/deal-orders", dealOrderRoutes);
 app.use("/api/v1/draftings", draftingRoutes);
+app.use("/api/v1/opening-fixing", openingFixingRoutes);
+
 // Global error handling middleware
 app.use(errorHandler);
 
