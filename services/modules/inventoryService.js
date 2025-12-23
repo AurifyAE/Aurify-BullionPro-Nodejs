@@ -258,6 +258,339 @@ class InventoryService {
     }
   }
 
+  /**
+   * Aggregate inventory logs to calculate gold balance by stock
+   * Returns total pure gold and breakdown by stock type
+   * Uses MetalStock.standardPurity for calculations (since log purity may be 0)
+   */
+  static async getGoldBalanceFromLogs() {
+    try {
+      console.log("[GOLD_BALANCE] Starting gold balance calculation from inventory logs...");
+
+      // First, check total logs count
+      const totalLogs = await InventoryLog.countDocuments({});
+      const nonDraftLogs = await InventoryLog.countDocuments({ isDraft: { $ne: true } });
+      console.log(`[GOLD_BALANCE] Total logs: ${totalLogs}, Non-draft logs: ${nonDraftLogs}`);
+
+      const pipeline = [
+        // 1. Filter out draft logs (only finalized transactions)
+        {
+          $match: {
+            isDraft: { $ne: true }
+          }
+        },
+        // 2. Lookup MetalStock to get standardPurity (do this BEFORE grouping)
+        {
+          $lookup: {
+            from: "metalstocks",
+            localField: "stockCode",
+            foreignField: "_id",
+            as: "stock"
+          }
+        },
+        { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
+        // 3. Lookup KaratMaster to get purity if standardPurity is not available
+        {
+          $lookup: {
+            from: "karatmasters",
+            localField: "stock.karat",
+            foreignField: "_id",
+            as: "karatInfo"
+          }
+        },
+        { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
+        // 4. Calculate purity to use (prefer log purity, then stock standardPurity, then karat standardPurity)
+        {
+          $addFields: {
+            effectivePurity: {
+              $cond: [
+                { $gt: [{ $ifNull: ["$purity", 0] }, 0] },
+                { $divide: [{ $toDouble: { $ifNull: ["$purity", 0] } }, 100] }, // Log purity is in percentage, convert to decimal
+                {
+                  $cond: [
+                    { $gt: [{ $ifNull: ["$stock.standardPurity", 0] }, 0] },
+                    { $toDouble: { $ifNull: ["$stock.standardPurity", 0] } }, // Stock standardPurity is already in decimal (0-1)
+                    {
+                      $cond: [
+                        { $gt: [{ $ifNull: ["$karatInfo.standardPurity", 0] }, 0] },
+                        { $divide: [{ $toDouble: { $ifNull: ["$karatInfo.standardPurity", 0] } }, 100] }, // Karat purity is in percentage, convert to decimal
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        // 5. Calculate pure weight for each log entry
+        {
+          $addFields: {
+            calculatedPureWeight: {
+              $multiply: [
+                { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                "$effectivePurity"
+              ]
+            }
+          }
+        },
+        // 6. Group by stockCode and calculate totals
+        {
+          $group: {
+            _id: "$stockCode",
+            stockName: {
+              $first: {
+                $ifNull: [
+                  "$stock.description",
+                  {
+                    $ifNull: ["$stock.code", "Other"]
+                  }
+                ]
+              }
+            },
+            totalGrossWeight: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                  {
+                    $subtract: [
+                      0,
+                      { $toDouble: { $ifNull: ["$grossWeight", 0] } }
+                    ]
+                  }
+                ]
+              }
+            },
+            totalPureWeight: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  "$calculatedPureWeight",
+                  {
+                    $subtract: [0, "$calculatedPureWeight"]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        // 7. Include all balances (positive, zero, and negative)
+        // Negative balances indicate overselling and should be shown to the client
+        // No filter - we want to show all balances
+        // 8. Project final structure
+        {
+          $project: {
+            _id: 0,
+            stockCode: "$_id",
+            stockName: 1,
+            totalGrossWeight: { $round: ["$totalGrossWeight", 2] },
+            totalPureWeight: { $round: ["$totalPureWeight", 2] }
+          }
+        },
+        // 9. Sort by pure weight descending
+        {
+          $sort: { totalPureWeight: -1 }
+        }
+      ];
+
+      console.log("[GOLD_BALANCE] Executing aggregation pipeline...");
+      
+      // Execute the full pipeline
+      const stockBalances = await InventoryLog.aggregate(pipeline);
+      console.log(`[GOLD_BALANCE] Aggregation completed. Found ${stockBalances.length} stocks with positive balance`);
+      
+      // Also get all balances (including negative) for debugging
+      const pipelineAllBalances = [
+        ...pipeline.slice(0, -4), // Everything before the positive filter
+        {
+          $project: {
+            _id: 0,
+            stockCode: "$_id",
+            stockName: 1,
+            totalGrossWeight: { $round: ["$totalGrossWeight", 2] },
+            totalPureWeight: { $round: ["$totalPureWeight", 2] }
+          }
+        },
+        { $sort: { totalPureWeight: -1 } }
+      ];
+      const allBalances = await InventoryLog.aggregate(pipelineAllBalances);
+      console.log(`[GOLD_BALANCE] All balances (including negative/zero): ${allBalances.length} stocks`);
+      if (allBalances.length > 0) {
+        console.log("[GOLD_BALANCE] All balances:", JSON.stringify(allBalances, null, 2));
+      }
+
+      // Debug: Log sample results
+      if (stockBalances.length > 0) {
+        console.log("[GOLD_BALANCE] Sample stock balances:", JSON.stringify(stockBalances.slice(0, 3), null, 2));
+      } else {
+        console.log("[GOLD_BALANCE] WARNING: No stocks found with positive balance!");
+        
+        // Debug: Check what's happening before the final filter
+        const debugPipeline = [
+          {
+            $match: {
+              isDraft: { $ne: true }
+            }
+          },
+          {
+            $lookup: {
+              from: "metalstocks",
+              localField: "stockCode",
+              foreignField: "_id",
+              as: "stock"
+            }
+          },
+          { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: "karatmasters",
+              localField: "stock.karat",
+              foreignField: "_id",
+              as: "karatInfo"
+            }
+          },
+          { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              effectivePurity: {
+                $cond: [
+                  { $gt: [{ $ifNull: ["$purity", 0] }, 0] },
+                  { $divide: [{ $toDouble: { $ifNull: ["$purity", 0] } }, 100] },
+                  {
+                    $cond: [
+                      { $gt: [{ $ifNull: ["$stock.standardPurity", 0] }, 0] },
+                      { $toDouble: { $ifNull: ["$stock.standardPurity", 0] } },
+                      {
+                        $cond: [
+                          { $gt: [{ $ifNull: ["$karatInfo.standardPurity", 0] }, 0] },
+                          { $divide: [{ $toDouble: { $ifNull: ["$karatInfo.standardPurity", 0] } }, 100] },
+                          0
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              calculatedPureWeight: {
+                $multiply: [
+                  { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                  {
+                    $cond: [
+                      { $gt: [{ $ifNull: ["$purity", 0] }, 0] },
+                      { $divide: [{ $toDouble: { $ifNull: ["$purity", 0] } }, 100] },
+                      {
+                        $cond: [
+                          { $gt: [{ $ifNull: ["$stock.standardPurity", 0] }, 0] },
+                          { $toDouble: { $ifNull: ["$stock.standardPurity", 0] } },
+                          {
+                            $cond: [
+                              { $gt: [{ $ifNull: ["$karatInfo.standardPurity", 0] }, 0] },
+                              { $divide: [{ $toDouble: { $ifNull: ["$karatInfo.standardPurity", 0] } }, 100] },
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            $group: {
+              _id: "$stockCode",
+              stockName: {
+                $first: {
+                  $ifNull: [
+                    "$stock.description",
+                    {
+                      $ifNull: ["$stock.code", "Other"]
+                    }
+                  ]
+                }
+              },
+              totalGrossWeight: {
+                $sum: {
+                  $cond: [
+                    { $eq: ["$action", "add"] },
+                    { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                    {
+                      $subtract: [
+                        0,
+                        { $toDouble: { $ifNull: ["$grossWeight", 0] } }
+                      ]
+                    }
+                  ]
+                }
+              },
+              totalPureWeight: {
+                $sum: {
+                  $cond: [
+                    { $eq: ["$action", "add"] },
+                    "$calculatedPureWeight",
+                    {
+                      $subtract: [0, "$calculatedPureWeight"]
+                    }
+                  ]
+                }
+              },
+              sampleLogs: { $push: { action: "$action", grossWeight: "$grossWeight", purity: "$purity", effectivePurity: "$effectivePurity", calculatedPureWeight: "$calculatedPureWeight", stockPurity: "$stock.standardPurity", karatPurity: "$karatInfo.standardPurity" } }
+            }
+          },
+          { $limit: 5 }
+        ];
+
+        const debugResults = await InventoryLog.aggregate(debugPipeline);
+        console.log("[GOLD_BALANCE] DEBUG - Sample grouped results before positive filter:", JSON.stringify(debugResults, null, 2));
+      }
+
+      // Calculate total pure gold
+      const totalPureGold = stockBalances.reduce((sum, stock) => {
+        return sum + (stock.totalPureWeight || 0);
+      }, 0);
+
+      // Separate balances for logging
+      const positiveBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) > 0);
+      const negativeBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) < 0);
+      const zeroBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) === 0);
+      
+      console.log(`[GOLD_BALANCE] Total stocks: ${stockBalances.length}`);
+      console.log(`[GOLD_BALANCE] Positive: ${positiveBalances.length}, Negative: ${negativeBalances.length}, Zero: ${zeroBalances.length}`);
+      console.log(`[GOLD_BALANCE] Total pure gold calculated: ${totalPureGold}`);
+
+      // Create breakdown array with percentages
+      // For percentage calculation, use absolute value of total to avoid issues with negative totals
+      const totalForPercentage = Math.abs(totalPureGold) || 1; // Avoid division by zero
+      
+      const breakdown = stockBalances.map((stock) => ({
+        type: stock.stockName || "Other",
+        weight: stock.totalPureWeight,
+        percentage: totalForPercentage > 0 
+          ? Math.round((Math.abs(stock.totalPureWeight) / totalForPercentage) * 100) 
+          : 0,
+      }));
+
+      const result = {
+        totalPureGold: Math.round(totalPureGold * 100) / 100, // Round to 2 decimal places
+        breakdown,
+      };
+
+      console.log("[GOLD_BALANCE] Final result:", JSON.stringify(result, null, 2));
+
+      return result;
+    } catch (error) {
+      console.error("[GOLD_BALANCE] Error in aggregation:", error);
+      console.error("[GOLD_BALANCE] Error stack:", error.stack);
+      throw createAppError(
+        `Failed to calculate gold balance from logs: ${error.message}`,
+        500,
+        "GOLD_BALANCE_CALCULATION_ERROR"
+      );
+    }
+  }
+
   static async updateInventoryLog(inventoryId, body, admin) {
 
     try {

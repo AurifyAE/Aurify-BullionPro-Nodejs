@@ -64,6 +64,18 @@ export const getAllLogs = async (req, res, next) => {
     }
 };
 
+export const getGoldBalance = async (req, res, next) => {
+    try {
+        const goldBalance = await InventoryService.getGoldBalanceFromLogs();
+        res.status(200).json({
+            success: true,
+            data: goldBalance,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 
 // inital invenoty add
 export const createInventory = async (req, res, next) => {
