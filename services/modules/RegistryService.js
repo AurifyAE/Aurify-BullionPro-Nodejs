@@ -1868,8 +1868,7 @@ class RegistryService {
       if (r.type === "MAKING_CHARGES") {
         if (r.debit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Making Charges Debit",
+            description: "Making Charges ",
             currencyDebit: r.debit,
             currencyCredit: 0,
             metalDebit: 0,
@@ -1879,8 +1878,7 @@ class RegistryService {
 
         if (r.credit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Making Charges Credit",
+            description: "Making Charges ",
             currencyDebit: 0,
             currencyCredit: r.credit,
             metalDebit: 0,
@@ -1895,8 +1893,7 @@ class RegistryService {
       if (r.type === "GOLD_STOCK") {
         if (r.goldDebit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Gold Stock Debit",
+            description: "Gold Stock ",
             currencyDebit: 0,
             currencyCredit: 0,
             metalDebit: r.goldDebit,
@@ -1906,8 +1903,7 @@ class RegistryService {
 
         if (r.goldCredit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Gold Stock Credit",
+            description: "Gold Stock ",
             currencyDebit: 0,
             currencyCredit: 0,
             metalDebit: 0,
@@ -1930,7 +1926,6 @@ class RegistryService {
     // -------------------------
     if (Math.abs(diffCash) > 0.0001 || Math.abs(diffGold) > 0.0001) {
       entries.push({
-        accCode: "INV001",
         description: "Stock Difference",
         currencyDebit: diffCash < 0 ? Math.abs(diffCash) : 0,
         currencyCredit: diffCash > 0 ? diffCash : 0,
@@ -1956,7 +1951,7 @@ class RegistryService {
     return {
       metalTransactionId: null,
       transactionId: main.transactionId,
-      reference: "STOCK-ADJ",
+      reference: main.reference,
       date: main.transactionDate,
       party: {
         name: "Inventory Adjustment",
