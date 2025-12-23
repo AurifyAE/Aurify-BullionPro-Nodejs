@@ -1868,6 +1868,7 @@ class RegistryService {
       if (r.type === "MAKING_CHARGES") {
         if (r.debit > 0) {
           entries.push({
+            accCode: r.accountCode || "MAK001",
             description: "Making Charges ",
             currencyDebit: r.debit,
             currencyCredit: 0,
@@ -1878,7 +1879,8 @@ class RegistryService {
 
         if (r.credit > 0) {
           entries.push({
-            description: "Making Charges ",
+             accCode: r.accountCode || "MAK001",
+            description: "Making Charges",
             currencyDebit: 0,
             currencyCredit: r.credit,
             metalDebit: 0,
@@ -1893,6 +1895,7 @@ class RegistryService {
       if (r.type === "GOLD_STOCK") {
         if (r.goldDebit > 0) {
           entries.push({
+               accCode: r.accountCode || "GOL001",
             description: "Gold Stock ",
             currencyDebit: 0,
             currencyCredit: 0,
@@ -1903,6 +1906,7 @@ class RegistryService {
 
         if (r.goldCredit > 0) {
           entries.push({
+             accCode: r.accountCode || "GOL001",
             description: "Gold Stock ",
             currencyDebit: 0,
             currencyCredit: 0,
@@ -1916,6 +1920,7 @@ class RegistryService {
       // STOCK DIFFERENCE
       // -------------------------
       if (r.type === "STOCK_ADJUSTMENT") {
+        
         diffCash += (r.debit || 0) - (r.credit || 0);
         diffGold += (r.goldDebit || 0) - (r.goldCredit || 0);
       }
@@ -1926,6 +1931,7 @@ class RegistryService {
     // -------------------------
     if (Math.abs(diffCash) > 0.0001 || Math.abs(diffGold) > 0.0001) {
       entries.push({
+         accCode:  "STK001",
         description: "Stock Difference",
         currencyDebit: diffCash < 0 ? Math.abs(diffCash) : 0,
         currencyCredit: diffCash > 0 ? diffCash : 0,
@@ -1973,7 +1979,7 @@ class RegistryService {
     };
   }
 
-  static async generatePurchaseFixingAuditTrail(purchaseFixingId) {
+  static async generateOpeningFixingAuditTrail(purchaseFixingId) {
     if (!mongoose.Types.ObjectId.isValid(purchaseFixingId)) return null;
 
     const registry = await Registry.findOne({
