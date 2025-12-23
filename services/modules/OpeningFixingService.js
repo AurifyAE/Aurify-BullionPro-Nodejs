@@ -86,6 +86,21 @@ class OpeningFixingService {
 
         return fixings;
     }
+
+    static async fetchOpeningFixingById(id) {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return null;
+        }
+
+        const fixing = await OpeningFixing.findById(id)
+            .populate("division", "name code")
+            .populate("salesman", "name")
+            .populate("metalRate", "rateType convFactGms")
+            .populate("createdBy", "name email")
+            .lean();
+
+        return fixing;
+    }
 }
 
 export default OpeningFixingService;

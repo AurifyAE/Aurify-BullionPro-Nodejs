@@ -9,7 +9,7 @@ const OpeningFixingSchema = new mongoose.Schema(
 
     division: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Division",
+      ref: "DivisionMaster",
       required: true,
     },
 
@@ -30,7 +30,7 @@ const OpeningFixingSchema = new mongoose.Schema(
 
     metalRate: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "MetalRate",
+      ref: "MetalRateMaster",
       required: true,
     },
 
