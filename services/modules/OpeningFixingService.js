@@ -70,7 +70,7 @@ class OpeningFixingService {
 
                         metalRate: metalRateId,
                         metalRateValue: convFactGms,
-                        metalValue,
+                        metalValue:body.metalValue,
 
                         accountingImpact, // ✅ REQUIRED FIELD FIXED
 
