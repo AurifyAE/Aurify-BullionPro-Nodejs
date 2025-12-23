@@ -20,6 +20,7 @@ class OpeningFixingService {
                 pureWeight,
                 weightOz,
                 metalRateId,
+                bidvalue
             } = body;
 
             // 1️⃣ Fetch metal rate (authoritative source)
@@ -51,6 +52,7 @@ class OpeningFixingService {
                 throw createAppError("Invalid position type", 400);
             }
 
+            console.log(body)
 
             // 3️⃣ Create document
             const fixing = await OpeningFixing.create(
@@ -63,6 +65,8 @@ class OpeningFixingService {
 
                         division: divisionId,
                         salesman: salesmanId,
+
+                        bidvalue,
 
                         position,
                         pureWeight,
