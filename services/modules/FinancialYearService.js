@@ -2,6 +2,22 @@
 import FinancialYear from "../../models/modules/FinancialYearMaster.js";
 import { createAppError } from "../../utils/errorHandler.js";
 
+// Helper function to normalize date to UTC midnight (start of day)
+// This ensures dates are compared correctly regardless of timezone
+const normalizeDateToUTC = (date) => {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  
+  // Extract date components (year, month, day) and create UTC date at midnight
+  // This ensures the date represents the same calendar day regardless of timezone
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth();
+  const day = d.getUTCDate();
+  
+  return new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+};
+
 export class FinancialYearService {
   // CREATE
   static async createFinancialYear(financialYearData, adminId) {
@@ -25,15 +41,16 @@ export class FinancialYearService {
         );
       }
 
-      // Convert to Date objects
-      const start = new Date(startDate);
-      const end = new Date(endDate);
+      // Convert to Date objects and normalize to UTC midnight
+      const start = normalizeDateToUTC(startDate);
+      const end = normalizeDateToUTC(endDate);
 
       // Validate dates
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      if (!start || !end) {
         throw createAppError("Invalid date format", 400, "INVALID_DATE");
       }
 
+      // Compare normalized dates (both at UTC midnight)
       if (start >= end) {
         throw createAppError(
           "Start date must be before end date",
@@ -177,12 +194,19 @@ export class FinancialYearService {
       }
 
       // Validate and check date overlap if dates changed
-      let start = financialYear.startDate;
-      let end = financialYear.endDate;
+      // Normalize all dates to UTC midnight for consistent comparison
+      let start = normalizeDateToUTC(financialYear.startDate);
+      let end = normalizeDateToUTC(financialYear.endDate);
 
-      if (startDate) start = new Date(startDate);
-      if (endDate) end = new Date(endDate);
+      if (startDate) start = normalizeDateToUTC(startDate);
+      if (endDate) end = normalizeDateToUTC(endDate);
 
+      // Validate normalized dates
+      if (!start || !end) {
+        throw createAppError("Invalid date format", 400, "INVALID_DATE");
+      }
+
+      // Compare normalized dates (both at UTC midnight)
       if (start >= end) {
         throw createAppError(
           "Start date must be before end date",

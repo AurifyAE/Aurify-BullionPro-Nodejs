@@ -1239,7 +1239,7 @@ class MetalTransactionService {
           baseTransactionId,
           metalTransactionId,
           "012",
-          "PARTY_CASH_BALANCE",
+          "PARTY_ROUND_OFF_ADJUSTMENT",
           this.formatDescriptionWithRemarks(
             `Round off adjustment - ${transactionType} from ${partyName}`,
             true, // isPartyEntry
