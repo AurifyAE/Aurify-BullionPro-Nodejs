@@ -726,6 +726,7 @@ class AccountTypeService {
         { path: "acDefinition.branches.branch", select: "code name" },
         { path: "createdBy", select: "name email" },
         { path: "updatedBy", select: "name email" },
+        { path: "accountType", select: "name" },
         {
           path: "kycDetails.documentType",
           select: "name code validationProperties",

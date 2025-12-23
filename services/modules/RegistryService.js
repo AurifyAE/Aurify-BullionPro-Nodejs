@@ -217,6 +217,7 @@ class RegistryService {
           "PARTY_DISCOUNT",
           "PARTY_VAT_AMOUNT",
           "OTHER-CHARGE",
+          "PARTY_ROUND_OFF_ADJUSTMENT",
         ],
         mode: "party-cash",
       },
