@@ -17,3 +17,17 @@ export const createOpeningFixing = async (req, res, next) => {
         next(error);
     }
 };
+
+
+export const getAllOpeningFixings = async (req, res, next) => {
+    try {
+        const data = await OpeningFixingService.fetchAllOpeningFixings();
+
+        res.status(200).json({
+            success: true,
+            data,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
