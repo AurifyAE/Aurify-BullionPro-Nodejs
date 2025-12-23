@@ -226,6 +226,20 @@ class VoucherMasterService {
 
         return count;
       }
+      if (moduleLC === "opening-fixing") {
+        console.log(`[getTransactionCount] Using model: InventoryLog`);
+
+        const vouchers = await InventoryLog.distinct("voucherCode", {
+          transactionType: "opening",
+          isDraft: false,
+        });
+
+        const count = vouchers.length;
+
+        console.log(`[getTransactionCount] Distinct Voucher Count:`, count);
+
+        return count;
+      }
 
       if (moduleLC === "opening-stock-balance") {
         console.log("oneeeeee")
