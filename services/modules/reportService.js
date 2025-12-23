@@ -7,6 +7,7 @@ import util from "util";
 import Inventory from "../../models/modules/inventory.js";
 import Account from "../../models/modules/AccountType.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
+import OpeningBalance from "../../models/modules/OpeningBalance.js";
 import { uaeDateToUTC, getPreviousDayEndInUTC, utcToUAEDate } from "../../utils/dateUtils.js";
 const { ObjectId } = mongoose.Types;
 // ReportService class to handle stock ledger and movement reports
@@ -65,22 +66,6 @@ export class ReportService {
     try {
       if (!toDate) return null;
 
-      // Use shared transaction type definitions
-      const { goldTypes, cashTypes, mixedTypes } = this.getAccountStatementTransactionTypes();
-
-      // const goldTypes = ["PARTY_GOLD_BALANCE"];
-      // const cashTypes = [
-      //   "PARTY_CASH_BALANCE", 
-       
-      //   "PARTY_MAKING_CHARGES",  // Party-specific making charges
-       
-      //   "PARTY_PREMIUM",  // Party-specific premium
-      
-      //   "PARTY_DISCOUNT"  // Party-specific discount
-      // ];
-      // Transaction types that can have both cash and gold components
-      // const mixedTypes = ["PARTY_PURCHASE_FIX", "PARTY_SALE_FIX", "PARTY_HEDGE_ENTRY"];
-      
       // Calculate previous day end (end of the day before toDate) in UAE timezone
       // If toDate is Dec 21 (UAE time), calculate opening balance up to Dec 20 23:59:59.999 UAE time
       // toDate is treated as UAE local time, converted to UTC for MongoDB query
@@ -92,21 +77,15 @@ export class ReportService {
       const pipeline = [
         {
           $match: {
-            isActive: true,
-            $or: [
-              { type: { $in: goldTypes } },
-              { type: { $in: cashTypes } },
-              { type: { $in: mixedTypes } }
-            ],
-            // Include all transactions up to and including the end of previous day
-            // If toDate is Dec 21, this gets all transactions <= Dec 20 23:59:59.999
-            transactionDate: { $lte: previousDayEnd }
+            // Include all opening balances up to and including the end of previous day
+            // If toDate is Dec 21, this gets all opening balances <= Dec 20 23:59:59.999
+            voucherDate: { $lte: previousDayEnd }
           }
         },
         {
           $lookup: {
             from: "accounts",
-            localField: "party",
+            localField: "partyId",
             foreignField: "_id",
             as: "partyDetails"
           }
@@ -122,7 +101,7 @@ export class ReportService {
       // Apply voucher filter if provided
       if (filters.voucher?.length > 0) {
         const regexFilters = filters.voucher.map((v) => ({
-          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+          voucherCode: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
         }));
         pipeline.push({ $match: { $or: regexFilters } });
       }
@@ -131,31 +110,33 @@ export class ReportService {
       if (filters.accountType?.length > 0) {
         pipeline.push({
           $match: {
-            "party": { $in: filters.accountType },
+            "partyId": { $in: filters.accountType.map(id => new ObjectId(id)) },
           },
         });
       }
 
       pipeline.push({
         $addFields: {
-          partyId: "$party",
+          partyId: "$partyId",
           partyName: "$partyDetails.customerName"
         }
       });
       
-      // Filter by assetType based on baseCurrency and foreignCurrency settings
+      // Filter by assetCode based on baseCurrency and foreignCurrency settings
       // When baseCurrency is false and foreignCurrency is true, exclude AED transactions
       if (filters.baseCurrency === false && filters.foreignCurrency === true && filters.foreignCurrencySelected) {
-        // Exclude AED assetType transactions - only show foreign currency transactions
-        // Mixed types are always included (they may have foreign currency in cashDebit/cashCredit)
+        // Exclude AED assetCode transactions - only show foreign currency transactions
+        // GOLD transactions (assetType="GOLD") should always be included
         pipeline.push({
           $match: {
             $or: [
-              // Include transactions with matching foreign currency assetType
-              { assetType: filters.foreignCurrencySelected },
-              // Always include mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY)
-              // They may have foreign currency in their cashDebit/cashCredit fields
-              { type: { $in: mixedTypes } }
+              { assetType: "GOLD" }, // Always include gold transactions
+              {
+                $and: [
+                  { assetType: "CASH" },
+                  { assetCode: filters.foreignCurrencySelected }
+                ]
+              }
             ]
           }
         });
@@ -170,60 +151,56 @@ export class ReportService {
           cashDebit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$cashDebit", 0] }, // Mixed types: use cashDebit
                 {
-                  $cond: [
-                    { $in: ["$type", cashTypes] },
-                    { $ifNull: ["$debit", 0] }, // Cash types: use debit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "CASH"] },
+                    { $eq: ["$transactionType", "debit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           },
           cashCredit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$cashCredit", 0] }, // Mixed types: use cashCredit
                 {
-                  $cond: [
-                    { $in: ["$type", cashTypes] },
-                    { $ifNull: ["$credit", 0] }, // Cash types: use credit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "CASH"] },
+                    { $eq: ["$transactionType", "credit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           },
           goldDebit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$goldDebit", 0] }, // Mixed types: use goldDebit
                 {
-                  $cond: [
-                    { $in: ["$type", goldTypes] },
-                    { $ifNull: ["$debit", 0] }, // Gold types: use debit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "GOLD"] },
+                    { $eq: ["$transactionType", "debit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           },
           goldCredit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$goldCredit", 0] }, // Mixed types: use goldCredit
                 {
-                  $cond: [
-                    { $in: ["$type", goldTypes] },
-                    { $ifNull: ["$credit", 0] }, // Gold types: use credit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "GOLD"] },
+                    { $eq: ["$transactionType", "credit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           }
@@ -235,12 +212,12 @@ export class ReportService {
           _id: 0,
           partyId: "$_id.partyId",
           partyName: "$_id.partyName",
-          cashBalance: { $subtract: ["$cashDebit", "$cashCredit"] },
-          goldBalance: { $subtract: ["$goldDebit", "$goldCredit"] }
+          cashBalance: { $subtract: ["$cashCredit", "$cashDebit"] },
+          goldBalance: { $subtract: ["$goldCredit", "$goldDebit"] }
         }
       });
 
-      const openingBalances = await Registry.aggregate(pipeline);
+      const openingBalances = await OpeningBalance.aggregate(pipeline);
       
       // Format opening balances
       return openingBalances.map(party => ({
@@ -576,7 +553,7 @@ export class ReportService {
       return {
         success: true,
         data: reportData,
-        // openingBalance: openingBalance,
+        openingBalance: openingBalance,
         filters: validatedFilters,
         totalRecords: reportData.length,
       };
