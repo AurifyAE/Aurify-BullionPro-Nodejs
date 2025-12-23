@@ -7,6 +7,7 @@ import InventoryService from "./inventoryService.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import Entry from "../../models/modules/EntryModel.js";
+import PDCSchedule from "../../models/modules/PDCSchedule.js";
 import mongoose from "mongoose";
 
 class EntryService {
@@ -29,6 +30,21 @@ class EntryService {
     today.setHours(0, 0, 0, 0);
     d.setHours(0, 0, 0, 0);
     return d > today;
+  }
+
+  // Helper to normalize date to start of day (UTC)
+  static normalizeToStartOfDay(date) {
+    const d = new Date(date);
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+  }
+
+  // Helper to check if date is today or past
+  static isTodayOrPast(date) {
+    if (!date) return false;
+    const d = this.normalizeToStartOfDay(date);
+    const today = this.normalizeToStartOfDay(new Date());
+    return d <= today;
   }
 
   // Calculate FX Gain/Loss
@@ -245,29 +261,116 @@ class EntryService {
   static async handleCashTransaction(entry, isReceipt = true) {
     if (entry.status !== "approved") return;
 
+    // Only handle PDC logic for currency-receipt and currency-payment
+    const isCurrencyTransaction = ["currency-receipt", "currency-payment"].includes(entry.type);
+    
     const registryRows = [];
 
-    for (const c of entry.cash) {
+    for (let cashIndex = 0; cashIndex < entry.cash.length; cashIndex++) {
+      const c = entry.cash[cashIndex];
       const currency = await CurrencyMaster.findById(c.currency);
       const amount = Number(c.amount);
       const fxRate = Number(c.fxRate) || 1;
       const fxBaseRate = Number(c.fxBaseRate) || 1;
 
-      // Check if this is a post-dated cheque
+      // Check if this is a cheque transaction
       const isCheque = c.cashType === "cheque";
-      const isPostDatedCheque = isCheque && this.isPostDated(c.chequeDate);
-
-      // For post-dated cheques, use PDC accounts instead of actual bank account
-      if (isPostDatedCheque) {
-        // Get PDC accounts from the cheque bank's bankDetails
-        const chequeBank = await Account.findById(c.chequeBank);
-        if (chequeBank && chequeBank.bankDetails?.length > 0) {
-          const bankDetail = chequeBank.bankDetails[0];
-          c.pdcIssueAccount = bankDetail.pdcIssue;
-          c.pdcReceiptAccount = bankDetail.pdcReceipt;
+      const isPostDatedCheque = isCheque && c.chequeDate && this.isPostDated(c.chequeDate);
+      
+      // For currency transactions with cheques, validate and handle PDC
+      if (isCurrencyTransaction && isCheque) {
+        // Get bank account and its configuration
+        const bankAccount = await Account.findById(c.chequeBank || c.account);
+        if (!bankAccount) {
+          throw createAppError("Bank account not found", 404);
         }
-        c.isPDC = true;
-        c.pdcStatus = "pending";
+
+        // Find the bankDetails record (use the one matching chequeBank or first one)
+        let bankDetail = null;
+        if (bankAccount.bankDetails?.length > 0) {
+          bankDetail = bankAccount.bankDetails.find(
+            (bd) => bd._id?.toString() === c.chequeBank?.toString()
+          ) || bankAccount.bankDetails[0];
+        }
+
+        if (isPostDatedCheque) {
+          // Validate PDC configuration
+          if (isReceipt) {
+            if (!bankDetail?.pdcReceipt) {
+              throw createAppError(
+                "PDC Receipt account not configured for this bank",
+                400
+              );
+            }
+            if (bankDetail.pdcReceiptMaturityDays === undefined || bankDetail.pdcReceiptMaturityDays === null || bankDetail.pdcReceiptMaturityDays < 0) {
+              throw createAppError(
+                "PDC Receipt maturity days not configured for this bank",
+                400
+              );
+            }
+          } else {
+            // Payment
+            if (!bankDetail?.pdcIssue) {
+              throw createAppError(
+                "PDC Issue account not configured for this bank",
+                400
+              );
+            }
+            if (bankDetail.maturityDays === undefined || bankDetail.maturityDays === null || bankDetail.maturityDays < 0) {
+              throw createAppError(
+                "PDC Issue maturity days not configured for this bank",
+                400
+              );
+            }
+          }
+
+          // Calculate maturity posting date
+          const chequeDate = this.normalizeToStartOfDay(c.chequeDate);
+          const maturityDays = isReceipt 
+            ? bankDetail.pdcReceiptMaturityDays 
+            : bankDetail.maturityDays;
+          
+          const maturityPostingDate = new Date(chequeDate);
+          maturityPostingDate.setUTCDate(maturityPostingDate.getUTCDate() + maturityDays);
+
+          // Set PDC fields
+          c.isPDC = true;
+          c.pdcStatus = "pending";
+          c.maturityPostingDate = maturityPostingDate;
+          c.bankAccountId = bankAccount._id;
+          
+          if (isReceipt) {
+            c.pdcReceiptAccount = bankDetail.pdcReceipt;
+            c.pdcIssueAccount = null;
+          } else {
+            c.pdcIssueAccount = bankDetail.pdcIssue;
+            c.pdcReceiptAccount = null;
+          }
+
+          // Create PDC schedule
+          const pdcAccount = isReceipt ? bankDetail.pdcReceipt : bankDetail.pdcIssue;
+          await PDCSchedule.create({
+            entryId: entry._id,
+            cashItemIndex: cashIndex,
+            voucherCode: entry.voucherCode,
+            entryType: entry.type,
+            party: entry.party,
+            currency: c.currency,
+            amount: amount,
+            chequeDate: chequeDate,
+            maturityPostingDate: maturityPostingDate,
+            pdcAccount: pdcAccount,
+            bankAccountId: bankAccount._id,
+            pdcStatus: "pending",
+            remarks: c.remarks || entry.remarks || null,
+          });
+        } else {
+          // Today or past date - normal posting, no PDC
+          c.isPDC = false;
+          c.pdcStatus = null;
+          c.maturityPostingDate = null;
+          c.bankAccountId = bankAccount._id;
+        }
       }
 
       // Calculate FX Gain/Loss
@@ -291,15 +394,15 @@ class EntryService {
       let pdcAccount = null;
 
       if (isCheque) {
-        if (isPostDatedCheque) {
+        if (isPostDatedCheque && isCurrencyTransaction) {
           // For PDC: use PDC Issue (payment) or PDC Receipt (receipt) account
           pdcAccount = isReceipt ? c.pdcReceiptAccount : c.pdcIssueAccount;
-          // Don't update actual bank account yet - update PDC account
+          // Update PDC account now, bank account will be updated at maturity
           if (pdcAccount) {
             await this.updateAccountCashBalance(pdcAccount, c.currency, oppChange);
           }
         } else {
-          // Current date cheque - use actual bank account
+          // Current date cheque or non-currency transaction - use actual bank account
           opposite = c.chequeBank || c.account;
           if (opposite) {
             await this.updateAccountCashBalance(opposite, c.currency, oppChange);
@@ -339,14 +442,14 @@ class EntryService {
       });
 
       // Registry for opposite account (Bank/Cash/PDC)
-      if (isPostDatedCheque && pdcAccount) {
-        // PDC Account registry entry - use PDC_ENTRY type
+      if (isPostDatedCheque && isCurrencyTransaction && pdcAccount) {
+        // PDC Account registry entry - NOW posting
         registryRows.push({
           transactionType: entry.type,
           transactionId: await Registry.generateTransactionId(),
           EntryTransactionId: entry._id,
           type: "PDC_ENTRY",
-          description: `${desc} - ${isReceipt ? "PDC Receipt" : "PDC Issue"}`,
+          description: `${desc} - ${isReceipt ? "PDC Receipt" : "PDC Issue"} (NOW)`,
           value: amount,
           [isReceipt ? "debit" : "credit"]: amount,
           [isReceipt ? "cashDebit" : "cashCredit"]: amount,
@@ -356,7 +459,7 @@ class EntryService {
           currency: c.currency,
         });
       } else if (opposite) {
-        // Opposite account registry (Bank/Cash account) - BULLION_ENTRY
+        // Normal bank/cash account registry
         registryRows.push({
           transactionType: entry.type,
           transactionId: await Registry.generateTransactionId(),
@@ -373,7 +476,7 @@ class EntryService {
         });
       }
 
-      // FX Gain/Loss registry entries - use FX_EXCHANGE type
+      // FX Gain/Loss registry entries
       if (fxGain > 0) {
         registryRows.push({
           transactionType: entry.type,
@@ -665,9 +768,20 @@ class EntryService {
   }
 
   // ------------------------------------------------------------------------
-  // CLEANUP REGISTRY + INVENTORY LOGS
+  // CLEANUP REGISTRY + INVENTORY LOGS + PDC SCHEDULES
   // ------------------------------------------------------------------------
   static async cleanup(voucherCode) {
+    // Cancel any pending PDC schedules for this voucher
+    await PDCSchedule.updateMany(
+      { voucherCode, pdcStatus: "pending" },
+      {
+        $set: {
+          pdcStatus: "cancelled",
+          processedAt: new Date(),
+        },
+      }
+    );
+
     await Promise.all([
       RegistryService.deleteRegistryByVoucher(voucherCode),
       InventoryLog.deleteMany({ voucherCode }),
@@ -859,6 +973,258 @@ class EntryService {
     ]);
 
     return { entries, total, page, pages: Math.ceil(total / limit) };
+  }
+
+  // ------------------------------------------------------------------------
+  // PROCESS MATURED PDCs (Cron Job)
+  // ------------------------------------------------------------------------
+  static async processMaturedPDCs(adminId = null) {
+    const today = this.normalizeToStartOfDay(new Date());
+    
+    // Find all pending PDCs where maturityPostingDate <= today
+    const maturedPDCs = await PDCSchedule.find({
+      pdcStatus: "pending",
+      maturityPostingDate: { $lte: today },
+    })
+      .populate("entryId")
+      .populate("party")
+      .populate("currency")
+      .populate("pdcAccount")
+      .populate("bankAccountId")
+      .lean();
+
+    const results = {
+      processed: 0,
+      errors: [],
+      skipped: 0,
+    };
+
+    for (const schedule of maturedPDCs) {
+      try {
+        // Double-check entry still exists and is approved
+        const entry = await Entry.findById(schedule.entryId);
+        if (!entry || entry.status !== "approved") {
+          results.skipped++;
+          continue;
+        }
+
+        // Get the cash item
+        const cashItem = entry.cash[schedule.cashItemIndex];
+        if (!cashItem || !cashItem.isPDC || cashItem.pdcStatus !== "pending") {
+          results.skipped++;
+          continue;
+        }
+
+        // Verify maturity date matches (idempotency check)
+        const cashItemMaturityDate = cashItem.maturityPostingDate 
+          ? this.normalizeToStartOfDay(cashItem.maturityPostingDate)
+          : null;
+        
+        if (cashItemMaturityDate && cashItemMaturityDate > today) {
+          results.skipped++;
+          continue;
+        }
+
+        // Check if already processed (idempotency)
+        const existingRegistry = await Registry.findOne({
+          EntryTransactionId: entry._id,
+          type: "PDC_MATURITY",
+          reference: entry.voucherCode,
+        });
+
+        if (existingRegistry) {
+          // Already processed, just update status
+          await PDCSchedule.updateOne(
+            { _id: schedule._id },
+            {
+              $set: {
+                pdcStatus: "cleared",
+                processedAt: new Date(),
+                processedBy: adminId,
+              },
+            }
+          );
+          results.skipped++;
+          continue;
+        }
+
+        const amount = Number(schedule.amount);
+        const isReceipt = schedule.entryType === "currency-receipt";
+        const registryRows = [];
+
+        // Reverse PDC account entry
+        const pdcReverseChange = isReceipt ? -amount : amount;
+        await this.updateAccountCashBalance(
+          schedule.pdcAccount,
+          schedule.currency,
+          pdcReverseChange
+        );
+
+        // Credit/Debit bank account
+        const bankChange = isReceipt ? -amount : amount;
+        await this.updateAccountCashBalance(
+          schedule.bankAccountId,
+          schedule.currency,
+          bankChange
+        );
+
+        // Registry: Reverse PDC account
+        registryRows.push({
+          transactionType: schedule.entryType,
+          transactionId: await Registry.generateTransactionId(),
+          EntryTransactionId: entry._id,
+          type: "PDC_MATURITY",
+          description: `PDC Maturity - ${isReceipt ? "PDC Receipt" : "PDC Issue"} reversed - ${schedule.voucherCode}`,
+          value: amount,
+          [isReceipt ? "credit" : "debit"]: amount,
+          [isReceipt ? "cashCredit" : "cashDebit"]: amount,
+          reference: schedule.voucherCode,
+          createdBy: adminId || entry.enteredBy,
+          party: schedule.pdcAccount,
+          currency: schedule.currency,
+        });
+
+        // Registry: Post to bank account
+        registryRows.push({
+          transactionType: schedule.entryType,
+          transactionId: await Registry.generateTransactionId(),
+          EntryTransactionId: entry._id,
+          type: "PDC_MATURITY",
+          description: `PDC Maturity - Posted to Bank - ${schedule.voucherCode}`,
+          value: amount,
+          [isReceipt ? "debit" : "credit"]: amount,
+          [isReceipt ? "cashDebit" : "cashCredit"]: amount,
+          reference: schedule.voucherCode,
+          createdBy: adminId || entry.enteredBy,
+          party: schedule.bankAccountId,
+          currency: schedule.currency,
+        });
+
+        await Registry.create(registryRows);
+
+        // Update cash item status
+        cashItem.pdcStatus = "cleared";
+        await entry.save();
+
+        // Update schedule status
+        await PDCSchedule.updateOne(
+          { _id: schedule._id },
+          {
+            $set: {
+              pdcStatus: "cleared",
+              processedAt: new Date(),
+              processedBy: adminId,
+            },
+          }
+        );
+
+        results.processed++;
+      } catch (error) {
+        console.error(`Error processing PDC schedule ${schedule._id}:`, error);
+        results.errors.push({
+          scheduleId: schedule._id,
+          voucherCode: schedule.voucherCode,
+          error: error.message,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  // ------------------------------------------------------------------------
+  // CANCEL PDC (Reverse NOW entry and mark cancelled)
+  // ------------------------------------------------------------------------
+  static async cancelPDC(entryId, cashItemIndex, adminId) {
+    const entry = await Entry.findById(entryId);
+    if (!entry) throw createAppError("Entry not found", 404);
+
+    const cashItem = entry.cash[cashItemIndex];
+    if (!cashItem) throw createAppError("Cash item not found", 404);
+
+    if (!cashItem.isPDC || cashItem.pdcStatus !== "pending") {
+      throw createAppError("This is not a pending PDC", 400);
+    }
+
+    // Find the schedule
+    const schedule = await PDCSchedule.findOne({
+      entryId: entry._id,
+      cashItemIndex: cashItemIndex,
+      pdcStatus: "pending",
+    });
+
+    if (!schedule) {
+      throw createAppError("PDC schedule not found", 404);
+    }
+
+    const amount = Number(cashItem.amount);
+    const isReceipt = entry.type === "currency-receipt";
+    const currency = await CurrencyMaster.findById(cashItem.currency);
+    const registryRows = [];
+
+    // Reverse party balance
+    const partyReverseChange = isReceipt ? -amount : amount;
+    await this.updateAccountCashBalance(entry.party, cashItem.currency, partyReverseChange);
+
+    // Reverse PDC account balance
+    const pdcAccount = isReceipt ? cashItem.pdcReceiptAccount : cashItem.pdcIssueAccount;
+    if (pdcAccount) {
+      const pdcReverseChange = isReceipt ? -amount : amount;
+      await this.updateAccountCashBalance(pdcAccount, cashItem.currency, pdcReverseChange);
+
+      // Registry: Reverse PDC account
+      registryRows.push({
+        transactionType: entry.type,
+        transactionId: await Registry.generateTransactionId(),
+        EntryTransactionId: entry._id,
+        type: "PDC_ENTRY",
+        description: `PDC Cancelled - ${isReceipt ? "PDC Receipt" : "PDC Issue"} reversed - ${currency.currencyCode} ${amount}`,
+        value: amount,
+        [isReceipt ? "credit" : "debit"]: amount,
+        [isReceipt ? "cashCredit" : "cashDebit"]: amount,
+        reference: entry.voucherCode,
+        createdBy: adminId,
+        party: pdcAccount,
+        currency: cashItem.currency,
+      });
+    }
+
+    // Registry: Reverse party balance
+    registryRows.push({
+      transactionType: entry.type,
+      transactionId: await Registry.generateTransactionId(),
+      EntryTransactionId: entry._id,
+      type: "PARTY_CASH_BALANCE",
+      description: `PDC Cancelled - Party balance reversed - ${currency.currencyCode} ${amount}`,
+      value: amount,
+      [isReceipt ? "debit" : "credit"]: amount,
+      [isReceipt ? "cashDebit" : "cashCredit"]: amount,
+      reference: entry.voucherCode,
+      createdBy: adminId,
+      party: entry.party,
+      currency: cashItem.currency,
+    });
+
+    await Registry.create(registryRows);
+
+    // Update cash item status
+    cashItem.pdcStatus = "cancelled";
+    cashItem.isPDC = false;
+    await entry.save();
+
+    // Update schedule status
+    await PDCSchedule.updateOne(
+      { _id: schedule._id },
+      {
+        $set: {
+          pdcStatus: "cancelled",
+          processedAt: new Date(),
+          processedBy: adminId,
+        },
+      }
+    );
+
+    return entry;
   }
 }
 

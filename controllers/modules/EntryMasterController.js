@@ -134,6 +134,7 @@ console.log(req.body)
         "cash-receipt": () => EntryService.handleCashTransaction(entry, true),
         "cash-payment": () => EntryService.handleCashTransaction(entry, false),
         "currency-receipt": () => EntryService.handleCashTransaction(entry, true),
+        "currency-payment": () => EntryService.handleCashTransaction(entry, false),
       };
 
       if (handlers[type]) await handlers[type]();
@@ -204,6 +205,7 @@ const editEntry = async (req, res) => {
         "cash-receipt": () => EntryService.handleCashTransaction(entry, true),
         "cash-payment": () => EntryService.handleCashTransaction(entry, false),
         "currency-receipt": () => EntryService.handleCashTransaction(entry, true),
+        "currency-payment": () => EntryService.handleCashTransaction(entry, false),
       };
 
       if (handlers[type]) await handlers[type]();
