@@ -77,7 +77,7 @@ class OpeningFixingService {
 
     static async fetchAllOpeningFixings() {
         const fixings = await OpeningFixing.find()
-            .populate("division", "name code")
+            .populate("division", "code description")
             .populate("salesman", "name")
             .populate("metalRate", "rateType convFactGms")
             .populate("createdBy", "name email")
