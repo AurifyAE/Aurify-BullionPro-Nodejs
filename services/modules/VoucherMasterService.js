@@ -230,7 +230,7 @@ class VoucherMasterService {
         console.log(`[getTransactionCount] Using model: InventoryLog`);
 
         const vouchers = await InventoryLog.distinct("voucherCode", {
-          transactionType: "opening",
+          transactionType: "opening-fixing",
           isDraft: false,
         });
 
