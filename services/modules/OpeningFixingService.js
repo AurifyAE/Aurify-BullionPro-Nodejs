@@ -2,12 +2,12 @@ import mongoose from "mongoose";
 import OpeningFixing from "../../models/modules/OpeningFixing.js";
 import MetalRate from "../../models/modules/MetalRateMaster.js";
 import { createAppError } from "../../utils/errorHandler.js";
+import Registry from "../../models/modules/Registry.js";
 
 class OpeningFixingService {
     static async createOpeningFixing(body, adminId) {
         const session = await mongoose.startSession();
         session.startTransaction();
-
         try {
             const {
                 voucherNumber,
@@ -20,7 +20,6 @@ class OpeningFixingService {
                 pureWeight,
                 weightOz,
                 metalRateId,
-                accountingImpact,
             } = body;
 
             // 1️⃣ Fetch metal rate (authoritative source)
@@ -36,6 +35,22 @@ class OpeningFixingService {
 
             // 2️⃣ Business calculation (FINAL)
             const metalValue = Number(pureWeight) * convFactGms;
+            let accountingImpact;
+
+            if (position === "LONG") {
+                accountingImpact = {
+                    gold: "DEBIT",
+                    cash: "CREDIT",
+                };
+            } else if (position === "SHORT") {
+                accountingImpact = {
+                    gold: "CREDIT",
+                    cash: "DEBIT",
+                };
+            } else {
+                throw createAppError("Invalid position type", 400);
+            }
+
 
             // 3️⃣ Create document
             const fixing = await OpeningFixing.create(
@@ -54,15 +69,74 @@ class OpeningFixingService {
                         weightOz,
 
                         metalRate: metalRateId,
-                        metalRateValue: convFactGms, // snapshot
+                        metalRateValue: convFactGms,
                         metalValue,
 
-                        accountingImpact,
+                        accountingImpact, // ✅ REQUIRED FIELD FIXED
+
                         createdBy: adminId,
                     },
                 ],
                 { session, ordered: true }
             );
+
+
+            const isLong = position === "LONG";
+
+            const goldDebit = isLong ? pureWeight : 0;
+            const goldCredit = isLong ? 0 : pureWeight;
+
+            const cashDebit = isLong ? 0 : metalValue;
+            const cashCredit = isLong ? metalValue : 0;
+
+   
+
+            const registryEntry = await Registry.create(
+                [
+                    {
+                        transactionId: voucherNumber,
+                        transactionType: "opening",
+
+                        assetType: "XAU",
+                        currencyRate: 1,
+
+                        costCenter: "INVENTORY",
+                        type: "OPENING_FIXING_POSITION",
+                        description: "OPENING FIXING POSITION",
+
+                        party: null,
+                        isBullion: true,
+
+                        // 💰 CASH LEDGER
+                        cashDebit,
+                        cashCredit,
+
+                        // 🪙 GOLD LEDGER
+                        goldDebit,
+                        goldCredit,
+
+                        // VALUE SNAPSHOT
+                        value: metalValue,
+                        goldBidValue: null,
+
+                        debit:  cashDebit,
+                        credit: cashCredit,
+
+                        reference: voucherNumber,
+                        hedgeReference: null,
+
+                        status: "completed",
+                        isActive: true,
+                        isDraft: false,
+
+                        createdBy: adminId,
+                        transactionDate: voucherDate,
+                    },
+                ],
+                { session, ordered: true }
+            );
+
+
 
             await session.commitTransaction();
             session.endSession();
