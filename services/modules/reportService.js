@@ -3617,7 +3617,7 @@ export class ReportService {
         {
           $match: {
             isActive: true,
-            type: "OPENING FIXING POSTION", // Match the exact type
+            type: "OPENING_FIXING_POSITION", // Match the exact type
             transactionDate: { $lte: previousDay },
           },
         },
@@ -3972,7 +3972,7 @@ export class ReportService {
     try {
       const matchConditions = {
         isActive: true,
-        type: "METAL STOCK ADJUSTMENT",
+        type: "STOCK_ADJUSTMENT",
         transactionDate: {},
       };
 
