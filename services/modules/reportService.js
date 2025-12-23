@@ -3763,12 +3763,12 @@ export class ReportService {
       }
 
       const pipeline = [
-        // Step 1: Match Registry by date, voucher, and type GOLD_STOCK
+        // Step 1: Match Registry by date, voucher, and type GOLD_STOCK or purchase-fixing/sales-fixing
         {
           $match: {
             ...matchConditions,
             ...voucherMatch,
-            type: "GOLD_STOCK", // Filter only GOLD_STOCK type entries
+            type: { $in: ["purchase-fixing", "sales-fixing"] }, // Filter GOLD_STOCK or fixing types
             metalTransactionId: { $exists: true, $ne: null },
           },
         },
@@ -4026,15 +4026,18 @@ export class ReportService {
     try {
       const matchConditions = {
         isActive: true,
-        type: "PURITY DIFFERENCE",
-        transactionDate: {},
+        type: "PURITY_DIFFERENCE",
       };
 
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
       }
 
       const pipeline = [
@@ -4046,6 +4049,7 @@ export class ReportService {
             _id: null,
             totalGold: {
               $sum: {
+                // Use credit - debit for gold amount
                 $subtract: [
                   { $ifNull: ["$credit", 0] },
                   { $ifNull: ["$debit", 0] },
@@ -4053,7 +4057,13 @@ export class ReportService {
               },
             },
             totalValue: {
-              $sum: { $ifNull: ["$value", 0] },
+              $sum: {
+                // Use credit - debit for value (not goldCredit/goldDebit)
+                $subtract: [
+                  { $ifNull: ["$credit", 0] },
+                  { $ifNull: ["$debit", 0] },
+                ],
+              },
             },
           },
         },
@@ -4068,7 +4078,20 @@ export class ReportService {
       ];
 
       const result = await Registry.aggregate(pipeline);
-      return result.length > 0 ? result : [{ category: "purityDifference", totalGold: 0, totalValue: 0 }];
+      
+      // Debug logging
+      console.log("PURITY_DIFFERENCE query result:", JSON.stringify(result, null, 2));
+      console.log("Match conditions:", JSON.stringify(matchConditions, null, 2));
+      
+      if (result.length > 0) {
+        // Check if totals are actually 0 or if there's data
+        const data = result[0];
+        console.log("Purity difference data:", data);
+        return result;
+      } else {
+        // Return default structure
+        return [{ category: "purityDifference", totalGold: 0, totalValue: 0 }];
+      }
     } catch (error) {
       console.error("Error getting purity difference:", error);
       return [{ category: "purityDifference", totalGold: 0, totalValue: 0 }];
@@ -4346,7 +4369,7 @@ export class ReportService {
         value: openingBalance.openingValue || 0,
       },
       purchases: {
-        whlPurchases: {
+        Purchases: {
           gold: purchaseData.totalGold || 0,
           value: purchaseData.totalValue || 0,
         },
@@ -4380,7 +4403,7 @@ export class ReportService {
         },
       },
       sales: {
-        whlSales: {
+        Sales: {
           gold: saleData.totalGold || 0,
           value: saleData.totalValue || 0,
         },
