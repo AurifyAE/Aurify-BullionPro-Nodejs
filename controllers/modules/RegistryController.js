@@ -232,13 +232,13 @@ export const getStockAdjustmentAuditTrail = async (req, res, next) => {
     next(err);
   }
 };
-export const getPurchaseFixingAuditTrail = async (req, res, next) => {
+export const getOpeningFixingAuditTrail = async (req, res, next) => {
   try {
     const { purchaseFixingId } = req.params;
 
     console.log(purchaseFixingId);
 
-    const data = await RegistryService.generatePurchaseFixingAuditTrail(purchaseFixingId);
+    const data = await RegistryService.generateOpeningFixingAuditTrail(purchaseFixingId);
 
     if (!data) {
       return res.status(404).json({
