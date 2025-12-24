@@ -106,6 +106,29 @@ class DealOrderService {
       }
     }
 
+    // Filter by deliveryDate (single date - find orders with delivery on that day)
+    // The date string comes as "YYYY-MM-DD" representing a date in UAE timezone
+    // In DB, dates are stored as UTC midnight (e.g., "2025-12-19T00:00:00.000Z")
+    // UAE date "2025-12-19" spans from 2025-12-18 20:00 UTC to 2025-12-19 20:00 UTC (exclusive)
+    // So we match: >= 2025-12-18T20:00:00.000Z AND < 2025-12-19T20:00:00.000Z
+    if (query.deliveryDate) {
+      const dateStr = query.deliveryDate; // Format: "YYYY-MM-DD"
+      const [year, month, day] = dateStr.split('-').map(Number);
+      
+      // Start of day in UAE (UTC+4): 2025-12-19 00:00:00 UAE = 2025-12-18 20:00:00 UTC
+      const startOfDay = new Date(Date.UTC(year, month - 1, day - 1, 20, 0, 0, 0));
+      
+      // End of day: up to but not including next day's start in UAE
+      // 2025-12-19 20:00:00 UTC = start of 2025-12-20 in UAE
+      // So we use < 2025-12-19T20:00:00.000Z, which means <= 2025-12-19T19:59:59.999Z
+      const endOfDay = new Date(Date.UTC(year, month - 1, day, 19, 59, 59, 999));
+
+      filters.deliveryDate = {
+        $gte: startOfDay,
+        $lte: endOfDay,
+      };
+    }
+
     return filters;
   }
 
@@ -114,12 +137,15 @@ class DealOrderService {
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
     const skip = (page - 1) * limit;
     const filters = DealOrderService.buildFilters(query);
-
+    console.log("filters:", filters);
     const FetchQuery = DealOrder.find(filters)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("partyCode", "accountCode customerName")
+      .populate({
+        path: "partyCode",
+        select: "accountCode customerName"
+      })
       .populate("salesmanId", "name code")
       .populate("stockItems.stockCode", "code description")
       .populate("partyCurrency", "currencyCode convertRate purchasePrice sellPrice")
@@ -151,7 +177,10 @@ class DealOrderService {
       _id: id,
       isDeleted: false,
     })
-      .populate("partyCode", "accountCode customerName")
+      .populate({
+        path: "partyCode",
+        select: "accountCode customerName"
+      })
       .populate("salesmanId", "name code")
       .populate("stockItems.stockCode", "code description grossWeight purity")
       .populate("partyCurrency", "currencyCode convertRate purchasePrice sellPrice")
@@ -180,7 +209,10 @@ class DealOrderService {
       { ...payload, updatedBy: adminId },
       { new: true }
     )
-      .populate("partyCode", "accountCode customerName")
+      .populate({
+        path: "partyCode",
+        select: "accountCode customerName"
+      })
       .populate("salesmanId", "name code")
       .populate("stockItems.stockCode", "code description")
       .populate("partyCurrency", "currencyCode convertRate")
@@ -222,7 +254,10 @@ class DealOrderService {
       },
       { new: true }
     )
-      .populate("partyCode", "accountCode customerName")
+      .populate({
+        path: "partyCode",
+        select: "accountCode customerName"
+      })
       .populate("salesmanId", "name code");
 
     if (!dealOrder) {
@@ -285,7 +320,10 @@ class DealOrderService {
       update,
       { new: true }
     )
-      .populate("partyCode", "accountCode customerName")
+      .populate({
+        path: "partyCode",
+        select: "accountCode customerName"
+      })
       .populate("salesmanId", "name code");
 
     if (!dealOrder) {
