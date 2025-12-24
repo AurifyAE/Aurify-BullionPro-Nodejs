@@ -7,6 +7,7 @@ import util from "util";
 import Inventory from "../../models/modules/inventory.js";
 import Account from "../../models/modules/AccountType.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
+import AccountMode from "../../models/modules/AccountMode.js";
 import OpeningBalance from "../../models/modules/OpeningBalance.js";
 import { uaeDateToUTC, getPreviousDayEndInUTC, utcToUAEDate } from "../../utils/dateUtils.js";
 const { ObjectId } = mongoose.Types;
@@ -760,38 +761,52 @@ export class ReportService {
       // 1. Validate and normalize filters
       const validatedFilters = this.validateFilters(filters);
 
-      // 2. Construct aggregation pipelines
-      const stockPipeline = this.OwnStockPipeLine(validatedFilters);
-
-      let openingDate = null;
-      let getOpeningBalance = { opening: 0, purityDifference: 100, netPurchase: 0 };
-      if (!filters.excludeOpening) {
-        openingDate = filters.fromDate;
-        getOpeningBalance = await this.getOpeningBalance(openingDate, validatedFilters);
+      // 2. Get opening balance (only OFP type)
+      let openingBalance = { opening: 0, purityDifference: 0, netPurchase: 0 };
+      if (!filters.excludeOpening && filters.fromDate) {
+        openingBalance = await this.getOwnStockOpeningBalance(filters.fromDate, validatedFilters);
       }
 
-      const receivablesPayablesPipeline = this.getReceivablesAndPayables();
+      // 3. Get MetalTransaction data (fixed=true only)
+      const metalTransactionData = await this.getOwnStockMetalTransactions(validatedFilters);
 
-      // 3. Run both aggregations in parallel
-      const [reportData, receivablesAndPayables] = await Promise.all([
-        Registry.aggregate(stockPipeline),
-        Account.aggregate(receivablesPayablesPipeline),
-      ]);
+      // 4. Get Purchase Fix / Sale Fix from TransactionFixing
+      const fixingData = await this.getOwnStockFixingTransactions(validatedFilters);
 
-     
+      // 5. Get Adjustments (MSA)
+      const adjustmentData = await this.getOwnStockAdjustments(validatedFilters);
 
-      // 4. Format the output
-      const formatted = this.formatedOwnStock(reportData, receivablesAndPayables, getOpeningBalance);
+      // 6. Get Purity Gain/Loss
+      const purityData = await this.getOwnStockPurityDifference(validatedFilters);
 
-      // 5. Return structured response
+      // 7. Get Receivables and Payables
+      const receivablesPayables = await this.getOwnStockReceivablesPayables();
+
+      // 8. Get Inventory Logs summary
+      const inventoryData = await this.getOwnStockInventoryLogs(validatedFilters);
+
+      // 9. Format the output
+      const formatted = this.formatOwnStockData({
+        openingBalance,
+        metalTransactionData,
+        fixingData,
+        adjustmentData,
+        purityData,
+        receivablesPayables,
+        inventoryData,
+        filters: validatedFilters
+      });
+
+      // 10. Return structured response
       return {
         success: true,
         data: formatted,
-        totalRecords: reportData.length,
+        totalRecords: 1,
+        filters: validatedFilters,
       };
     } catch (error) {
-      console.error("Error generating stock by stockCode report:", error);
-      throw new Error(`Failed to generate stock report: ${error.message}`);
+      console.error("Error generating own stock report:", error);
+      throw new Error(`Failed to generate own stock report: ${error.message}`);
     }
   }
 
@@ -3567,6 +3582,54 @@ export class ReportService {
     }
   }
 
+  // New method for Own Stock Opening Balance (OFP only)
+  async getOwnStockOpeningBalance(fromDate, filters) {
+    try {
+      if (!fromDate) return { opening: 0, purityDifference: 0, netPurchase: 0 };
+
+      const startDate = uaeDateToUTC(fromDate, 'start');
+      const previousDay = getPreviousDayEndInUTC(fromDate);
+
+      const pipeline = [
+        {
+          $match: {
+            isActive: true,
+            type: "OPENING_FIXING_POSITION", // Match the exact type
+            transactionDate: { $lte: previousDay },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalGoldCredit: { $sum: { $ifNull: ["$goldCredit", 0] } },
+            totalGoldDebit: { $sum: { $ifNull: ["$goldDebit", 0] } },
+            totalValue: { $sum: { $ifNull: ["$value", 0] } },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            opening: { $subtract: ["$totalGoldCredit", "$totalGoldDebit"] },
+            openingValue: "$totalValue",
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      const data = result[0] || { opening: 0, openingValue: 0 };
+
+      return {
+        opening: data.opening || 0,
+        openingValue: data.openingValue || 0,
+        purityDifference: 0,
+        netPurchase: 0,
+      };
+    } catch (error) {
+      console.error("Error calculating own stock opening balance:", error);
+      return { opening: 0, openingValue: 0, purityDifference: 0, netPurchase: 0 };
+    }
+  }
+
 
 
 
@@ -3651,6 +3714,502 @@ export class ReportService {
 
     return pipeline;
   }
+
+  // Get MetalTransaction data grouped by transactionType (fixed=true only)
+  async getOwnStockMetalTransactions(filters) {
+    try {
+      const matchConditions = {
+        isActive: true,
+        transactionDate: {},
+      };
+
+      if (filters.startDate) {
+        matchConditions.transactionDate.$gte = filters.startDate;
+      }
+      if (filters.endDate) {
+        matchConditions.transactionDate.$lte = filters.endDate;
+      }
+
+      // Apply voucher filter if provided
+      let voucherMatch = {};
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        voucherMatch = { $or: regexFilters };
+      }
+
+      const pipeline = [
+        // Step 1: Match Registry by date, voucher, and type GOLD_STOCK or purchase-fixing/sales-fixing
+        {
+          $match: {
+            ...matchConditions,
+            ...voucherMatch,
+            type: { $in: ["purchase-fixing", "sales-fixing"] }, // Filter GOLD_STOCK or fixing types
+            metalTransactionId: { $exists: true, $ne: null },
+          },
+        },
+        // Step 2: Lookup MetalTransaction
+        {
+          $lookup: {
+            from: "metaltransactions",
+            localField: "metalTransactionId",
+            foreignField: "_id",
+            as: "metalTransaction",
+          },
+        },
+        {
+          $unwind: {
+            path: "$metalTransaction",
+            preserveNullAndEmptyArrays: false,
+          },
+        },
+        // Step 3: Filter only fixed=true transactions
+        {
+          $match: {
+            "metalTransaction.fixed": true,
+          },
+        },
+        // Step 4: Unwind stockItems
+        {
+          $unwind: {
+            path: "$metalTransaction.stockItems",
+            preserveNullAndEmptyArrays: false,
+          },
+        },
+        // Step 5: Group by transactionType category
+        {
+          $group: {
+            _id: {
+              $switch: {
+                branches: [
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: "purchase" },
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: "purchaseReturn" },
+                  { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: "sale" },
+                  { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: "saleReturn" },
+                ],
+                default: "other",
+              },
+            },
+            totalGold: {
+              $sum: {
+                $switch: {
+                  branches: [
+                    // Purchase: goldCredit increases stock
+                    { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$goldCredit", 0] } },
+                    // Purchase Return: goldDebit decreases stock (negative)
+                    { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
+                    // Sale: goldDebit decreases stock (negative)
+                    { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
+                    // Sale Return: goldCredit increases stock
+                    { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$goldCredit", 0] } },
+                  ],
+                  default: 0,
+                },
+              },
+            },
+            totalValue: {
+              $sum: {
+                $switch: {
+                  branches: [
+                    // Purchase: cashDebit is the cost (positive)
+                    { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$cashDebit", 0] } },
+                    // Purchase Return: cashCredit is refund (negative)
+                    { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
+                    // Sale: cashCredit is revenue (negative for net calculation)
+                    { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
+                    // Sale Return: cashDebit is refund (positive)
+                    { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$cashDebit", 0] } },
+                  ],
+                  default: 0,
+                },
+              },  
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            category: "$_id",
+            totalGold: 1,
+            totalValue: 1,
+          },
+        },
+        // Filter out "other" category
+        {
+          $match: {
+            category: { $ne: "other" },
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      return result;
+    } catch (error) {
+      console.error("Error getting metal transactions:", error);
+      return [];
+    }
+  }
+
+  // Get Purchase Fix / Sale Fix from TransactionFixing
+  async getOwnStockFixingTransactions(filters) {
+    try {
+      const matchConditions = {
+        isActive: true,
+        transactionDate: {},
+      };
+
+      if (filters.startDate) {
+        matchConditions.transactionDate.$gte = filters.startDate;
+      }
+      if (filters.endDate) {
+        matchConditions.transactionDate.$lte = filters.endDate;
+      }
+
+      // Apply voucher filter if provided
+      let voucherMatch = {};
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        voucherMatch = { $or: regexFilters };
+      }
+
+      const pipeline = [
+        {
+          $match: {
+            ...matchConditions,
+            ...voucherMatch,
+            type: { $in: ["purchase-fixing", "sales-fixing"] },
+          },
+        },
+        {
+          $lookup: {
+            from: "transactionfixings",
+            localField: "fixingTransactionId",
+            foreignField: "_id",
+            as: "transactionFixing",
+          },
+        },
+        {
+          $unwind: {
+            path: "$transactionFixing",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $group: {
+            _id: "$type",
+            totalGold: {
+              $sum: {
+                // Calculate: goldCredit - goldDebit
+                $subtract: [
+                  { $ifNull: ["$goldCredit", 0] },
+                  { $ifNull: ["$goldDebit", 0] }
+                ]
+              },
+            },
+            totalValue: {
+              $sum: {
+                // Calculate: cashDebit - cashCredit
+                $subtract: [
+                  { $ifNull: ["$cashDebit", 0] },
+                  { $ifNull: ["$cashCredit", 0] }
+                ]
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            category: {
+              $cond: [
+                { $eq: ["$_id", "purchase-fixing"] },
+                "purchaseFix",
+                "saleFix",
+              ],
+            },
+            totalGold: 1,
+            totalValue: 1,
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      return result;
+    } catch (error) {
+      console.error("Error getting fixing transactions:", error);
+      return [];
+    }
+  }
+
+  // Get Adjustments (MSA)
+  async getOwnStockAdjustments(filters) {
+    try {
+      const matchConditions = {
+        isActive: true,
+        type: "STOCK_ADJUSTMENT",
+        transactionDate: {},
+      };
+
+      if (filters.startDate) {
+        matchConditions.transactionDate.$gte = filters.startDate;
+      }
+      if (filters.endDate) {
+        matchConditions.transactionDate.$lte = filters.endDate;
+      }
+
+      const pipeline = [
+        {
+          $match: matchConditions,
+        },
+        {
+          $group: {
+            _id: null,
+            totalGold: {
+              $sum: {
+                $subtract: [
+                  { $ifNull: ["$goldCredit", 0] },
+                  { $ifNull: ["$goldDebit", 0] },
+                ],
+              },
+            },
+            totalValue: {
+              $sum: { $ifNull: ["$value", 0] },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            category: "adjustment",
+            totalGold: 1,
+            totalValue: 1,
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      return result.length > 0 ? result : [{ category: "adjustment", totalGold: 0, totalValue: 0 }];
+    } catch (error) {
+      console.error("Error getting adjustments:", error);
+      return [{ category: "adjustment", totalGold: 0, totalValue: 0 }];
+    }
+  }
+
+  // Get Purity Gain/Loss
+  async getOwnStockPurityDifference(filters) {
+    try {
+      const matchConditions = {
+        isActive: true,
+        type: "PURITY_DIFFERENCE",
+      };
+
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
+      }
+
+      const pipeline = [
+        {
+          $match: matchConditions,
+        },
+        {
+          $group: {
+            _id: null,
+            totalGold: {
+              $sum: {
+                // Use credit - debit for gold amount
+                $subtract: [
+                  { $ifNull: ["$credit", 0] },
+                  { $ifNull: ["$debit", 0] },
+                ],
+              },
+            },
+            totalValue: {
+              $sum: {
+                // Use credit - debit for value (not goldCredit/goldDebit)
+                $subtract: [
+                  { $ifNull: ["$credit", 0] },
+                  { $ifNull: ["$debit", 0] },
+                ],
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            category: "purityDifference",
+            totalGold: 1,
+            totalValue: 1,
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      
+      // Debug logging
+      console.log("PURITY_DIFFERENCE query result:", JSON.stringify(result, null, 2));
+      console.log("Match conditions:", JSON.stringify(matchConditions, null, 2));
+      
+      if (result.length > 0) {
+        // Check if totals are actually 0 or if there's data
+        const data = result[0];
+        console.log("Purity difference data:", data);
+        return result;
+      } else {
+        // Return default structure
+        return [{ category: "purityDifference", totalGold: 0, totalValue: 0 }];
+      }
+    } catch (error) {
+      console.error("Error getting purity difference:", error);
+      return [{ category: "purityDifference", totalGold: 0, totalValue: 0 }];
+    }
+  }
+
+  // Get Receivables and Payables from Account
+  async getOwnStockReceivablesPayables() {
+    try {
+      // First, get RECEIVABLE and PAYABLE account mode IDs
+      const receivableMode = await AccountMode.findOne({ name: { $regex: /RECEIVABLE/i } }).select("_id").lean();
+      const payableMode = await AccountMode.findOne({ name: { $regex: /PAYABLE/i } }).select("_id").lean();
+
+      const receivableModeId = receivableMode?._id;
+      const payableModeId = payableMode?._id;
+
+      const matchReceivables = receivableModeId ? { accountType: receivableModeId } : {};
+      const matchPayables = payableModeId ? { accountType: payableModeId } : {};
+
+      const pipeline = [
+        {
+          $facet: {
+            receivables: [
+              {
+                $match: {
+                  isActive: true,
+                  ...matchReceivables,
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalGold: {
+                    $sum: { $ifNull: ["$balances.goldBalance.totalGrams", 0] },
+                  },
+                },
+              },
+            ],
+            payables: [
+              {
+                $match: {
+                  isActive: true,
+                  ...matchPayables,
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalGold: {
+                    $sum: { $ifNull: ["$balances.goldBalance.totalGrams", 0] },
+                  },
+                },
+              },
+            ],
+          },
+        },
+        {
+          $project: {
+            receivables: {
+              $ifNull: [{ $arrayElemAt: ["$receivables.totalGold", 0] }, 0],
+            },
+            payables: {
+              $ifNull: [{ $arrayElemAt: ["$payables.totalGold", 0] }, 0],
+            },
+          },
+        },
+      ];
+
+      const result = await Account.aggregate(pipeline);
+      const data = result[0] || { receivables: 0, payables: 0 };
+
+      // RECEIVABLE: positive stays positive, negative stays negative
+      // PAYABLE: positive becomes negative, negative becomes positive
+      return {
+        receivables: data.receivables || 0,
+        payables: data.payables ? -Math.abs(data.payables) : 0,
+      };
+    } catch (error) {
+      console.error("Error getting receivables and payables:", error);
+      return { receivables: 0, payables: 0 };
+    }
+  }
+
+  // Get Inventory Logs summary
+  async getOwnStockInventoryLogs(filters) {
+    try {
+      const matchConditions = {
+        voucherDate: {},
+      };
+
+      if (filters.startDate) {
+        matchConditions.voucherDate.$gte = filters.startDate;
+      }
+      if (filters.endDate) {
+        matchConditions.voucherDate.$lte = filters.endDate;
+      }
+
+      const pipeline = [
+        {
+          $match: matchConditions,
+        },
+        {
+          $group: {
+            _id: {
+              stockCode: "$stockCode",
+              purity: "$purity",
+            },
+            totalGrossWeight: { $sum: { $ifNull: ["$grossWeight", 0] } },
+            purity: { $first: "$purity" },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalGrossWeight: { $sum: "$totalGrossWeight" },
+            totalPureWeight: {
+              $sum: {
+                $multiply: [
+                  "$totalGrossWeight",
+                  { $divide: [{ $ifNull: ["$purity", 0] }, 100] },
+                ],
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            totalGrossWeight: 1,
+            totalPureWeight: 1,
+          },
+        },
+      ];
+
+      const result = await InventoryLog.aggregate(pipeline);
+      return result[0] || { totalGrossWeight: 0, totalPureWeight: 0 };
+    } catch (error) {
+      console.error("Error getting inventory logs:", error);
+      return { totalGrossWeight: 0, totalPureWeight: 0 };
+    }
+  }
   formatedOwnStock(reportData, receivablesAndPayables, openingBalance) {
 
     const summary = {
@@ -3725,6 +4284,222 @@ export class ReportService {
       summary,
       categories
     };
+  }
+
+  // Format Own Stock Data according to the image structure
+  formatOwnStockData(data) {
+    const {
+      openingBalance,
+      metalTransactionData,
+      fixingData,
+      adjustmentData,
+      purityData,
+      receivablesPayables,
+      inventoryData,
+    } = data;
+
+    // Helper function to find category data
+    const findCategory = (categoryName) => {
+      const allData = [...metalTransactionData, ...fixingData, ...adjustmentData, ...purityData];
+      return allData.find((item) => item.category === categoryName) || { totalGold: 0, totalValue: 0 };
+    };
+
+    // Calculate purchase totals
+    const purchaseData = findCategory("purchase");
+    const purchaseReturnData = findCategory("purchaseReturn");
+    const purchaseFixData = findCategory("purchaseFix");
+    
+    // Calculate sale totals
+    const saleData = findCategory("sale");
+    const saleReturnData = findCategory("saleReturn");
+    const saleFixData = findCategory("saleFix");
+
+    // Calculate net purchase
+    const netPurchaseGold = 
+      purchaseData.totalGold +
+      purchaseReturnData.totalGold +
+      purchaseFixData.totalGold -
+      saleData.totalGold -
+      saleReturnData.totalGold -
+      saleFixData.totalGold;
+
+    const netPurchaseValue = 
+      purchaseData.totalValue +
+      purchaseReturnData.totalValue +
+      purchaseFixData.totalValue -
+      saleData.totalValue -
+      saleReturnData.totalValue -
+      saleFixData.totalValue;
+
+    // Get adjustments and purity
+    const adjustment = adjustmentData[0] || { totalGold: 0, totalValue: 0 };
+    const purityDiff = purityData[0] || { totalGold: 0, totalValue: 0 };
+
+    // Calculate long position
+    const longGold = openingBalance.opening + netPurchaseGold + adjustment.totalGold + purityDiff.totalGold;
+    const longValue = openingBalance.openingValue + netPurchaseValue + adjustment.totalValue + purityDiff.totalValue;
+
+    // Structure response similar to image
+    const response = {
+      openingBalance: {
+        gold: openingBalance.opening || 0,
+        value: openingBalance.openingValue || 0,
+      },
+      purchases: {
+        Purchases: {
+          gold: purchaseData.totalGold || 0,
+          value: purchaseData.totalValue || 0,
+        },
+        posPurchases: {
+          gold: 0, // Not specified in requirements
+          value: 0,
+        },
+        purchaseReturn: {
+          gold: purchaseReturnData.totalGold || 0,
+          value: purchaseReturnData.totalValue || 0,
+        },
+        purchaseFixing: {
+          gold: purchaseFixData.totalGold || 0,
+          value: purchaseFixData.totalValue || 0,
+        },
+        branchTransIn: {
+          gold: 0,
+          value: 0,
+        },
+        diaPurchase: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        diaPurchaseReturn: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        netPurchase: {
+          gold: netPurchaseGold,
+          value: netPurchaseValue,
+        },
+      },
+      sales: {
+        Sales: {
+          gold: saleData.totalGold || 0,
+          value: saleData.totalValue || 0,
+        },
+        posSales: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        salesReturn: {
+          gold: saleReturnData.totalGold || 0,
+          value: saleReturnData.totalValue || 0,
+        },
+        salesFixing: {
+          gold: saleFixData.totalGold || 0,
+          value: saleFixData.totalValue || 0,
+        },
+        branchTransOut: {
+          gold: 0,
+          value: 0,
+        },
+        diaSales: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        diaSalesReturn: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        netSales: {
+          gold: -(saleData.totalGold + saleReturnData.totalGold + saleFixData.totalGold),
+          value: -(saleData.totalValue + saleReturnData.totalValue + saleFixData.totalValue),
+        },
+      },
+      otherDetails: {
+        manufacturing: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        subTotal: {
+          gold: openingBalance.opening + netPurchaseGold,
+          value: openingBalance.openingValue + netPurchaseValue,
+        },
+        adjustments: {
+          gold: adjustment.totalGold || 0,
+          value: adjustment.totalValue || 0,
+        },
+        purityLossGain: {
+          gold: purityDiff.totalGold || 0,
+          value: purityDiff.totalValue || 0,
+        },
+        stoneLossGain: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        wasteLossGain: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        mfgLossGain: {
+          gold: 0,
+          value: 0,
+        },
+        otherExpenses: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        long: {
+          gold: longGold,
+          value: longValue,
+        },
+        currentRate: {
+          gold: 0,
+          value: 0, // This would need current rate calculation
+        },
+        profit: {
+          gold: 0,
+          value: 0, // This would need profit calculation
+        },
+      },
+      positionSummary: {
+        receivables: {
+          gold: receivablesPayables.receivables || 0,
+          value: 0, // Would need rate calculation
+        },
+        payables: {
+          gold: receivablesPayables.payables || 0,
+          value: 0, // Would need rate calculation
+        },
+        general: {
+          gold: 0, // Not specified
+          value: 0,
+        },
+        bank: {
+          gold: 0,
+          value: 0,
+        },
+        subTotal: {
+          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0),
+          value: 0,
+        },
+        pureWtDiaJew: {
+          gold: inventoryData.totalPureWeight || 0,
+          value: 0, // Would need rate calculation
+        },
+        pureWtWIP: {
+          gold: 0,
+          value: 0,
+        },
+        pureWtGoldJew: {
+          gold: inventoryData.totalPureWeight || 0,
+          value: 0, // Would need rate calculation
+        },
+        netPosition: {
+          gold: longGold + (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (inventoryData.totalPureWeight || 0),
+          value: longValue,
+        },
+      },
+    };
+
+    return response;
   }
 
 

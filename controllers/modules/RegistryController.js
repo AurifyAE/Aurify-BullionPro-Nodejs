@@ -232,6 +232,30 @@ export const getStockAdjustmentAuditTrail = async (req, res, next) => {
     next(err);
   }
 };
+export const getPurchaseFixingAuditTrail = async (req, res, next) => {
+  try {
+    const { purchaseFixingId } = req.params;
+
+    console.log(purchaseFixingId);
+
+    const data = await RegistryService.generatePurchaseFixingAuditTrail(purchaseFixingId);
+
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        message: "No audit trail found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Registry audit trail retrieved successfully",
+      data,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
 
 
 // Update registry

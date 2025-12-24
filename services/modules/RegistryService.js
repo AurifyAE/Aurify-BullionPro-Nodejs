@@ -169,7 +169,7 @@ class RegistryService {
       const type = String(r.type || "");
       return type != "PARTY_HEDGE_ENTRY" && type != "HEDGE_ENTRY"; // EXCLUDE HEDGE
     });
-    console.log(validRegistries,"validRegistries🟢🟢🟢---------------------------------------");
+    console.log(validRegistries, "validRegistries🟢🟢🟢---------------------------------------");
     // If all entries were hedges → nothing to show
     if (validRegistries.length === 0) {
       return {
@@ -460,13 +460,13 @@ class RegistryService {
       if (Math.abs(value) < 0.5) return 0; // treat small numbers as zero
       return Number(value.toFixed(decimals));
     }
-    
+
     // -----------------------------------------------------
     // 📌 7) CALCULATE CASH AND GOLD SUMS
     // -----------------------------------------------------
     const cashBalance = totalCashDebit - totalCashCredit;
     const goldBalance = totalGoldDebit - totalGoldCredit;
-    
+
     // -----------------------------------------------------
     // 📌 8) FINAL RETURN RESPONSE
     // -----------------------------------------------------
@@ -1869,8 +1869,7 @@ class RegistryService {
       if (r.type === "MAKING_CHARGES") {
         if (r.debit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Making Charges Debit",
+            description: "Making Charges ",
             currencyDebit: r.debit,
             currencyCredit: 0,
             metalDebit: 0,
@@ -1880,8 +1879,7 @@ class RegistryService {
 
         if (r.credit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Making Charges Credit",
+            description: "Making Charges ",
             currencyDebit: 0,
             currencyCredit: r.credit,
             metalDebit: 0,
@@ -1896,8 +1894,7 @@ class RegistryService {
       if (r.type === "GOLD_STOCK") {
         if (r.goldDebit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Gold Stock Debit",
+            description: "Gold Stock ",
             currencyDebit: 0,
             currencyCredit: 0,
             metalDebit: r.goldDebit,
@@ -1907,8 +1904,7 @@ class RegistryService {
 
         if (r.goldCredit > 0) {
           entries.push({
-            accCode: "INV001",
-            description: "Gold Stock Credit",
+            description: "Gold Stock ",
             currencyDebit: 0,
             currencyCredit: 0,
             metalDebit: 0,
@@ -1931,7 +1927,6 @@ class RegistryService {
     // -------------------------
     if (Math.abs(diffCash) > 0.0001 || Math.abs(diffGold) > 0.0001) {
       entries.push({
-        accCode: "INV001",
         description: "Stock Difference",
         currencyDebit: diffCash < 0 ? Math.abs(diffCash) : 0,
         currencyCredit: diffCash > 0 ? diffCash : 0,
@@ -1957,7 +1952,7 @@ class RegistryService {
     return {
       metalTransactionId: null,
       transactionId: main.transactionId,
-      reference: "STOCK-ADJ",
+      reference: main.reference,
       date: main.transactionDate,
       party: {
         name: "Inventory Adjustment",
@@ -1978,6 +1973,50 @@ class RegistryService {
       },
     };
   }
+
+  static async generatePurchaseFixingAuditTrail(purchaseFixingId) {
+    if (!mongoose.Types.ObjectId.isValid(purchaseFixingId)) return null;
+
+    const registry = await Registry.findOne({
+      transactionId: purchaseFixingId,
+      isActive: true,
+    }).lean();
+
+    if (!registry) return null;
+
+    const currencyDebit = registry.cashDebit || 0;
+    const currencyCredit = registry.cashCredit || 0;
+
+    const metalDebit = registry.goldDebit || 0;
+    const metalCredit = registry.goldCredit || 0;
+
+    return {
+      transactionId: registry.transactionId,
+      date: registry.transactionDate || registry.createdAt,
+      party: {
+        name: registry.party?.name || "Inventory",
+      },
+      reference: registry.reference || registry.transactionId,
+
+      entries: [
+        {
+          description: registry.description || "OPENING FIXING POSITION",
+          accCode: registry.costCenter || "INVENTORY",
+          currencyDebit,
+          currencyCredit,
+          metalDebit,
+          metalCredit,
+        },
+      ],
+
+      totals: {
+        currencyBalance: currencyDebit - currencyCredit,
+        metalBalance: metalDebit - metalCredit,
+      },
+    };
+  }
+
+
 
 }
 
