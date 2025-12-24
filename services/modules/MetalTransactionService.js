@@ -269,7 +269,7 @@ class MetalTransactionService {
 
   /**
    * Helper function to check if an entry is a PARTY-related entry
-   * PARTY entries include: PARTY_*, purchase-fixing, sales-fixing, sale-fixing, purchase-unfix, sale-unfix
+   * PARTY entries include: PARTY_*, purchase-fixing, sales-fixing, sales-fixing, purchase-unfix, sale-unfix
    */
   static isPartyEntry(entry) {
     if (!entry || !entry.type) return false;
@@ -278,7 +278,7 @@ class MetalTransactionService {
       type.startsWith("PARTY_") ||
       type === "purchase-fixing" ||
       type === "sales-fixing" ||
-      type === "sale-fixing" ||
+      type === "sales-fixing" ||
       type === "purchase-unfix" ||
       type === "sale-unfix"
     );
@@ -10422,7 +10422,7 @@ class MetalTransactionService {
           baseTransactionId,
           metalTransactionId,
           "PARTY-GOLD",
-          "sale-fixing",
+          "sales-fixing",
           `Party gold balance - Sale return to ${partyName}`,
           party._id,
           true,
@@ -11674,7 +11674,7 @@ class MetalTransactionService {
           baseTransactionId,
           metalTransactionId,
           "PARTY-GOLD",
-          "sale-fixing",
+          "sales-fixing",
           this.formatDescriptionWithRemarks(
             `Party gold balance - Sale return to ${partyName}`,
             true, // isPartyEntry
@@ -12438,7 +12438,7 @@ class MetalTransactionService {
       "PARTY_CASH_BALANCE",
       "PARTY_GOLD_BALANCE",
       "purchase-fixing",
-      "sale-fixing",
+      "sales-fixing",
       "purchase-unfix",
       "sale-unfix",
     ];

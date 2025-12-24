@@ -372,6 +372,7 @@ export const getOwnStock = async (req, res) => {
 export const metalFixing = async (req, res) => {
   try {
     const filters = req.body;
+    console.log(filters,'filters')
     // Call service to get report data
     const reportData = await reportService.getMetalFixingReports(filters);
     // Return success response (even if no data found)

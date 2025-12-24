@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Registry from "../../models/modules/Registry.js";
+import MetalTransaction from "../../models/modules/MetalTransaction.js";
 
 import moment from "moment";
 import { log } from "console";
@@ -762,13 +763,19 @@ export class ReportService {
       const validatedFilters = this.validateFilters(filters);
 
       // 2. Get opening balance (only OFP type)
-      let openingBalance = { opening: 0, purityDifference: 0, netPurchase: 0 };
-      if (!filters.excludeOpening && filters.fromDate) {
+      // excludeOpening: true → don't show opening, excludeOpening: false → show opening
+      let openingBalance = { opening: 0, openingValue: 0 };
+      const excludeOpening = filters.excludeOpening === true || filters.excludeOpening === "true";
+      if (!excludeOpening && filters.fromDate) {
         openingBalance = await this.getOwnStockOpeningBalance(filters.fromDate, validatedFilters);
       }
 
-      // 3. Get MetalTransaction data (fixed=true only)
-      const metalTransactionData = await this.getOwnStockMetalTransactions(validatedFilters);
+      // 3. Get MetalTransaction data (respects excludeHedging filter)
+      // Pass excludeHedging from original filters since it's not in validatedFilters
+      const metalTransactionData = await this.getOwnStockMetalTransactions({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+      });
 
       // 4. Get Purchase Fix / Sale Fix from TransactionFixing
       const fixingData = await this.getOwnStockFixingTransactions(validatedFilters);
@@ -776,8 +783,12 @@ export class ReportService {
       // 5. Get Adjustments (MSA)
       const adjustmentData = await this.getOwnStockAdjustments(validatedFilters);
 
-      // 6. Get Purity Gain/Loss
-      const purityData = await this.getOwnStockPurityDifference(validatedFilters);
+      // 6. Get Purity Gain/Loss (respects excludeHedging filter)
+      // Pass excludeHedging from original filters since it's not in validatedFilters
+      const purityData = await this.getOwnStockPurityDifference({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+      });
 
       // 7. Get Receivables and Payables
       const receivablesPayables = await this.getOwnStockReceivablesPayables();
@@ -785,7 +796,10 @@ export class ReportService {
       // 8. Get Inventory Logs summary
       const inventoryData = await this.getOwnStockInventoryLogs(validatedFilters);
 
-      // 9. Format the output
+      // 9. Get Pure Weight Gold Jewelry from InventoryLog
+      const pureWtGoldJew = await this.getOwnStockPureWtGoldJew(validatedFilters);
+
+      // 10. Format the output
       const formatted = this.formatOwnStockData({
         openingBalance,
         metalTransactionData,
@@ -794,7 +808,11 @@ export class ReportService {
         purityData,
         receivablesPayables,
         inventoryData,
-        filters: validatedFilters
+        pureWtGoldJew,
+        filters: {
+          ...validatedFilters,
+          excludeOpening: filters.excludeOpening, // Pass excludeOpening from original filters
+        }
       });
 
       // 10. Return structured response
@@ -3715,19 +3733,25 @@ export class ReportService {
     return pipeline;
   }
 
-  // Get MetalTransaction data grouped by transactionType (fixed=true only)
+  // Get MetalTransaction data grouped by transactionType
+  // IMPORTANT: This method is Registry-based - only includes MetalTransaction records that have matching Registry entries
+  // Filters Registry by type "purchase-fixing" or "sales-fixing" with valid metalTransactionId
+  // Then matches to MetalTransaction collection to get transaction details
   async getOwnStockMetalTransactions(filters) {
     try {
       const matchConditions = {
         isActive: true,
-        transactionDate: {},
       };
 
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
       }
 
       // Apply voucher filter if provided
@@ -3739,13 +3763,27 @@ export class ReportService {
         voucherMatch = { $or: regexFilters };
       }
 
+      // Determine type filter and fixed filter based on excludeHedging
+      // excludeHedging: true = only show fixed=true transactions (exclude hedging/unfixed)
+      // excludeHedging: false = show all transactions (include hedging/unfixed)
+      // Handle both boolean and string values
+      const excludeHedgingValue = filters.excludeHedging;
+      const shouldFilterByFixed = excludeHedgingValue === true || excludeHedgingValue === "true";
+      const registryTypes = ["purchase-fixing", "sales-fixing"];
+      
+      // Debug logging
+      console.log("=== getOwnStockMetalTransactions DEBUG ===");
+      console.log("excludeHedging raw value:", excludeHedgingValue, "type:", typeof excludeHedgingValue);
+      console.log("shouldFilterByFixed:", shouldFilterByFixed);
+      console.log("===========================================");
+      
       const pipeline = [
-        // Step 1: Match Registry by date, voucher, and type GOLD_STOCK or purchase-fixing/sales-fixing
+        // Step 1: Match Registry by date, voucher, and type
         {
           $match: {
             ...matchConditions,
             ...voucherMatch,
-            type: { $in: ["purchase-fixing", "sales-fixing"] }, // Filter GOLD_STOCK or fixing types
+            type: { $in: registryTypes },
             metalTransactionId: { $exists: true, $ne: null },
           },
         },
@@ -3764,84 +3802,96 @@ export class ReportService {
             preserveNullAndEmptyArrays: false,
           },
         },
-        // Step 3: Filter only fixed=true transactions
-        {
+      ];
+
+      // Step 3: Conditionally filter by fixed=true only when excludeHedging is true
+      // When excludeHedging is true, only show fixed transactions (exclude hedging/unfixed)
+      // When excludeHedging is false, show all transactions (include hedging/unfixed)
+      if (shouldFilterByFixed) {
+        console.log("✓ Adding fixed=true filter to pipeline (excluding hedging/unfixed)");
+        pipeline.push({
           $match: {
             "metalTransaction.fixed": true,
           },
+        });
+      } else {
+        console.log("✗ NOT adding fixed filter - will show ALL transactions (fixed and unfixed)");
+      }
+
+      // Step 4: Unwind stockItems
+      pipeline.push({
+        $unwind: {
+          path: "$metalTransaction.stockItems",
+          preserveNullAndEmptyArrays: false,
         },
-        // Step 4: Unwind stockItems
-        {
-          $unwind: {
-            path: "$metalTransaction.stockItems",
-            preserveNullAndEmptyArrays: false,
+      });
+
+      // Step 5: Group by transactionType category
+      pipeline.push({
+        $group: {
+          _id: {
+            $switch: {
+              branches: [
+                { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: "purchase" },
+                { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: "purchaseReturn" },
+                { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: "sale" },
+                { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: "saleReturn" },
+              ],
+              default: "other",
+            },
           },
-        },
-        // Step 5: Group by transactionType category
-        {
-          $group: {
-            _id: {
+          totalGold: {
+            $sum: {
               $switch: {
                 branches: [
-                  { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: "purchase" },
-                  { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: "purchaseReturn" },
-                  { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: "sale" },
-                  { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: "saleReturn" },
+                  // Purchase: goldCredit increases stock
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$goldCredit", 0] } },
+                  // Purchase Return: goldDebit decreases stock (negative)
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
+                  // Sale: goldDebit decreases stock (negative)
+                  { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
+                  // Sale Return: goldCredit increases stock
+                  { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$goldCredit", 0] } },
                 ],
-                default: "other",
+                default: 0,
               },
             },
-            totalGold: {
-              $sum: {
-                $switch: {
-                  branches: [
-                    // Purchase: goldCredit increases stock
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$goldCredit", 0] } },
-                    // Purchase Return: goldDebit decreases stock (negative)
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
-                    // Sale: goldDebit decreases stock (negative)
-                    { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
-                    // Sale Return: goldCredit increases stock
-                    { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$goldCredit", 0] } },
-                  ],
-                  default: 0,
-                },
+          },
+          totalValue: {
+            $sum: {
+              $switch: {
+                branches: [
+                  // Purchase: cashDebit is the cost (positive)
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$cashDebit", 0] } },
+                  // Purchase Return: cashCredit is refund (negative)
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
+                  // Sale: cashCredit is revenue (negative for net calculation)
+                  { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
+                  // Sale Return: cashDebit is refund (positive)
+                  { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$cashDebit", 0] } },
+                ],
+                default: 0,
               },
             },
-            totalValue: {
-              $sum: {
-                $switch: {
-                  branches: [
-                    // Purchase: cashDebit is the cost (positive)
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$cashDebit", 0] } },
-                    // Purchase Return: cashCredit is refund (negative)
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
-                    // Sale: cashCredit is revenue (negative for net calculation)
-                    { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
-                    // Sale Return: cashDebit is refund (positive)
-                    { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$cashDebit", 0] } },
-                  ],
-                  default: 0,
-                },
-              },  
-            },
           },
         },
-        {
-          $project: {
-            _id: 0,
-            category: "$_id",
-            totalGold: 1,
-            totalValue: 1,
-          },
+      });
+
+      pipeline.push({
+        $project: {
+          _id: 0,
+          category: "$_id",
+          totalGold: 1,
+          totalValue: 1,
         },
-        // Filter out "other" category
-        {
-          $match: {
-            category: { $ne: "other" },
-          },
+      });
+
+      // Filter out "other" category
+      pipeline.push({
+        $match: {
+          category: { $ne: "other" },
         },
-      ];
+      });
 
       const result = await Registry.aggregate(pipeline);
       return result;
@@ -3852,18 +3902,24 @@ export class ReportService {
   }
 
   // Get Purchase Fix / Sale Fix from TransactionFixing
+  // IMPORTANT: This method is Registry-based - only includes TransactionFixing records that have matching Registry entries
+  // Filters Registry by type "purchase-fixing" or "sales-fixing" with valid fixingTransactionId
+  // Then matches to TransactionFixing collection to validate the transaction exists
   async getOwnStockFixingTransactions(filters) {
     try {
       const matchConditions = {
         isActive: true,
-        transactionDate: {},
       };
 
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
       }
 
       // Apply voucher filter if provided
@@ -3881,6 +3937,7 @@ export class ReportService {
             ...matchConditions,
             ...voucherMatch,
             type: { $in: ["purchase-fixing", "sales-fixing"] },
+            fixingTransactionId: { $exists: true, $ne: null }, // Only include Registry entries with valid fixingTransactionId
           },
         },
         {
@@ -3894,7 +3951,7 @@ export class ReportService {
         {
           $unwind: {
             path: "$transactionFixing",
-            preserveNullAndEmptyArrays: true,
+            preserveNullAndEmptyArrays: false, // Only include Registry entries that have matching TransactionFixing
           },
         },
         {
@@ -3945,19 +4002,24 @@ export class ReportService {
   }
 
   // Get Adjustments (MSA)
+  // IMPORTANT: This method is Registry-based - only includes adjustments that have matching Registry entries
+  // Filters Registry by type "STOCK_ADJUSTMENT" - all adjustments must be recorded in Registry
   async getOwnStockAdjustments(filters) {
     try {
       const matchConditions = {
         isActive: true,
         type: "STOCK_ADJUSTMENT",
-        transactionDate: {},
       };
 
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
       }
 
       const pipeline = [
@@ -3999,27 +4061,73 @@ export class ReportService {
   }
 
   // Get Purity Gain/Loss
+  // IMPORTANT: This method first fetches MetalTransaction records, then matches them in Registry
+  // Step 1: Query MetalTransaction with filters (date range only - excludeHedging is NOT applied to purity difference)
+  // Step 2: Get the ObjectIds from MetalTransaction
+  // Step 3: Match those IDs in Registry where type is PURITY_DIFFERENCE
+  // NOTE: Purity difference always shows regardless of excludeHedging filter
   async getOwnStockPurityDifference(filters) {
     try {
-      const matchConditions = {
+      // Step 1: Build MetalTransaction query conditions
+      const metalTransactionQuery = {
         isActive: true,
-        type: "PURITY_DIFFERENCE",
       };
 
       // Only add date filter if dates are provided
+      // NOTE: We do NOT apply excludeHedging filter here - purity difference always shows
       if (filters.startDate || filters.endDate) {
-        matchConditions.transactionDate = {};
+        metalTransactionQuery.voucherDate = {};
         if (filters.startDate) {
-          matchConditions.transactionDate.$gte = filters.startDate;
+          metalTransactionQuery.voucherDate.$gte = new Date(filters.startDate);
         }
         if (filters.endDate) {
-          matchConditions.transactionDate.$lte = filters.endDate;
+          metalTransactionQuery.voucherDate.$lte = new Date(filters.endDate);
         }
+      }
+
+      // Step 2: Get MetalTransaction ObjectIds that match the filters
+      // No excludeHedging filter applied - include all transactions for purity difference
+      const metalTransactions = await MetalTransaction.find(metalTransactionQuery).select("_id").lean();
+      const metalTransactionIds = metalTransactions.map((mt) => mt._id);
+
+      // If no metal transactions found, return default
+      if (metalTransactionIds.length === 0) {
+        return [{ category: "purityDifference", totalGold: 0, totalValue: 0 }];
+      }
+
+      // Step 3: Match those IDs in Registry where type is PURITY_DIFFERENCE
+      const registryMatchConditions = {
+        isActive: true,
+        type: "PURITY_DIFFERENCE",
+        metalTransactionId: { $in: metalTransactionIds },
+      };
+
+      // Apply date filter to Registry if provided (additional validation)
+      if (filters.startDate || filters.endDate) {
+        registryMatchConditions.transactionDate = {};
+        if (filters.startDate) {
+          registryMatchConditions.transactionDate.$gte = new Date(filters.startDate);
+        }
+        if (filters.endDate) {
+          registryMatchConditions.transactionDate.$lte = new Date(filters.endDate);
+        }
+      }
+
+      // Apply voucher filter if provided
+      let voucherMatch = {};
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        voucherMatch = { $or: regexFilters };
       }
 
       const pipeline = [
         {
-          $match: matchConditions,
+          $match: {
+            ...registryMatchConditions,
+            ...voucherMatch,
+          },
         },
         {
           $group: {
@@ -4057,13 +4165,10 @@ export class ReportService {
       const result = await Registry.aggregate(pipeline);
       
       // Debug logging
-      console.log("PURITY_DIFFERENCE query result:", JSON.stringify(result, null, 2));
-      console.log("Match conditions:", JSON.stringify(matchConditions, null, 2));
+      console.log("PURITY_DIFFERENCE - MetalTransaction IDs count:", metalTransactionIds.length);
+      console.log("PURITY_DIFFERENCE - Registry query result:", JSON.stringify(result, null, 2));
       
       if (result.length > 0) {
-        // Check if totals are actually 0 or if there's data
-        const data = result[0];
-        console.log("Purity difference data:", data);
         return result;
       } else {
         // Return default structure
@@ -4075,18 +4180,31 @@ export class ReportService {
     }
   }
 
-  // Get Receivables and Payables from Account
+  // Get Receivables, Payables, Balance, and General from Account
   async getOwnStockReceivablesPayables() {
     try {
-      // First, get RECEIVABLE and PAYABLE account mode IDs
-      const receivableMode = await AccountMode.findOne({ name: { $regex: /RECEIVABLE/i } }).select("_id").lean();
-      const payableMode = await AccountMode.findOne({ name: { $regex: /PAYABLE/i } }).select("_id").lean();
+      // Get account mode IDs for RECEIVABLE, PAYABLE, and BALANCE & GENERAL (single mode)
+      const receivableMode = await AccountMode.findOne({ name: { $regex: /RECEIVABLE/i } }).select("_id name").lean();
+      const payableMode = await AccountMode.findOne({ name: { $regex: /PAYABLE/i } }).select("_id name").lean();
+      // Look for a single AccountMode that contains both BALANCE and GENERAL
+      const balanceGeneralMode = await AccountMode.findOne({ 
+        name: { $regex: /BALANCE.*GENERAL|GENERAL.*BALANCE/i } 
+      }).select("_id name").lean();
+
+      // DEBUG: Log account mode findings
+      console.log("=== RECEIVABLES/PAYABLES/BALANCE&GENERAL DEBUG ===");
+      console.log("Receivable Mode:", receivableMode ? { id: receivableMode._id, name: receivableMode.name } : "NOT FOUND");
+      console.log("Payable Mode:", payableMode ? { id: payableMode._id, name: payableMode.name } : "NOT FOUND");
+      console.log("Balance & General Mode:", balanceGeneralMode ? { id: balanceGeneralMode._id, name: balanceGeneralMode.name } : "NOT FOUND");
 
       const receivableModeId = receivableMode?._id;
       const payableModeId = payableMode?._id;
+      const balanceGeneralModeId = balanceGeneralMode?._id;
 
+      // Build match conditions
       const matchReceivables = receivableModeId ? { accountType: receivableModeId } : {};
       const matchPayables = payableModeId ? { accountType: payableModeId } : {};
+      const matchBalanceGeneral = balanceGeneralModeId ? { accountType: balanceGeneralModeId } : {};
 
       const pipeline = [
         {
@@ -4123,6 +4241,38 @@ export class ReportService {
                 },
               },
             ],
+            balanceGeneral: [
+              {
+                $match: {
+                  isActive: true,
+                  ...matchBalanceGeneral,
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalGold: {
+                    $sum: { $ifNull: ["$balances.goldBalance.totalGrams", 0] },
+                  },
+                },
+              },
+            ],
+            bank: [
+              {
+                $match: {
+                  isActive: true,
+                  accountCode: { $regex: /BANK/i },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalGold: {
+                    $sum: { $ifNull: ["$balances.goldBalance.totalGrams", 0] },
+                  },
+                },
+              },
+            ],
           },
         },
         {
@@ -4133,22 +4283,51 @@ export class ReportService {
             payables: {
               $ifNull: [{ $arrayElemAt: ["$payables.totalGold", 0] }, 0],
             },
+            balanceGeneral: {
+              $ifNull: [{ $arrayElemAt: ["$balanceGeneral.totalGold", 0] }, 0],
+            },
+            bank: {
+              $ifNull: [{ $arrayElemAt: ["$bank.totalGold", 0] }, 0],
+            },
           },
         },
       ];
 
       const result = await Account.aggregate(pipeline);
-      const data = result[0] || { receivables: 0, payables: 0 };
+      const data = result[0] || { receivables: 0, payables: 0, balanceGeneral: 0, bank: 0 };
+
+      // DEBUG: Log aggregation results
+      console.log("Aggregation Result (raw):", JSON.stringify(data, null, 2));
+      console.log("Match Conditions:", {
+        receivables: matchReceivables,
+        payables: matchPayables,
+        balanceGeneral: matchBalanceGeneral,
+        bank: "accountCode contains 'BANK'",
+      });
 
       // RECEIVABLE: positive stays positive, negative stays negative
       // PAYABLE: positive becomes negative, negative becomes positive
-      return {
+      // BALANCE & GENERAL: single value that can be split or used as is
+      // BANK: accounts with accountCode containing "BANK"
+      const balanceGeneralValue = data.balanceGeneral || 0;
+      const bankValue = data.bank || 0;
+      
+      const returnData = {
         receivables: data.receivables || 0,
         payables: data.payables ? -Math.abs(data.payables) : 0,
+        balance: balanceGeneralValue, // Use the same value for balance
+        general: balanceGeneralValue, // Use the same value for general (or split if needed)
+        bank: bankValue,
       };
+
+      // DEBUG: Log final return values
+      console.log("Final Return Values:", JSON.stringify(returnData, null, 2));
+      console.log("==========================================");
+      
+      return returnData;
     } catch (error) {
       console.error("Error getting receivables and payables:", error);
-      return { receivables: 0, payables: 0 };
+      return { receivables: 0, payables: 0, balance: 0, general: 0, bank: 0 };
     }
   }
 
@@ -4208,6 +4387,191 @@ export class ReportService {
     } catch (error) {
       console.error("Error getting inventory logs:", error);
       return { totalGrossWeight: 0, totalPureWeight: 0 };
+    }
+  }
+
+  // Get Pure Weight Gold Jewelry from InventoryLog
+  // Groups by stockCode, calculates pure weight (grossWeight * purity / 100), and sums all
+  async getOwnStockPureWtGoldJew(filters) {
+    try {
+      const matchConditions = {
+        isDraft: false, // Exclude draft entries
+      };
+
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.voucherDate = {};
+        if (filters.startDate) {
+          matchConditions.voucherDate.$gte = new Date(filters.startDate);
+        }
+        if (filters.endDate) {
+          matchConditions.voucherDate.$lte = new Date(filters.endDate);
+        }
+      }
+
+      // Define stock IN transaction types (adds to inventory)
+      const stockInTypes = [
+        "purchase",
+        "importPurchase",
+        "purchaseReturn",
+        "importPurchaseReturn",
+        "opening",
+        "initial",
+        "metalReceipt",
+        "hedgeMetalReceipt",
+        "hedgeMetalReciept", // Support both spellings
+      ];
+
+      // Define stock OUT transaction types (removes from inventory)
+      const stockOutTypes = [
+        "sale",
+        "exportSale",
+        "saleReturn",
+        "exportSaleReturn",
+        "metalPayment",
+        "hedgeMetalPayment",
+      ];
+
+      const pipeline = [
+        {
+          $match: matchConditions,
+        },
+        {
+          $group: {
+            _id: "$stockCode",
+            // Sum gross weight for each stockCode: stock in (positive) - stock out (negative)
+            sumGrossWeight: {
+              $sum: {
+                $switch: {
+                  branches: [
+                    // Stock IN transaction types
+                    {
+                      case: { $in: ["$transactionType", stockInTypes] },
+                      then: { $ifNull: ["$grossWeight", 0] }, // Stock IN: positive
+                    },
+                    // Stock OUT transaction types
+                    {
+                      case: { $in: ["$transactionType", stockOutTypes] },
+                      then: { $multiply: [{ $ifNull: ["$grossWeight", 0] }, -1] }, // Stock OUT: negative
+                    },
+                    // METAL STOCK ADJUSTMENT: use action field
+                    {
+                      case: {
+                        $and: [
+                          { $eq: ["$transactionType", "adjustment"] },
+                          { $eq: ["$voucherType", "METAL STOCK ADJUSTMENT"] },
+                        ],
+                      },
+                      then: {
+                        $cond: [
+                          { $eq: ["$action", "add"] },
+                          { $ifNull: ["$grossWeight", 0] }, // action="add" → stock IN (positive)
+                          {
+                            $cond: [
+                              { $eq: ["$action", "remove"] },
+                              { $multiply: [{ $ifNull: ["$grossWeight", 0] }, -1] }, // action="remove" → stock OUT (negative)
+                              0, // Other actions: 0
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                  default: 0, // Other types: 0
+                },
+              },
+            },
+          },
+        },
+        // Lookup MetalStock to get purity (standardPurity)
+        {
+          $lookup: {
+            from: "metalstocks",
+            localField: "_id",
+            foreignField: "_id",
+            as: "stockInfo",
+          },
+        },
+        {
+          $unwind: {
+            path: "$stockInfo",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            stockCode: "$_id",
+            sumGrossWeight: 1,
+            // Get purity from MetalStock (standardPurity is stored as decimal 0-1, e.g., 0.999 = 99.9%)
+            purity: {
+              $ifNull: ["$stockInfo.standardPurity", 0],
+            },
+          },
+        },
+        {
+          $project: {
+            stockCode: 1,
+            sumGrossWeight: 1,
+            purity: 1,
+            // Calculate pure weight for each stock: sumGrossWeight * purity (purity is already decimal)
+            pureWeight: {
+              $multiply: [
+                "$sumGrossWeight",
+                { $ifNull: ["$purity", 0] },
+              ],
+            },
+          },
+        },
+        // Sum all pure weights from all stocks
+        {
+          $group: {
+            _id: null,
+            totalPureWeight: {
+              $sum: "$pureWeight",
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            totalPureWeight: 1,
+          },
+        },
+      ];
+
+      // DEBUG: Log pipeline stages
+      console.log("=== INVENTORY PURE WEIGHT DEBUG ===");
+      console.log("Match Conditions:", JSON.stringify(matchConditions, null, 2));
+      console.log("Stock IN Types:", stockInTypes);
+      console.log("Stock OUT Types:", stockOutTypes);
+
+      // Execute pipeline and log intermediate results
+      const result = await InventoryLog.aggregate(pipeline);
+      
+      // Get intermediate results for debugging
+      const debugPipeline = [
+        ...pipeline.slice(0, -2), // Get all stages except the final $group and $project
+      ];
+      
+      const intermediateResults = await InventoryLog.aggregate(debugPipeline);
+      console.log("Intermediate Results (by stockCode):", JSON.stringify(intermediateResults.slice(0, 10), null, 2)); // Show first 10
+      console.log("Total StockCodes:", intermediateResults.length);
+      
+      // Calculate sum manually for verification
+      const manualSum = intermediateResults.reduce((sum, item) => {
+        return sum + (item.pureWeight || 0);
+      }, 0);
+      console.log("Manual Sum of Pure Weights:", manualSum);
+      
+      const finalResult = result[0]?.totalPureWeight || 0;
+      console.log("Final Result (from aggregation):", finalResult);
+      console.log("===================================");
+      
+      return finalResult;
+    } catch (error) {
+      console.error("Error getting pure weight gold jewelry:", error);
+      return 0;
     }
   }
   formatedOwnStock(reportData, receivablesAndPayables, openingBalance) {
@@ -4296,7 +4660,16 @@ export class ReportService {
       purityData,
       receivablesPayables,
       inventoryData,
+      pureWtGoldJew = 0,
+      filters,
     } = data;
+
+    // Handle excludeOpening filter
+    // excludeOpening: true → don't show opening balance (set to 0)
+    // excludeOpening: false → show opening balance
+    const excludeOpening = filters?.excludeOpening === true || filters?.excludeOpening === "true";
+    const openingGold = excludeOpening ? 0 : (openingBalance.opening || 0);
+    const openingValue = excludeOpening ? 0 : (openingBalance.openingValue || 0);
 
     // Helper function to find category data
     const findCategory = (categoryName) => {
@@ -4314,36 +4687,97 @@ export class ReportService {
     const saleReturnData = findCategory("saleReturn");
     const saleFixData = findCategory("saleFix");
 
-    // Calculate net purchase
+    // Calculate net purchase = purchase + purchaseReturn + purchaseFix
     const netPurchaseGold = 
-      purchaseData.totalGold +
-      purchaseReturnData.totalGold +
-      purchaseFixData.totalGold -
-      saleData.totalGold -
-      saleReturnData.totalGold -
-      saleFixData.totalGold;
+      (purchaseData.totalGold || 0) +
+      (purchaseReturnData.totalGold || 0) +
+      (purchaseFixData.totalGold || 0);
 
     const netPurchaseValue = 
-      purchaseData.totalValue +
-      purchaseReturnData.totalValue +
-      purchaseFixData.totalValue -
-      saleData.totalValue -
-      saleReturnData.totalValue -
-      saleFixData.totalValue;
+      (purchaseData.totalValue || 0) +
+      (purchaseReturnData.totalValue || 0) +
+      (purchaseFixData.totalValue || 0);
+
+    // Calculate net sale = sale + saleReturn + saleFix
+    const netSaleGold = 
+      (saleData.totalGold || 0) +
+      (saleReturnData.totalGold || 0) +
+      (saleFixData.totalGold || 0);
+
+    const netSaleValue = 
+      (saleData.totalValue || 0) +
+      (saleReturnData.totalValue || 0) +
+      (saleFixData.totalValue || 0);
 
     // Get adjustments and purity
     const adjustment = adjustmentData[0] || { totalGold: 0, totalValue: 0 };
     const purityDiff = purityData[0] || { totalGold: 0, totalValue: 0 };
 
-    // Calculate long position
-    const longGold = openingBalance.opening + netPurchaseGold + adjustment.totalGold + purityDiff.totalGold;
-    const longValue = openingBalance.openingValue + netPurchaseValue + adjustment.totalValue + purityDiff.totalValue;
+    // DEBUG: Log all input values
+    console.log("=== OWN STOCK CALCULATION DEBUG ===");
+    console.log("excludeOpening:", filters?.excludeOpening);
+    console.log("Opening Balance:", {
+      openingGold,
+      openingValue,
+      rawOpening: openingBalance,
+    });
+    console.log("Purchase Data:", {
+      purchase: purchaseData,
+      purchaseReturn: purchaseReturnData,
+      purchaseFix: purchaseFixData,
+    });
+    console.log("Sale Data:", {
+      sale: saleData,
+      saleReturn: saleReturnData,
+      saleFix: saleFixData,
+    });
+    console.log("Net Purchase:", {
+      gold: netPurchaseGold,
+      value: netPurchaseValue,
+    });
+    console.log("Net Sale:", {
+      gold: netSaleGold,
+      value: netSaleValue,
+    });
+    console.log("Adjustment:", adjustment);
+    console.log("Purity Difference:", purityDiff);
+
+    // Calculate subtotal = opening + netPurchase - netSale
+    // Note: netSale is already negative, so we subtract it (which adds it)
+    // Formula: opening + netPurchase - netSale
+    // Since netSale is negative, this becomes: opening + netPurchase + |netSale|
+    // But we want: opening + netPurchase - |netSale|
+    // So we need to subtract the absolute value of netSale
+    const subtotalGold = openingGold + netPurchaseGold - Math.abs(netSaleGold);
+    const subtotalValue = openingValue + netPurchaseValue - Math.abs(netSaleValue);
+    console.log("Subtotal:", {
+      gold: subtotalGold,
+      value: subtotalValue,
+      calculation: `${openingGold} + ${netPurchaseGold} - ${Math.abs(netSaleGold)} = ${subtotalGold}`,
+      note: "netSale is already negative, so we subtract its absolute value",
+    });
+
+    // Calculate final = subtotal + adjustment + purity gain/loss
+    const finalGold = subtotalGold + (adjustment.totalGold || 0) + (purityDiff.totalGold || 0);
+    const finalValue = subtotalValue ;
+    console.log("Final (Long/Short):", {
+      gold: finalGold,
+      value: finalValue,
+      calculation: `${subtotalGold} + ${adjustment.totalGold || 0} + ${purityDiff.totalGold || 0} = ${finalGold}`,
+    });
+
+    // Calculate long/short: if positive then "long", if negative then "short"
+    const longShortGold = finalGold;
+    const longShortValue = finalValue;
+    const positionType = longShortGold >= 0 ? "long" : "short";
+    console.log("Position Type:", positionType, "(gold:", longShortGold, ")");
+    console.log("===================================");
 
     // Structure response similar to image
     const response = {
       openingBalance: {
-        gold: openingBalance.opening || 0,
-        value: openingBalance.openingValue || 0,
+        gold: openingGold,
+        value: openingValue,
       },
       purchases: {
         Purchases: {
@@ -4409,8 +4843,8 @@ export class ReportService {
           value: 0,
         },
         netSales: {
-          gold: -(saleData.totalGold + saleReturnData.totalGold + saleFixData.totalGold),
-          value: -(saleData.totalValue + saleReturnData.totalValue + saleFixData.totalValue),
+          gold: netSaleGold,
+          value: netSaleValue,
         },
       },
       otherDetails: {
@@ -4419,8 +4853,8 @@ export class ReportService {
           value: 0,
         },
         subTotal: {
-          gold: openingBalance.opening + netPurchaseGold,
-          value: openingBalance.openingValue + netPurchaseValue,
+          gold: subtotalGold,
+          value: subtotalValue,
         },
         adjustments: {
           gold: adjustment.totalGold || 0,
@@ -4447,8 +4881,9 @@ export class ReportService {
           value: 0,
         },
         long: {
-          gold: longGold,
-          value: longValue,
+          gold: longShortGold,
+          value: longShortValue,
+          positionType: positionType, // "long" if positive, "short" if negative
         },
         currentRate: {
           gold: 0,
@@ -4469,15 +4904,15 @@ export class ReportService {
           value: 0, // Would need rate calculation
         },
         general: {
-          gold: 0, // Not specified
-          value: 0,
+          gold: receivablesPayables.general || 0,
+          value: 0, // Would need rate calculation
         },
         bank: {
-          gold: 0,
-          value: 0,
+          gold: receivablesPayables.bank || 0,
+          value: 0, // Would need rate calculation
         },
         subTotal: {
-          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0),
+          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0),
           value: 0,
         },
         pureWtDiaJew: {
@@ -4489,12 +4924,12 @@ export class ReportService {
           value: 0,
         },
         pureWtGoldJew: {
-          gold: inventoryData.totalPureWeight || 0,
+          gold: pureWtGoldJew || 0,
           value: 0, // Would need rate calculation
         },
         netPosition: {
-          gold: longGold + (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (inventoryData.totalPureWeight || 0),
-          value: longValue,
+          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0) + (pureWtGoldJew || 0),
+          value: 0, // Would need rate calculation
         },
       },
     };
