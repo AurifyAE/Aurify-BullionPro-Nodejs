@@ -63,23 +63,25 @@ export class ReportService {
     };
   }
 
-  async getAccountStatementOpeningBalance(toDate, filters = {}) {
+  async getAccountStatementOpeningBalance(fromDate, filters = {}) {
     try {
-      if (!toDate) return null;
+      if (!fromDate) return null;
 
-      // Calculate previous day end (end of the day before toDate) in UAE timezone
-      // If toDate is Dec 21 (UAE time), calculate opening balance up to Dec 20 23:59:59.999 UAE time
-      // toDate is treated as UAE local time, converted to UTC for MongoDB query
-      const previousDayEnd = getPreviousDayEndInUTC(toDate);
+      // Calculate previous day end (end of the day before fromDate) in UAE timezone
+      // If fromDate is Dec 1 (UAE time), calculate opening balance up to Nov 30 23:59:59.999 UAE time
+      // fromDate is treated as UAE local time, converted to UTC for MongoDB query
+      // This represents the balance at the start of the report period
+      const previousDayEnd = getPreviousDayEndInUTC(fromDate);
       
-      console.log('toDate (UAE local):', toDate);
+      console.log('fromDate (UAE local):', fromDate);
       console.log('previousDayEnd (UTC for MongoDB):', previousDayEnd.toISOString());
       
       const pipeline = [
         {
           $match: {
             // Include all opening balances up to and including the end of previous day
-            // If toDate is Dec 21, this gets all opening balances <= Dec 20 23:59:59.999
+            // If fromDate is Dec 1, this gets all opening balances <= Nov 30 23:59:59.999
+            // This represents the opening balance at the start of the report period
             voucherDate: { $lte: previousDayEnd }
           }
         },
