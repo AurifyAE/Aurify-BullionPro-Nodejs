@@ -2054,12 +2054,30 @@ class RegistryService {
   }
 
 
-  static async generateOpeningFixingAuditTrail(reference) {
-    console.log("Generating Opening Stock Audit Trail for:", reference);
+  static async generateOpeningAuditTrail(reference) {
+    const getLedgerDescription = (r) => {
+      // GOLD
+      if (r.type === "GOLD" || r.type === "GOLD_STOCK") {
+        return "GOLD";
+      }
 
-    // 1️⃣ Fetch ALL registry rows for this voucher
+      // CASH
+      if (r.type === "PARTY_CASH_BALANCE") {
+        return `CASH ${r.assetType || ""}`.trim(); // CASH AED / CASH USD
+      }
+
+      // MAKING
+      if (r.type === "MAKING_CHARGES") {
+        return "MAKING CHARGES";
+      }
+
+      return "OPENING";
+    };
+    console.log("Generating Audit Trail for:", reference);
+
+    // 1️⃣ Fetch ALL registry rows for voucher
     const registries = await Registry.find({
-      reference,          // eg: MOP0001
+      reference,
       isActive: true,
     })
       .sort({ createdAt: 1 })
@@ -2067,36 +2085,47 @@ class RegistryService {
 
     if (!registries.length) return null;
 
-    // 2️⃣ Build ledger entries (TYPE AWARE)
+    // 2️⃣ Build ledger entries (ACCOUNTING-CORRECT)
     const entries = registries.map((r) => {
-      const isGoldStock = r.type === "GOLD_STOCK";
-      const isMakingCharges = r.type === "MAKING_CHARGES";
+      const isGold =
+        r.type === "GOLD" || r.type === "GOLD_STOCK";
+
+      const isCash =
+        r.type === "PARTY_CASH_BALANCE" ||
+        r.type === "MAKING_CHARGES";
 
       return {
-        description: r.description || "OPENING STOCK",
-        accCode: r.costCenter || "INVENTORY",
+        description: getLedgerDescription(r),
+        accCode: r.costCenter || "PARTY",
 
-        // 💰 CASH (Making Charges)
-        currencyDebit: isMakingCharges ? (r.debit || r.cashDebit || 0) : 0,
-        currencyCredit: isMakingCharges ? (r.credit || r.cashCredit || 0) : 0,
+        // 💰 CASH
+        currencyDebit: isCash ? (r.cashDebit || 0) : 0,
+        currencyCredit: isCash ? (r.cashCredit || 0) : 0,
 
-        // 🪙 GOLD (Stock)
-        metalDebit: isGoldStock ? (r.goldDebit || r.debit || 0) : 0,
-        metalCredit: isGoldStock ? (r.goldCredit || r.credit || 0) : 0,
+        // 🪙 GOLD
+        metalDebit: isGold ? (r.goldDebit || 0) : 0,
+        metalCredit: isGold ? (r.goldCredit || 0) : 0,
       };
     });
 
-    // 3️⃣ Calculate totals
+    // 3️⃣ Totals
     const totals = registries.reduce(
       (acc, r) => {
-        if (r.type === "MAKING_CHARGES") {
-          acc.currencyDebit += r.debit || r.cashDebit || 0;
-          acc.currencyCredit += r.credit || r.cashCredit || 0;
+        const isGold =
+          r.type === "GOLD" || r.type === "GOLD_STOCK";
+
+        const isCash =
+          r.type === "PARTY_CASH_BALANCE" ||
+          r.type === "MAKING_CHARGES";
+
+        if (isCash) {
+          acc.currencyDebit += r.cashDebit || 0;
+          acc.currencyCredit += r.cashCredit || 0;
         }
 
-        if (r.type === "GOLD_STOCK") {
-          acc.metalDebit += r.goldDebit || r.debit || 0;
-          acc.metalCredit += r.goldCredit || r.credit || 0;
+        if (isGold) {
+          acc.metalDebit += r.goldDebit || 0;
+          acc.metalCredit += r.goldCredit || 0;
         }
 
         return acc;
@@ -2109,13 +2138,14 @@ class RegistryService {
       }
     );
 
-    // 4️⃣ Final audit trail response
+    // 4️⃣ Final Response
     return {
       transactionId: registries[0].transactionId,
       date: registries[0].transactionDate || registries[0].createdAt,
       reference,
+
       party: {
-        name: "Inventory",
+        name: "PARTY",
       },
 
       entries,
@@ -2126,10 +2156,6 @@ class RegistryService {
       },
     };
   }
-
-
-
-
 
 }
 

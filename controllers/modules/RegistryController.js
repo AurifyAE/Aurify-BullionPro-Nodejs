@@ -285,11 +285,12 @@ export const getOpeningStockAuditTrail = async (req, res, next) => {
 
 export const getOpeningBalanceAuditTrail = async (req, res, next) => {
   try {
+    console.log(req.params)
     const { purchaseFixingId } = req.params;
 
     console.log(purchaseFixingId);
 
-    const data = await RegistryService.generateOpeningFixingAuditTrail(purchaseFixingId);
+    const data = await RegistryService.generateOpeningAuditTrail(purchaseFixingId);
 
     if (!data) {
       return res.status(404).json({
