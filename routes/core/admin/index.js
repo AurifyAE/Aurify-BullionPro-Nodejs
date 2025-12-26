@@ -5,6 +5,7 @@ import {
   logout,
   viewPassword,
   verifyToken,
+  createAdmin,
 } from "../../../controllers/core/authController.js";
 
 import { authenticateToken } from "../../../middleware/authMiddleware.js";
@@ -17,5 +18,9 @@ router.post("/refresh", refreshToken);
 router.post("/logout", authenticateToken, logout);
 router.get("/view-password", authenticateToken, viewPassword);
 router.post("/verify-token", authenticateToken, verifyToken);
+
+router.post("/", createAdmin);
+
+
 
 export default router;

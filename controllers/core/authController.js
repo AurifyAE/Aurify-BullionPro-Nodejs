@@ -1,4 +1,6 @@
+import Admin from "../../models/core/adminModel.js";
 import Account from "../../models/modules/AccountType.js";
+import Designation from "../../models/modules/Designation.js";
 import {
   loginAdmin,
   refreshAccessToken,
@@ -11,12 +13,12 @@ import { decryptPassword, verifyPassword } from "../../utils/passwordUtils.js";
 export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    
+
     const ipAddress = req.ip || req.connection.remoteAddress;
     const result = await loginAdmin(email, password, ipAddress);
     console.log(result)
     // for login
-      // const isValid = await verifyPassword(password, account.passwordHash);
+    // const isValid = await verifyPassword(password, account.passwordHash);
 
     res.cookie("refreshToken", result.data.tokens.refreshToken, {
       httpOnly: true,
@@ -97,12 +99,9 @@ export const viewPassword = async (req, res) => {
 export const verifyToken = async (req, res, next) => {
   try {
     const adminId = req.admin?.id;
-    if(!req.admin){
+    if (!req.admin) {
       throw createAppError("Not an admin user", 403, "FORBIDDEN");
     }
-
-    
-
     res.status(200).json({
       success: true,
       message: "Token verified successfully",
@@ -111,5 +110,51 @@ export const verifyToken = async (req, res, next) => {
   } catch (error) {
     console.log(error)
     next(error);
+  }
+};
+
+
+export const createAdmin = async (req, res, next) => {
+  try {
+    const {
+      name,
+      email,
+      password,
+      designationId,
+      type,
+      status,
+      permissions,
+    } = req.body;
+
+    if (!name || !email || !password || !designationId) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const designation = await Designation.findById(designationId);
+    if (!designation) {
+      return res.status(400).json({ message: "Invalid designation" });
+    }
+
+    const existing = await Admin.findOne({ email });
+    if (existing) {
+      return res.status(409).json({ message: "Admin already exists" });
+    }
+
+    const admin = await Admin.create({
+      name,
+      email,
+      password,
+      designationId,
+      type,
+      status,
+      permissions: permissions || designation.permissions,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: admin,
+    });
+  } catch (err) {
+    next(err);
   }
 };

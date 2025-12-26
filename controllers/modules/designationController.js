@@ -35,3 +35,35 @@ export const createDesignation = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+export const getAllDesignations = async (req, res, next) => {
+  try {
+    const designations = await Designation.find({ status: "active" })
+      .select("name status permissions createdAt")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: designations,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getDesignationById = async (req, res, next) => {
+  try {
+    const designation = await Designation.findById(req.params.id);
+
+    if (!designation) {
+      return res.status(404).json({ message: "Designation not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: designation,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
