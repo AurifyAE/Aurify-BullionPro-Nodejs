@@ -1979,6 +1979,48 @@ class RegistryService {
       },
     };
   }
+  
+  static async generateOpeningFixingAuditTrail(purchaseFixingId) {
+    if (!mongoose.Types.ObjectId.isValid(purchaseFixingId)) return null;
+
+    const registry = await Registry.findOne({
+      transactionId: purchaseFixingId,
+      isActive: true,
+    }).lean();
+
+    if (!registry) return null;
+
+    const currencyDebit = registry.cashDebit || 0;
+    const currencyCredit = registry.cashCredit || 0;
+
+    const metalDebit = registry.goldDebit || 0;
+    const metalCredit = registry.goldCredit || 0;
+
+    return {
+      transactionId: registry.transactionId,
+      date: registry.transactionDate || registry.createdAt,
+      party: {
+        name: registry.party?.name || "Inventory",
+      },
+      reference: registry.reference || registry.transactionId,
+
+      entries: [
+        {
+          description: registry.description || "OPENING FIXING POSITION",
+          accCode: registry.costCenter || "INVENTORY",
+          currencyDebit,
+          currencyCredit,
+          metalDebit,
+          metalCredit,
+        },
+      ],
+
+      totals: {
+        currencyBalance: currencyDebit - currencyCredit,
+        metalBalance: metalDebit - metalCredit,
+      },
+    };
+  }
 
   static async generateOpeningStockAuditTrail(reference) {
     console.log("Generating Opening Stock Audit Trail for:", reference);
