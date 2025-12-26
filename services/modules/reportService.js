@@ -878,35 +878,37 @@ export class ReportService {
       const validatedFilters = this.validateFilters(filters);
 
       // 2. Handle excludeOpening - get opening balance if needed
+      // excludeOpening: false → show opening balance, excludeOpening: true → don't show opening
       let openingBalance = { opening: 0, openingValue: 0 };
       const excludeOpening = filters.excludeOpening === true || filters.excludeOpening === "true";
       if (!excludeOpening && filters.fromDate) {
         openingBalance = await this.getOwnStockOpeningBalance(filters.fromDate, validatedFilters);
       }
 
-      // 3. Handle excludeHedging - when false, only show fixed=true transactions
-      // excludeHedging: false → only show fixed=true (exclude hedging/unfixed)
-      // excludeHedging: true → show all transactions (include hedging/unfixed)
-      const excludeHedgingValue = filters.excludeHedging;
-      const shouldFilterByFixed = excludeHedgingValue === false || excludeHedgingValue === "false";
-
-      // 4. Construct MongoDB aggregation pipeline for fixing reports
+      // 3. Construct MongoDB aggregation pipeline for fixing reports
+      // Pass excludeHedging from original filters since it's not in validatedFilters
       const pipeline = this.metalFxingPipeLine({
         ...validatedFilters,
         excludeHedging: filters.excludeHedging,
         excludeOpening: filters.excludeOpening,
       });
 
-      // 5. Execute aggregation query with debugging
+      // 4. Execute aggregation query with debugging
       console.log("=== METAL FIXING REPORT DEBUG ===");
       console.log("Filters:", JSON.stringify(validatedFilters, null, 2));
+      console.log("excludeOpening:", filters.excludeOpening);
+      console.log("excludeHedging:", filters.excludeHedging);
       console.log("Opening Balance:", openingBalance);
       console.log("Pipeline stages:", pipeline.length);
       
-      // Debug: Check initial match count
+      // Debug: Check initial match count on Registry
       const initialMatch = {
         isActive: true,
         type: { $in: ["purchase-fixing", "sales-fixing"] },
+        $or: [
+          { metalTransactionId: { $exists: true, $ne: null } },
+          { fixingTransactionId: { $exists: true, $ne: null } }
+        ],
       };
       if (validatedFilters.startDate || validatedFilters.endDate) {
         initialMatch.transactionDate = {};
@@ -919,13 +921,13 @@ export class ReportService {
       }
       
       const initialMatchCount = await Registry.countDocuments(initialMatch);
-      console.log("✅ Initial Match Count (isActive=true, type in ['purchase-fixing','sales-fixing']):", initialMatchCount);
+      console.log("✅ Initial Match Count (Registry with purchase-fixing or sales-fixing):", initialMatchCount);
       console.log("📅 Date Range:", {
         startDate: validatedFilters.startDate,
         endDate: validatedFilters.endDate
       });
       
-      // Debug: Check if any Registry entries exist with these types
+      // Debug: Check if any Registry entries exist
       if (initialMatchCount > 0) {
         const sampleRegistry = await Registry.find(initialMatch).limit(5).lean();
         console.log("📋 Sample Registry entries (first 5):", JSON.stringify(sampleRegistry.map(r => ({
@@ -934,21 +936,13 @@ export class ReportService {
           type: r.type,
           transactionDate: r.transactionDate,
           metalTransactionId: r.metalTransactionId,
-          fixingTransactionId: r.fixingTransactionId,
-          goldCredit: r.goldCredit,
-          goldDebit: r.goldDebit
+          fixingTransactionId: r.fixingTransactionId
         })), null, 2));
       } else {
         console.log("❌ No Registry entries found matching initial criteria!");
-        // Check without date filter
-        const countWithoutDate = await Registry.countDocuments({
-          isActive: true,
-          type: { $in: ["purchase-fixing", "sales-fixing"] }
-        });
-        console.log("📊 Count without date filter:", countWithoutDate);
       }
       
-      console.log("🔄 Executing aggregation pipeline...");
+      console.log("🔄 Executing aggregation pipeline on Registry...");
       const reportData = await Registry.aggregate(pipeline);
       console.log("📊 Final Report Data Length:", reportData.length);
       if (reportData.length > 0) {
@@ -957,7 +951,7 @@ export class ReportService {
         console.log("❌ No records returned from pipeline!");
       }
 
-      // 6. Format the retrieved data for response
+      // 5. Format the retrieved data for response
       const formattedData = this.formatFixingReportData(reportData, openingBalance, validatedFilters);
       console.log("Formatted Data:", JSON.stringify(formattedData, null, 2));
 
@@ -5665,41 +5659,57 @@ export class ReportService {
   metalFxingPipeLine(filters) {
     const pipeline = [];
     
-    // Step 1: Initial match conditions on Registry
-    const matchConditions = {
+    // Step 1: Start from Registry - match purchase-fixing and sales-fixing entries
+    const registryMatch = {
       isActive: true,
       type: { $in: ["purchase-fixing", "sales-fixing"] },
+      $or: [
+        { metalTransactionId: { $exists: true, $ne: null } },
+        { fixingTransactionId: { $exists: true, $ne: null } }
+      ],
     };
 
-    // Step 2: Date filtering on Registry first
+    // Step 2: Apply date filter on Registry
     if (filters.startDate || filters.endDate) {
-      matchConditions.transactionDate = {};
+      registryMatch.transactionDate = {};
       if (filters.startDate) {
-        matchConditions.transactionDate.$gte = new Date(filters.startDate);
+        registryMatch.transactionDate.$gte = new Date(filters.startDate);
       }
       if (filters.endDate) {
-        matchConditions.transactionDate.$lte = new Date(filters.endDate);
+        registryMatch.transactionDate.$lte = new Date(filters.endDate);
       }
     }
 
-    // Step 5: Handle excludeHedging - when false, only show fixed=true transactions
-    const excludeHedgingValue = filters.excludeHedging;
-    const shouldFilterByFixed = excludeHedgingValue === false || excludeHedgingValue === "false";
+    // Step 3: Apply voucher filter if provided
+    if (filters.voucher?.length > 0) {
+      const regexFilters = filters.voucher.map((v) => ({
+        reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+      }));
+      registryMatch.$and = [{ $or: regexFilters }];
+    }
 
-    // Debug: Log match conditions
-    console.log("=== METAL FIXING PIPELINE DEBUG ===");
-    console.log("Initial Match Conditions:", JSON.stringify(matchConditions, null, 2));
-    console.log("excludeHedging:", filters.excludeHedging, "shouldFilterByFixed:", shouldFilterByFixed);
+    pipeline.push({ $match: registryMatch });
 
-    // Add initial match stage on Registry
-    pipeline.push({ $match: matchConditions });
-
-    // Step 3: Lookup MetalTransaction
+    // Step 4: Lookup MetalTransaction and filter by date
     pipeline.push({
       $lookup: {
         from: "metaltransactions",
-        localField: "metalTransactionId",
-        foreignField: "_id",
+        let: { metalTxnId: "$metalTransactionId" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$_id", "$$metalTxnId"] },
+              isActive: true,
+              // Filter by date in MetalTransaction
+              ...(filters.startDate || filters.endDate ? {
+                voucherDate: {
+                  ...(filters.startDate ? { $gte: new Date(filters.startDate) } : {}),
+                  ...(filters.endDate ? { $lte: new Date(filters.endDate) } : {})
+                }
+              } : {})
+            }
+          }
+        ],
         as: "metalTransaction",
       },
     });
@@ -5711,12 +5721,27 @@ export class ReportService {
       },
     });
 
-    // Step 4: Lookup TransactionFixing
+    // Step 5: Lookup TransactionFixing and filter by date
     pipeline.push({
       $lookup: {
         from: "transactionfixings",
-        localField: "fixingTransactionId",
-        foreignField: "_id",
+        let: { fixingTxnId: "$fixingTransactionId" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$_id", "$$fixingTxnId"] },
+              isActive: true,
+              status: "active",
+              // Filter by date in TransactionFixing
+              ...(filters.startDate || filters.endDate ? {
+                transactionDate: {
+                  ...(filters.startDate ? { $gte: new Date(filters.startDate) } : {}),
+                  ...(filters.endDate ? { $lte: new Date(filters.endDate) } : {})
+                }
+              } : {})
+            }
+          }
+        ],
         as: "transactionFixing",
       },
     });
@@ -5728,37 +5753,54 @@ export class ReportService {
       },
     });
 
-    // Step 5.5: Handle excludeHedging filter
-    // When excludeHedging is false, only show fixed=true transactions
-    // When excludeHedging is true, show all transactions (fixed and unfixed)
-    if (shouldFilterByFixed) {
-      console.log("🔍 Filtering by fixed=true (excludeHedging is false)");
-      // Only include records where MetalTransaction doesn't exist OR MetalTransaction.fixed is true
-      // Use $or with $ne null to check if metalTransaction._id exists (indicates lookup matched)
+    // Step 6: Filter out entries where MetalTransaction or TransactionFixing don't match date filter
+    pipeline.push({
+      $match: {
+        $and: [
+          // Must have at least one of MetalTransaction or TransactionFixing
+          {
+            $or: [
+              { "metalTransaction._id": { $exists: true } },
+              { "transactionFixing._id": { $exists: true } }
+            ]
+          }
+        ]
+      }
+    });
+
+    // Step 7: Handle excludeHedging filter
+    // excludeHedging: false → show hedge entries (hedge=true)
+    // excludeHedging: true → only show purchase-fixing and sales-fixing where MetalTransaction.fixed = true
+    const excludeHedgingValue = filters.excludeHedging;
+    const shouldExcludeHedge = excludeHedgingValue === true || excludeHedgingValue === "true";
+
+    // Debug: Log match conditions
+    console.log("=== METAL FIXING PIPELINE DEBUG ===");
+    console.log("Starting from Registry, filtering by date in MetalTransaction and TransactionFixing");
+    console.log("excludeHedging:", filters.excludeHedging, "shouldExcludeHedge:", shouldExcludeHedge);
+
+    // Filter based on excludeHedging
+    if (shouldExcludeHedge) {
+      console.log("✓ Filtering: excludeHedging=true - only showing where MetalTransaction.fixed=true");
+      // When excludeHedging is true, only show entries where MetalTransaction.fixed = true
       pipeline.push({
         $match: {
           $or: [
-            { "metalTransaction._id": { $exists: false } }, // No MetalTransaction (only TransactionFixing)
+            { "metalTransaction._id": { $exists: false } }, // No MetalTransaction
             { "metalTransaction.fixed": true } // MetalTransaction exists and is fixed
           ]
         },
       });
     } else {
-      console.log("ℹ️ excludeHedging is true - including all transactions (fixed and unfixed)");
+      console.log("✓ Filtering: excludeHedging=false - including all entries");
+      // When excludeHedging is false, show all entries (no additional filter needed)
     }
 
-    // Step 6: Voucher filtering - Since we're already filtering by type=["purchase-fixing", "sales-fixing"] in Registry,
-    // and the Registry type field already matches the fixing types, we don't need additional voucher filtering.
-    // However, if specific voucher references are needed, we can filter by them.
-    // For now, we skip voucher filtering as the type filter already ensures we only get fixing transactions.
-    console.log("ℹ️ Skipping voucher filter - already filtered by type=['purchase-fixing', 'sales-fixing'] in Registry");
-
-    // Step 7: Lookup FixingPrice to get bidValue and currentBidValue
-    // FixingPrice can be linked via MetalTransaction (transaction field) or TransactionFixing (transactionFix field)
+    // Step 8: Lookup FixingPrice matching both TransactionFixing ID and MetalTransaction ID
     pipeline.push({
       $lookup: {
         from: "fixingprices",
-        let: { 
+        let: {
           metalTxnId: "$metalTransactionId",
           fixingTxnId: "$fixingTransactionId"
         },
@@ -5766,15 +5808,17 @@ export class ReportService {
           {
             $match: {
               $expr: {
-                $or: [
+                $and: [
+                  // Match by MetalTransaction ID (transaction field)
                   { $eq: ["$transaction", "$$metalTxnId"] },
-                  { $eq: ["$transactionFix", "$$fixingTxnId"] }
+                  // Match by TransactionFixing ID (transactionFix field)
+                  { $eq: ["$transactionFix", "$$fixingTxnId"] },
+                  { $eq: ["$status", "active"] }
                 ]
-              },
-              status: "active"
+              }
             }
           },
-          { $sort: { fixedAt: -1 } },
+          { $sort: { fixedAt: -1 } }, // Get the most recent fixing price
           { $limit: 1 }
         ],
         as: "fixingPrice",
@@ -5784,19 +5828,11 @@ export class ReportService {
     pipeline.push({
       $unwind: {
         path: "$fixingPrice",
-        preserveNullAndEmptyArrays: true,
+        preserveNullAndEmptyArrays: true, // Allow entries without FixingPrice (will use default rate)
       },
     });
 
-    // Step 8: Unwind orders from TransactionFixing to get bidValue (if TransactionFixing exists)
-    pipeline.push({
-      $unwind: {
-        path: "$transactionFixing.orders",
-        preserveNullAndEmptyArrays: true,
-      },
-    });
-
-    // Step 10: Lookup parties from accounts collection
+    // Step 9: Lookup parties from accounts collection
     pipeline.push({
       $lookup: {
         from: "accounts",
@@ -5813,7 +5849,7 @@ export class ReportService {
       },
     });
 
-    // Step 11: Calculate running balance and other fields
+    // Step 10: Sort by transactionDate and createdAt for consistent ordering
     pipeline.push({
       $sort: {
         transactionDate: 1,
@@ -5821,38 +5857,51 @@ export class ReportService {
       },
     });
 
-    // Step 12: Project fields for simpler processing
+    // Step 11: Project fields - Use FixingPrice values if matched, otherwise default rate 2500
+    // Each voucher shows rate, bidValue, currentBidValue from FixingPrice (or default 2500)
     pipeline.push({
       $project: {
         _id: 1,
         voucher: "$reference",
         date: "$transactionDate",
         narration: "$parties.customerName",
+        type: "$type", // Include type: purchase-fixing or sales-fixing
         pureWeightIn: { $ifNull: ["$goldCredit", 0] },
         pureWeightOut: { $ifNull: ["$goldDebit", 0] },
+        // Rate priority: FixingPrice.bidValue > FixingPrice.rateInGram > Registry.goldBidValue > default 2500
+        // If FixingPrice will be updated soon (doesn't exist yet), use Registry.goldBidValue
         rate: { 
           $ifNull: [
-            "$fixingPrice.bidValue",
-            "$transactionFixing.orders.bidValue",
-            "$goldBidValue",
-            0
+            "$fixingPrice.bidValue",        // FixingPrice.bidValue (primary)
+            "$fixingPrice.rateInGram",     // FixingPrice.rateInGram (fallback)
+            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
+            2500                            // Default rate: 2500 if no FixingPrice and no goldBidValue
           ]
         },
         bidValue: { 
           $ifNull: [
-            "$fixingPrice.bidValue",
-            "$transactionFixing.orders.bidValue",
-            0
+            "$fixingPrice.bidValue",        // FixingPrice.bidValue
+            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
+            2500                            // Default: 2500 if no FixingPrice and no goldBidValue
           ]
         },
         currentBidValue: { 
           $ifNull: [
-            "$fixingPrice.currentBidValue",
-            "$transactionFixing.orders.currentBidValue",
-            0
+            "$fixingPrice.currentBidValue", // FixingPrice.currentBidValue
+            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
+            2500                            // Default: 2500 if no FixingPrice and no goldBidValue
+          ]
+        },
+        rateInGram: { 
+          $ifNull: [
+            "$fixingPrice.rateInGram",      // FixingPrice.rateInGram
+            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
+            2500                            // Default: 2500 if no FixingPrice and no goldBidValue
           ]
         },
         createdAt: 1,
+        metalTransactionId: 1,
+        fixingTransactionId: 1,
       },
     });
 
@@ -5862,10 +5911,11 @@ export class ReportService {
         _id: 1,
         voucher: 1,
         date: 1,
+        type: 1, // Include type field
         narration: { $ifNull: ["$narration", "--"] },
         pureWeightIn: { $round: ["$pureWeightIn", 2] },
         pureWeightOut: { $round: ["$pureWeightOut", 2] },
-        rate: { $round: ["$rate", 2] },
+        rate: { $round: ["$rate", 2] }, // Rate from FixingPrice or TransactionFixing.orders.bidValue
         value: {
           $round: [
             {
@@ -5940,13 +5990,14 @@ export class ReportService {
         voucher: item.voucher || "--",
         date: typeof item.date === 'string' ? item.date : (item.date ? moment(item.date).format("DD/MM/YYYY") : "--"),
         narration: item.narration || "--",
+        type: item.type || "--", // Include type: purchase-fixing, sales-fixing, HEDGE_ENTRY, OPEN-ACCOUNT-FIXING
         pureWeight: {
           in: Number(pureWeightIn.toFixed(2)),
           out: Number(pureWeightOut.toFixed(2)),
           balance: Number(runningPureWeightBalance.toFixed(2)),
         },
         amount: {
-          rate: Number(rate.toFixed(2)),
+          rate: Number(rate.toFixed(2)), // Rate from FixingPrice or TransactionFixing.orders.bidValue
           value: Number(value.toFixed(2)),
           balance: Number(runningValueBalance.toFixed(2)),
         },
