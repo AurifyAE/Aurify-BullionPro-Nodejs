@@ -1037,10 +1037,11 @@ class MetalTransactionService {
     ];
 
     const fixingEntryType = purchaseFixingTypes.includes(normalizedTypeKey)
-      ?"sales-fixing"
-      : salesFixingTypes.includes(normalizedTypeKey)
-        ?  "purchase-fixing"
-        : "purchase-fixing";
+    ? "purchase-fixing"
+    : salesFixingTypes.includes(normalizedTypeKey)
+      ? "sales-fixing"
+      : "purchase-fixing";
+
 
     const normalizedTransactionType = String(transactionType || "")
       .toLowerCase()
