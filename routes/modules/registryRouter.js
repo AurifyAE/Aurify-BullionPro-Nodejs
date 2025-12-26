@@ -22,7 +22,9 @@ import {
   getRegistryFixingTransaction,
   getCashEntryAuditTrail,
   getStockAdjustmentAuditTrail,
-  getOpeningFixingAuditTrail
+  getOpeningFixingAuditTrail,
+  getOpeningStockAuditTrail,
+  getOpeningBalanceAuditTrail
 } from "../../controllers/modules/RegistryController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import {
@@ -124,5 +126,9 @@ router.get("/fixing/:fixingTransactionId", getRegistryFixingTransaction);
 router.get("/cash-entry/:entryTransactionId", getCashEntryAuditTrail);
 router.get("/stock-adjustment/:stockAdjustmentId", getStockAdjustmentAuditTrail);
 router.get("/opening-fixing/:purchaseFixingId", getOpeningFixingAuditTrail);
+
+router.get("/opening-stock/:purchaseFixingId", getOpeningStockAuditTrail);
+router.get("/opening-balance/:purchaseFixingId", getOpeningBalanceAuditTrail);
+
 
 export default router;
