@@ -303,112 +303,43 @@ class MetalTransactionService {
    * For BULLION entries: use main transaction remarks
    */
   static formatDescriptionWithRemarks(baseDescription, isPartyEntry, transactionRemarks, itemRemarks) {
-    return baseDescription;
-    // Helper function to detect type from description and add prefix
-    // const getTypePrefix = (description) => {
-    //   if (!description || typeof description !== 'string') return '';
-      
-    //   const descLower = description.toLowerCase();
-      
-      // Check for different types (order matters - more specific first)
-    //   if (descLower.includes('making charge') || descLower.includes('making charges')) {
-    //     return '[Making Charge] ';
-    //   }
-    //   if (descLower.includes('vat amount') || descLower.includes('vat')) {
-    //     return '[VAT] ';
-    //   }
-    //   if (descLower.includes('premium')) {
-    //     return '[Premium] ';
-    //   }
-    //   if (descLower.includes('discount')) {
-    //     return '[Discount] ';
-    //   }
-    //   if (descLower.includes('other charge') || descLower.includes('other charges')) {
-    //     return '[Other Charge] ';
-    //   }
-    //   if (descLower.includes('round off') || descLower.includes('roundoff')) {
-    //     return '[Round Off] ';
-    //   }
-    //   if (descLower.includes('foreign exchange gain')) {
-    //     return '[FX Gain] ';
-    //   }
-    //   if (descLower.includes('foreign exchange loss')) {
-    //     return '[FX Loss] ';
-    //   }
-    //   if (descLower.includes('purity difference')) {
-    //     return '[Purity Difference] ';
-    //   }
-    //   if (descLower.includes('gold stock') || descLower.includes('gold inventory')) {
-    //     return '[Gold Stock] ';
-    //   }
-    //   if (descLower.includes('party gold balance') || descLower.includes('gold balance')) {
-    //     return '[Gold Balance] ';
-    //   }
-    //   if (descLower.includes('party cash balance') || descLower.includes('cash balance')) {
-    //     return '[Cash Balance] ';
-    //   }
-    //   if (descLower.includes('hedge entry')) {
-    //     return '[Hedge Entry] ';
-    //   }
-      
-    //   return '';
-    // };
-
-    // Check if this is a PARTY entry by looking at baseDescription
-    // PARTY entries have "Party" in the description (e.g., "Party making charges", "Party VAT amount")
-    // const isPartyRegistry = baseDescription && typeof baseDescription === 'string' && 
-    //                        (baseDescription.toLowerCase().includes('party ') || 
-    //                         baseDescription.toLowerCase().startsWith('party'));
-
-    // let finalDescription = '';
-    // let typeSource = baseDescription; // Use baseDescription to detect type
+    // Format: baseDescription\n\nremarks
+    // For party entries: uses transactionRemarks
+    // For non-party entries: uses itemRemarks
+    // Both follow the same format: baseDescription\n\nremarks
     
-    // if (isPartyRegistry || isPartyEntry) {
-      // For PARTY entries (registry type starting with PARTY_):
-      // Always use main transaction remarks (transactionRemarks), not itemRemarks
-    //   if (transactionRemarks && typeof transactionRemarks === 'string' && transactionRemarks.trim()) {
-    //     finalDescription = transactionRemarks.trim();
-    //   } else {
-    //     // If no transaction remarks, fallback to base description
-    //     finalDescription = baseDescription || "";
-    //   }
-    // } else {
-    //   // For BULLION entries (non-PARTY):
-    //   // Use item remarks
-    //   let remarks = itemRemarks;
-    //   if (itemRemarks && typeof itemRemarks === 'object' && !Array.isArray(itemRemarks)) {
-    //     // If itemRemarks is the item object itself, extract remarks
-    //     remarks = this.getItemRemarks(itemRemarks);
-    //   }
-    //   if (remarks && typeof remarks === 'string' && remarks.trim()) {
-    //     finalDescription = remarks.trim();
-    //   } else {
-    //     // If no item remarks, fallback to base description
-    //     finalDescription = baseDescription || "";
-    //   }
-    // }
-
-    // // Detect type prefix from baseDescription (which contains type info)
-    // const prefix = getTypePrefix(typeSource);
+    // Ensure baseDescription is a string
+    const base = baseDescription || '';
     
-    // // For PARTY entries, always add prefix if detected
-    // // For bullion entries, only add prefix if not already present
-    // if (isPartyRegistry || isPartyEntry) {
-    //   // PARTY entries always get prefix if type is detected
-    //   if (prefix) {
-    //     // Only add if not already present
-    //     if (!finalDescription.startsWith('[')) {
-    //       return prefix + finalDescription;
-    //     }
-    //   }
-    //   return finalDescription;
-    // } else {
-    //   // Bullion entries: only add prefix if not already present
-    //   if (prefix && !finalDescription.startsWith('[')) {
-    //     return prefix + finalDescription;
-    //   }
-    //   return finalDescription;
-    // }
+    // Determine which remarks to use based on entry type
+    let remarks = '';
+    if (isPartyEntry) {
+      // For party entries: use transactionRemarks (from main transaction)
+      if (transactionRemarks && typeof transactionRemarks === 'string') {
+        remarks = transactionRemarks.trim();
+      }
+    } else {
+      // For non-party entries: use itemRemarks (from individual item)
+      let itemRemarksValue = itemRemarks;
+      
+      // If itemRemarks is an object, extract remarks from it using getItemRemarks helper
+      if (itemRemarks && typeof itemRemarks === 'object' && !Array.isArray(itemRemarks)) {
+        itemRemarksValue = this.getItemRemarks(itemRemarks);
+      }
+      
+      if (itemRemarksValue && typeof itemRemarksValue === 'string') {
+        remarks = itemRemarksValue.trim();
+      }
+    }
+    
+    // Combine baseDescription and remarks in the same format for both types
+    // Format: baseDescription\n\nremarks
+    if (remarks) {
+      return `${base}\n\n${remarks}`;
+    }
+    
+    // If no remarks available, return just baseDescription
+    return base;
   }
 
   /**
@@ -960,6 +891,7 @@ class MetalTransactionService {
         partyCurrency,
         partyCurrencyRate: transaction.partyCurrencyRate || 1,
         dealOrderId,
+        transactionRemarks,
       });
       entries.push(...roundOffEntries);
     }
@@ -1122,7 +1054,7 @@ class MetalTransactionService {
         this.formatDescriptionWithRemarks(
           `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           true, // isPartyEntry
-          null,
+          transactionRemarks,
           null // No item remarks for aggregated hedge entries
         ),
         party._id,
@@ -1201,7 +1133,7 @@ class MetalTransactionService {
         this.formatDescriptionWithRemarks(
           `Hedge entry recorded for ${partyName} — ${totals.pureWeight}g gold hedged at bid ${totals.bidValue} USD/oz`,
           false, // isPartyEntry - use item remarks (but null for aggregated)
-          null,
+          transactionRemarks,
           null // No item remarks for aggregated hedge entries
         ),
         party._id,
@@ -1246,6 +1178,7 @@ class MetalTransactionService {
     partyCurrency,
     partyCurrencyRate = 1,
     dealOrderId = null,
+    transactionRemarks = null,
   }) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -1319,7 +1252,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Round off adjustment - ${transactionType} from ${partyName}`,
             true, // isPartyEntry
-            null, // transactionRemarks - round off doesn't have remarks
+            transactionRemarks,
             null // itemRemarks
           ),
           party._id,
@@ -1352,7 +1285,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Discount on ${transactionType} - Round off from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null, // transactionRemarks - round off doesn't have remarks
+            transactionRemarks,
             null // itemRemarks
           ),
           party._id,
@@ -2145,7 +2078,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Party gold balance - Purchase from ${partyName}`,
             true, // isPartyEntry
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2181,7 +2114,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Party cash balance - Gold purchase from ${partyName} at bid ${totals.bidValue}`,
             true, // isPartyEntry
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2217,7 +2150,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Party making charges - Purchase from ${partyName}`,
             true, // isPartyEntry
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2248,7 +2181,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Making charges - Purchase from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2284,7 +2217,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Foreign Exchange Gain - Purchase from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2318,7 +2251,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Foreign Exchange Loss - Purchase from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2475,7 +2408,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Party VAT amount - Purchase from ${partyName}`,
             true, // isPartyEntry
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2506,7 +2439,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `VAT amount - Purchase from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2542,7 +2475,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Party premium - Purchase from ${partyName}`,
             true, // isPartyEntry
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2572,7 +2505,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Premium - Purchase from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2605,7 +2538,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Party discount - Purchase from ${partyName}`,
             true, // isPartyEntry
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2636,7 +2569,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Discount - Purchase from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           party._id,
@@ -2671,7 +2604,7 @@ class MetalTransactionService {
           this.formatDescriptionWithRemarks(
             `Gold inventory - Purchase from ${partyName}`,
             false, // isPartyEntry - use item remarks
-            null,
+            transactionRemarks,
             this.getItemRemarks(item)
           ),
           null,

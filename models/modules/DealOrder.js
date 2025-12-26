@@ -287,6 +287,24 @@ const DealOrderSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "CurrencyMaster",
     },
+    itemCurrencyRate: {
+      type: Number,
+      default: 1,
+      min: [0, "Item Currency Rate cannot be negative"],
+    },
+    // Fix/Unfix/Hedge fields (matching MetalTransaction)
+    fixed: {
+      type: Boolean,
+      default: false,
+    },
+    unfix: {
+      type: Boolean,
+      default: false,
+    },
+    hedge: {
+      type: Boolean,
+      default: false,
+    },
     partyCurrencyRate: {
       type: Number,
       default: 1,
