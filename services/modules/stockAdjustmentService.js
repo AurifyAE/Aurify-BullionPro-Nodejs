@@ -133,7 +133,7 @@ export class StockAdjustmentService {
                 grossWeight: data.toStock.grossWeight ?? 0,
                 pureWeight: data.toStock.pureWeight ?? 0,
                 purity: data.toStock.purity ?? 0,
-                debit:  data.toStock.pureWeight ?? 0,
+                debit: data.toStock.pureWeight ?? 0,
                 credit: 0,
                 goldDebit: data.toStock.pureWeight ?? 0,
                 goldCredit: 0,
@@ -479,6 +479,148 @@ export class StockAdjustmentService {
                 },
                 { new: true, session }
             );
+
+
+
+
+            // delete old registry entries
+            await Registry.deleteMany({
+                transactionType: "adjustment",
+                transactionId: existing._id,
+            }).session(session);
+
+            console.log("Adjustment updated:", updated);
+            console.log("Hyyyyyyyyyyyyyyyyyy", data)
+            // 5. registry entry - stock adjustment credit gold - means deducting gold from inventory  
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "XAU",
+                transactionId: updated._id,
+                metalId: data.fromData.stockId,
+                reference: data.voucherCode,
+                type: "GOLD_STOCK",
+                goldBidValue: 0,
+                description: "Stock Adjustment credit",
+                value: data.fromData.pureWeight ?? 0,
+                grossWeight: data.fromData.grossWeight ?? 0,
+                pureWeight: data.fromData.pureWeight ?? 0,
+                purity: data.fromData.purity ?? 0,
+                debit: 0,
+                credit: data.fromData.pureWeight ?? 0,
+                goldDebit: 0,
+                goldCredit: data.fromData.pureWeight ?? 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
+            // 5. registry entry - stock adjustment debit gold 
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "XAU",
+                transactionId: updated._id,
+                metalId: data.toData.stockId,
+                reference: data.voucherCode,
+                type: "GOLD_STOCK",
+                goldBidValue: 0,
+                description: "Stock Adjustment Debit",
+                value: data.toData.pureWeight ?? 0,
+                grossWeight: data.toData.grossWeight ?? 0,
+                pureWeight: data.toData.pureWeight ?? 0,
+                purity: data.toData.purity ?? 0,
+                debit: data.toData.pureWeight ?? 0,
+                credit: 0,
+                goldDebit: data.toData.pureWeight ?? 0,
+                goldCredit: 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
+            const stockDifference =
+                (data.toData.pureWeight ?? 0) -
+                (data.fromData.pureWeight ?? 0);
+
+            const makingAmountDifference =
+                (data.toData.avgAmount ?? 0) -
+                (data.fromData.avgAmount ?? 0);
+
+            // Normalize values (ABS only)
+            const cashCredit =
+                makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0;
+
+            const cashDebit =
+                makingAmountDifference > 0 ? makingAmountDifference : 0;
+
+            const goldCredit =
+                stockDifference > 0 ? stockDifference : 0;
+
+            const goldDebit =
+                stockDifference < 0 ? Math.abs(stockDifference) : 0;
+
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "stock",
+                transactionId: updated._id,
+                metalId: data.fromData.stockId,
+                reference: data.voucherCode,
+                type: "STOCK_ADJUSTMENT",
+                description: "Stock Adjustment Difference",
+                grossWeight: data.fromData.grossWeight ?? 0,
+                pureWeight: data.fromData.pureWeight ?? 0,
+                value: 0,
+                purity: data.fromData.purity ?? 0,
+
+                debit: cashDebit,       // ALWAYS >= 0
+                credit: cashCredit,     // ALWAYS >= 0
+                goldDebit: goldDebit,   // ALWAYS >= 0
+                goldCredit: goldCredit, // ALWAYS >= 0
+
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            });
+
+
+            // 5. registry entry - stock adjustment making credit -- from the from stock
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "AED",
+                transactionId: updated._id,
+                metalId: data.fromData.stockId,
+                reference: data.voucherCode,
+                type: "MAKING_CHARGES",
+                goldBidValue: 0,
+                description: "Making Charges Adjustment",
+                grossWeight: data.fromData.grossWeight ?? 0,
+                pureWeight: data.fromData.pureWeight ?? 0,
+                purity: data.fromData.purity ?? 0,
+                value: 0,
+                debit: 0,
+                credit: data.fromData.avgAmount ?? 0,
+                goldDebit: 0,
+                goldCredit: 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
+            // 5. registry entry - stock adjustment making debit 
+            await this.createRegistryEntry({
+                transactionType: "adjustment",
+                assetType: "AED",
+                transactionId: updated._id,
+                metalId: data.fromData.stockId,
+                reference: data.voucherCode,
+                type: "MAKING_CHARGES",
+                goldBidValue: 0,
+                description: "Making Charges Adjustment",
+                value: 0,
+                grossWeight: data.toData.grossWeight ?? 0,
+                pureWeight: data.toData.pureWeight ?? 0,
+                purity: data.toData.purity ?? 0,
+                debit: data.toData.avgAmount ?? 0,
+                credit: 0,
+                costCenter: "INVENTORY",
+                createdBy: adminId,
+            })
+
 
             // --------------------------------------------------
             // 8️ COMMIT
