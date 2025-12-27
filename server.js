@@ -121,7 +121,7 @@ app.use("/api/v1/deal-orders", dealOrderRoutes);
 app.use("/api/v1/deal-strategy", dealStrategyRoutes);
 app.use("/api/v1/draftings", draftingRoutes);
 app.use("/api/v1/opening-fixing", openingFixingRoutes);
-app.use("/api/v1/account-fixing", accountFixingRoutes);
+app.use("/api/v1/opening-account-fixing", accountFixingRoutes);
 app.use("/api/v1/designations", designationRoutes);
 
 // Global error handling middleware

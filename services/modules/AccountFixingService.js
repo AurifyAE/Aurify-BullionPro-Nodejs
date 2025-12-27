@@ -1,11 +1,11 @@
 import mongoose from "mongoose";
-import OpeningFixing from "../../models/modules/OpeningFixing.js";
+import AccountFixing from "../../models/modules/accountFixing.js";
 import MetalRate from "../../models/modules/MetalRateMaster.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import Registry from "../../models/modules/Registry.js";
 
-class OpeningFixingService {
-    static async createOpeningFixing(body, adminId) {
+class AccountFixingService {
+    static async createAccountFixing(body, adminId) {
         const session = await mongoose.startSession();
         session.startTransaction();
         try {
@@ -163,8 +163,8 @@ class OpeningFixingService {
         }
     }
 
-    static async fetchAllOpeningFixings() {
-        const fixings = await OpeningFixing.find()
+    static async fetchAllAccountFixings() {
+        const fixings = await AccountFixing.find()
             .populate("division", "code description")
             .populate("salesman", "name")
             .populate("metalRate", "rateType convFactGms")
@@ -175,12 +175,12 @@ class OpeningFixingService {
         return fixings;
     }
 
-    static async fetchOpeningFixingById(id) {
+    static async fetchAccountFixingById(id) {
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return null;
         }
 
-        const fixing = await OpeningFixing.findById(id)
+        const fixing = await AccountFixing.findById(id)
             .populate("division", "name code")
             .populate("salesman", "name")
             .populate("metalRate", "rateType convFactGms")
@@ -191,4 +191,4 @@ class OpeningFixingService {
     }
 }
 
-export default OpeningFixingService;
+export default AccountFixingService;

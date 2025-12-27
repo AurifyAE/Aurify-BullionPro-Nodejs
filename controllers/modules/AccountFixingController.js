@@ -1,4 +1,4 @@
-import OpeningFixingService from "../../services/modules/AccountFixingService.js";
+import AccountFixingService from "../../services/modules/AccountFixingService.js";
 
 export const createAccountFixing = async (req, res, next) => {
     try {
@@ -19,9 +19,9 @@ export const createAccountFixing = async (req, res, next) => {
 };
 
 
-export const getAllOpeningFixings = async (req, res, next) => {
+export const getAllAccountFixings = async (req, res, next) => {
     try {
-        const data = await OpeningFixingService.fetchAllOpeningFixings();
+        const data = await AccountFixingService.fetchAllAccountFixings();
 
         res.status(200).json({
             success: true,
@@ -32,16 +32,15 @@ export const getAllOpeningFixings = async (req, res, next) => {
     }
 };
 
-export const getOpeningFixingById = async (req, res, next) => {
+export const getAccountFixingById = async (req, res, next) => {
     try {
         const { id } = req.params;
 
-        const fixing = await OpeningFixingService.fetchOpeningFixingById(id);
-
+        const fixing = await AccountFixingService.fetchAccountFixingById(id);
         if (!fixing) {
             return res.status(404).json({
                 success: false,
-                message: "Opening fixing not found",
+                message: "Account fixing not found",
             });
         }
 
