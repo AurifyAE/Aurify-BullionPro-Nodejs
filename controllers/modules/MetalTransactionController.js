@@ -561,6 +561,7 @@ export const updateMetalTransaction = async (req, res, next) => {
         premiumDiscount: {
           rate: toNumber(premiumDiscount?.rate),
           amount: toNumber(premiumDiscount?.amount),
+          usd: toNumber(premiumDiscount?.usd),
         },
         vat: {
           percentage: toNumber(vat?.rate),
