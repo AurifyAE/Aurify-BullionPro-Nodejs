@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+  import mongoose from "mongoose";
 import Registry from "../../models/modules/Registry.js";
 import MetalTransaction from "../../models/modules/MetalTransaction.js";
 import FixingPrice from "../../models/modules/FixingPrice.js";
@@ -66,73 +66,30 @@ export class ReportService {
     };
   }
 
-  async getAccountStatementOpeningBalance(fromDate, filters = {}) {
+  async getAccountStatementOpeningBalance(toDate, filters = {}) {
     try {
-      if (!fromDate) return null;
+      if (!toDate) return null;
 
-      // Calculate previous day end in UTC calendar date (not UAE timezone)
-      // If fromDate is "2025-12-24", calculate opening balance up to Dec 23 23:59:59.999 UTC
-      // This ensures transactions with transactionDate <= Dec 23 23:59:59.999 UTC are included in opening balance
-      // and transactions with transactionDate >= Dec 24 00:00:00.000 UTC are in the main query
-      // Parse date string directly as UTC to avoid timezone conversion issues
-      const fromDateMoment = moment.utc(fromDate, 'YYYY-MM-DD');
-      const previousDayEnd = fromDateMoment
-        .subtract(1, 'day')
-        .endOf('day')
-        .toDate();
+      // Calculate previous day end (end of the day before toDate) in UAE timezone
+      // If toDate is Dec 21 (UAE time), calculate opening balance up to Dec 20 23:59:59.999 UAE time
+      // toDate is treated as UAE local time, converted to UTC for MongoDB query
+      const previousDayEnd = getPreviousDayEndInUTC(toDate);
       
-      console.log('fromDate (UAE local):', fromDate);
-      console.log('previousDayEnd (UTC calendar date):', previousDayEnd.toISOString());
-      
-      // Use the same transaction type definitions as the main pipeline
-      const { goldTypes, cashTypes, mixedTypes } = this.getAccountStatementTransactionTypes();
-      
-      // If excludeHedge is true, exclude PARTY_HEDGE_ENTRY from mixedTypes
-      let filteredMixedTypes = mixedTypes;
-      if (filters.excludeHedge === true) {
-        filteredMixedTypes = mixedTypes.filter(type => type !== 'PARTY_HEDGE_ENTRY');
-      }
-      console.log(filteredMixedTypes,'filteredMixedTypes');
-      
-      // Filter transaction types based on showGold and showCash filters
-      // showCash is controlled by baseCurrency in frontend
-      const showGold = filters.showGold !== false; // Default to true if not specified
-      const showCash = filters.showCash !== false && filters.baseCurrency !== false; // Default to true, but respect baseCurrency
-      
-      // Build the $or array based on what should be shown
-      const typeFilters = [];
-      
-      // If showGold is true, include gold-only types
-      if (showGold) {
-        typeFilters.push({ type: { $in: goldTypes } });
-      }
-      
-      // If showCash is true, include cash-only types
-      if (showCash) {
-        typeFilters.push({ type: { $in: cashTypes } });
-      }
-      
-      // Mixed types are always included if either gold or cash is shown (they contain both)
-      // This ensures we get complete transaction data
-      if (showGold || showCash) {
-        typeFilters.push({ type: { $in: filteredMixedTypes } });
-      }
+      console.log('toDate (UAE local):', toDate);
+      console.log('previousDayEnd (UTC for MongoDB):', previousDayEnd.toISOString());
       
       const pipeline = [
         {
           $match: {
-            isActive: true,
-            // Include transaction types based on showGold and showCash filters
-            ...(typeFilters.length > 0 ? { $or: typeFilters } : { type: { $in: [] } }), // Empty array means no matches
-            // Include all transactions up to and including the end of previous day
-            // If fromDate is Dec 1, this gets all transactions <= Nov 30 23:59:59.999
-            transactionDate: { $lte: previousDayEnd }
+            // Include all opening balances up to and including the end of previous day
+            // If toDate is Dec 21, this gets all opening balances <= Dec 20 23:59:59.999
+            voucherDate: { $lte: previousDayEnd }
           }
         },
         {
           $lookup: {
             from: "accounts",
-            localField: "party",
+            localField: "partyId",
             foreignField: "_id",
             as: "partyDetails"
           }
@@ -148,7 +105,7 @@ export class ReportService {
       // Apply voucher filter if provided
       if (filters.voucher?.length > 0) {
         const regexFilters = filters.voucher.map((v) => ({
-          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+          voucherCode: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
         }));
         pipeline.push({ $match: { $or: regexFilters } });
       }
@@ -157,31 +114,31 @@ export class ReportService {
       if (filters.accountType?.length > 0) {
         pipeline.push({
           $match: {
-            "party": { $in: filters.accountType.map(id => new ObjectId(id)) },
+            "partyId": { $in: filters.accountType.map(id => new ObjectId(id)) },
           },
         });
       }
 
-      // Filter by assetType based on baseCurrency and foreignCurrency settings
+      pipeline.push({
+        $addFields: {
+          partyId: "$partyId",
+          partyName: "$partyDetails.customerName"
+        }
+      });
+      
+      // Filter by assetCode based on baseCurrency and foreignCurrency settings
       // When baseCurrency is false and foreignCurrency is true, exclude AED transactions
       if (filters.baseCurrency === false && filters.foreignCurrency === true && filters.foreignCurrencySelected) {
-        // Exclude AED assetType transactions - only show foreign currency transactions
-        // Mixed types are included (they may have foreign currency in cashDebit/cashCredit)
-        // Use filteredMixedTypes to respect excludeHedge setting
+        // Exclude AED assetCode transactions - only show foreign currency transactions
+        // GOLD transactions (assetType="GOLD") should always be included
         pipeline.push({
           $match: {
             $or: [
-              // Include transactions with matching foreign currency assetType
-              { assetType: filters.foreignCurrencySelected },
-              // Include filtered mixed types (hedge excluded if excludeHedge is true)
-              { type: { $in: filteredMixedTypes } }
-            ],
-            // Exclude AED assetType (unless it's a mixed type)
-            $and: [
+              { assetType: "GOLD" }, // Always include gold transactions
               {
-                $or: [
-                  { assetType: { $ne: "AED" } }, // Non-AED assetType
-                  { type: { $in: filteredMixedTypes } } // Or filtered mixed type
+                $and: [
+                  { assetType: "CASH" },
+                  { assetCode: filters.foreignCurrencySelected }
                 ]
               }
             ]
@@ -189,83 +146,71 @@ export class ReportService {
         });
       }
 
-      // Group by party and calculate totals
       pipeline.push({
         $group: {
           _id: {
-            partyId: "$party",
-            partyName: "$partyDetails.customerName"
+            partyId: "$partyId",
+            partyName: "$partyName"
           },
-          // Cash debits and credits
-          // For mixed types, use cashDebit/cashCredit fields
-          // For cash-only types, use debit/credit fields
           cashDebit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$cashDebit", 0] }, // Mixed types: use cashDebit
                 {
-                  $cond: [
-                    { $in: ["$type", cashTypes] },
-                    { $ifNull: ["$debit", 0] }, // Cash types: use debit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "CASH"] },
+                    { $eq: ["$transactionType", "debit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           },
           cashCredit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$cashCredit", 0] }, // Mixed types: use cashCredit
                 {
-                  $cond: [
-                    { $in: ["$type", cashTypes] },
-                    { $ifNull: ["$credit", 0] }, // Cash types: use credit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "CASH"] },
+                    { $eq: ["$transactionType", "credit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           },
-          // Gold debits and credits
-          // For mixed types, use goldDebit/goldCredit fields
-          // For gold-only types, use debit/credit fields
           goldDebit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$goldDebit", 0] }, // Mixed types: use goldDebit
                 {
-                  $cond: [
-                    { $in: ["$type", goldTypes] },
-                    { $ifNull: ["$debit", 0] }, // Gold types: use debit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "GOLD"] },
+                    { $eq: ["$transactionType", "debit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           },
           goldCredit: {
             $sum: {
               $cond: [
-                { $in: ["$type", mixedTypes] },
-                { $ifNull: ["$goldCredit", 0] }, // Mixed types: use goldCredit
                 {
-                  $cond: [
-                    { $in: ["$type", goldTypes] },
-                    { $ifNull: ["$credit", 0] }, // Gold types: use credit
-                    0
+                  $and: [
+                    { $eq: ["$assetType", "GOLD"] },
+                    { $eq: ["$transactionType", "credit"] }
                   ]
-                }
+                },
+                { $ifNull: ["$value", 0] },
+                0
               ]
             }
           }
         }
       });
 
-      // Calculate net balances (credit - debit)
       pipeline.push({
         $project: {
           _id: 0,
@@ -276,12 +221,7 @@ export class ReportService {
         }
       });
 
-      console.log('Opening balance pipeline match stage:', JSON.stringify(pipeline[0].$match, null, 2));
-      const openingBalances = await Registry.aggregate(pipeline);
-      console.log('Opening balance query result count:', openingBalances.length);
-      if (openingBalances.length > 0) {
-        console.log('Sample opening balance:', JSON.stringify(openingBalances[0], null, 2));
-      }
+      const openingBalances = await OpeningBalance.aggregate(pipeline);
       
       // Format opening balances
       return openingBalances.map(party => ({
@@ -306,55 +246,21 @@ export class ReportService {
     // IMPORTANT: Always include mixedTypes in the match conditions
     // Mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY) must be included
     // as they contain both cash and gold components in a single transaction
-    // However, if excludeHedge is true, exclude PARTY_HEDGE_ENTRY from mixedTypes
-    let filteredMixedTypes = mixedTypes;
-    if (filters.excludeHedge === true) {
-      console.log('excludeHedge is true');
-      filteredMixedTypes = mixedTypes.filter(type => type !== 'PARTY_HEDGE_ENTRY');
-      console.log(filteredMixedTypes,'filteredMixedTypes');
-    }
-    
-    // Filter transaction types based on showGold and showCash filters
-    // showCash is controlled by baseCurrency in frontend
-    const showGold = filters.showGold !== false; // Default to true if not specified
-    const showCash = filters.showCash !== false && filters.baseCurrency !== false; // Default to true, but respect baseCurrency
-    
-    // Build the $or array based on what should be shown
-    const typeFilters = [];
-    
-    // If showGold is true, include gold-only types
-    if (showGold) {
-      typeFilters.push({ type: { $in: goldTypes } });
-    }
-    
-    // If showCash is true, include cash-only types
-    if (showCash) {
-      typeFilters.push({ type: { $in: cashTypes } });
-    }
-    
-    // Mixed types are always included if either gold or cash is shown (they contain both)
-    // This ensures we get complete transaction data
-    if (showGold || showCash) {
-      typeFilters.push({ type: { $in: filteredMixedTypes } });
-    }
-    
-    // If neither is selected, show nothing (empty array will match nothing)
     const matchConditions = {
       isActive: true,
-      ...(typeFilters.length > 0 ? { $or: typeFilters } : { type: { $in: [] } }) // Empty array means no matches
+      $or: [
+        { type: { $in: goldTypes } },
+        { type: { $in: cashTypes } },
+        { type: { $in: mixedTypes } } // Always include mixed types
+      ]
     };
 
     // Date filter - filters.startDate and filters.endDate are already in UTC (from validateFilters)
     // They were converted from UAE local time to UTC in validateFilters
-    // IMPORTANT: startDate is the start of fromDate in UAE time (e.g., Dec 23 00:00:00 UAE = Dec 22 20:00:00 UTC)
-    // So we want transactions >= startDate (which excludes transactions before the start date)
     if (filters.startDate || filters.endDate) {
       matchConditions.transactionDate = {};
       if (filters.startDate) {
-        // Use >= to include transactions from the start date onwards
-        // startDate is already in UTC and represents the start of fromDate in UAE time
-        // This ensures we only get transactions from the fromDate onwards, excluding earlier dates
-        matchConditions.transactionDate.$gt = filters.startDate;
+        matchConditions.transactionDate.$gte = filters.startDate;
       }
       if (filters.endDate) {
         matchConditions.transactionDate.$lte = filters.endDate;
@@ -396,20 +302,11 @@ export class ReportService {
       });
     }
     // Add party name and ID to the document
-    // IMPORTANT: Format docDate in UAE timezone (UTC+4) for correct display
-    // transactionDate is stored in UTC, so we need to add 4 hours to get UAE time
-    // UAE is UTC+4, so add 4 hours = 4 * 60 * 60 * 1000 = 14400000 milliseconds
     pipeline.push({
       $addFields: {
         partyName: "$partyDetails.customerName",
         partyId: "$party",
-        // Convert UTC to UAE time (UTC+4) by adding milliseconds, then format as DD/MM/YYYY
-        docDate: {
-          $dateToString: {
-            format: "%d/%m/%Y",
-            date: { $add: ["$transactionDate", 14400000] } // Add 4 hours in milliseconds
-          }
-        },
+        docDate: { $dateToString: { format: "%d/%m/%Y", date: "$transactionDate" } },
         docRef: "$reference",
         branch: "HO"
       }
@@ -435,16 +332,16 @@ export class ReportService {
           $or: [
             // Include transactions with matching foreign currency assetType
             { assetType: filters.foreignCurrencySelected },
-            // Include filtered mixed types (hedge excluded if excludeHedge is true)
+            // Always include mixed types (PARTY_PURCHASE_FIX, PARTY_SALE_FIX, PARTY_HEDGE_ENTRY)
             // They may have foreign currency in their cashDebit/cashCredit fields
-            { type: { $in: filteredMixedTypes } }
+            { type: { $in: mixedTypes } }
           ],
           // Exclude AED assetType (unless it's a mixed type)
           $and: [
             {
               $or: [
                 { assetType: { $ne: "AED" } }, // Non-AED assetType
-                { type: { $in: filteredMixedTypes } } // Or filtered mixed type
+                { type: { $in: mixedTypes } } // Or mixed type (which we always include)
               ]
             }
           ]
@@ -609,76 +506,48 @@ export class ReportService {
       // Validate and format input filters
       const validatedFilters = this.validateFilters(filters);
 
-      // OVERRIDE: For account statement, use UTC calendar dates instead of UAE timezone
-      // This ensures transactions are filtered by UTC calendar date (not UAE time)
-      // e.g., fromDate "2025-12-24" means transactionDate >= 2025-12-24T00:00:00.000Z
-      if (filters.fromDate) {
-        const dateStr = filters.fromDate instanceof Date ? moment(filters.fromDate).format('YYYY-MM-DD') : filters.fromDate;
-        // Parse date string directly as UTC to avoid timezone conversion issues
-        validatedFilters.startDate = moment.utc(dateStr, 'YYYY-MM-DD').startOf('day').toDate();
-      }
-      if (filters.toDate) {
-        const dateStr = filters.toDate instanceof Date ? moment(filters.toDate).format('YYYY-MM-DD') : filters.toDate;
-        // Parse date string directly as UTC to avoid timezone conversion issues
-        validatedFilters.endDate = moment.utc(dateStr, 'YYYY-MM-DD').endOf('day').toDate();
-      }
-
       // Pass baseCurrency, foreignCurrency, and foreignCurrencySelected to validatedFilters
       // These are needed for assetType filtering
       validatedFilters.baseCurrency = filters.baseCurrency;
       validatedFilters.foreignCurrency = filters.foreignCurrency;
       validatedFilters.foreignCurrencySelected = filters.foreignCurrencySelected;
-      validatedFilters.excludeHedge = filters.excludeHedge;
-      // Pass showGold and showCash filters to backend for transaction type filtering
-      validatedFilters.showGold = filters.showGold;
-      validatedFilters.showCash = filters.showCash;
       
-      // console.log('Validated Filters====================================');
-      // console.log(util.inspect(validatedFilters, { depth: null, colors: true, compact: false }));
-      // console.log('Date Filter Info:');
-      // console.log('  fromDate (input):', filters.fromDate);
-      // console.log('  startDate (UTC):', validatedFilters.startDate ? validatedFilters.startDate.toISOString() : 'null');
-      // console.log('  endDate (UTC):', validatedFilters.endDate ? validatedFilters.endDate.toISOString() : 'null');
-      // console.log('====================================');
+      console.log('Validated Filters====================================');
+      console.log(util.inspect(validatedFilters, { depth: null, colors: true, compact: false }));
+      console.log('====================================');
       // Construct MongoDB aggregation pipeline
       // This pipeline automatically handles mixed types using shared transaction type definitions
       const pipeline = this.buildAccountStatementPipeline(validatedFilters);
       console.log('Pipeline====================================');
-      // console.log(util.inspect(pipeline, { depth: null, colors: true, compact: false }));
+      console.log(util.inspect(pipeline, { depth: null, colors: true, compact: false }));
       console.log('====================================');
       // Execute aggregation query
       const reportData = await Registry.aggregate(pipeline);
       console.log('Report Data====================================');
-      // console.log(util.inspect(reportData, { depth: null, colors: true, compact: false }));
+      console.log(util.inspect(reportData, { depth: null, colors: true, compact: false }));
       console.log('====================================');
 
       // Calculate opening balance if excludeOpen is false
-      // Opening balance should be calculated up to the end of the day BEFORE fromDate (start date)
-      // This represents the balance at the start of the report period
       // excludeOpen is not validated in validateFilters, so use it directly from filters
       let openingBalance = null;
-      if (filters.excludeOpen !== true && (validatedFilters.startDate || filters.fromDate)) {
-        // Use the original fromDate string (YYYY-MM-DD) from filters if available
+      if (filters.excludeOpen !== true && (validatedFilters.endDate || filters.toDate)) {
+        // Use the original toDate string (YYYY-MM-DD) from filters if available
         // Otherwise, convert the UTC Date back to UAE date string
-        let fromDateString = filters.fromDate;
-        if (!fromDateString && validatedFilters.startDate) {
+        let toDateString = filters.toDate;
+        if (!toDateString && validatedFilters.endDate) {
           // Convert UTC Date back to UAE local date string
-          fromDateString = utcToUAEDate(validatedFilters.startDate);
+          toDateString = utcToUAEDate(validatedFilters.endDate);
         }
-        if (fromDateString) {
+        if (toDateString) {
           // Pass filters to apply voucher, accountType, and currency filters to opening balance
           // Include baseCurrency and foreignCurrency settings for assetType filtering
-          // Also include excludeHedge to filter out hedge entries from opening balance if needed
           const openingBalanceFilters = {
             ...validatedFilters,
             baseCurrency: filters.baseCurrency,
             foreignCurrency: filters.foreignCurrency,
-            foreignCurrencySelected: filters.foreignCurrencySelected,
-            excludeHedge: filters.excludeHedge,
-            showGold: filters.showGold,
-            showCash: filters.showCash
+            foreignCurrencySelected: filters.foreignCurrencySelected
           };
-          openingBalance = await this.getAccountStatementOpeningBalance(fromDateString, openingBalanceFilters);
+          openingBalance = await this.getAccountStatementOpeningBalance(toDateString, openingBalanceFilters);
         }
       }
 
@@ -1035,10 +904,11 @@ export class ReportService {
       // Debug: Check initial match count on Registry
       const initialMatch = {
         isActive: true,
-        type: { $in: ["purchase-fixing", "sales-fixing"] },
+        type: { $in: ["purchase-fixing", "sales-fixing", "OPEN-ACCOUNT-FIXING"] },
         $or: [
           { metalTransactionId: { $exists: true, $ne: null } },
-          { fixingTransactionId: { $exists: true, $ne: null } }
+          { fixingTransactionId: { $exists: true, $ne: null } },
+          { type: "OPEN-ACCOUNT-FIXING" } // OPEN-ACCOUNT-FIXING may not have metalTransactionId or fixingTransactionId
         ],
       };
       if (validatedFilters.startDate || validatedFilters.endDate) {
@@ -1082,8 +952,176 @@ export class ReportService {
         console.log("❌ No records returned from pipeline!");
       }
 
-      // 5. Format the retrieved data for response
-      const formattedData = this.formatFixingReportData(reportData, openingBalance, validatedFilters);
+      // 5. Calculate netPurchase and netSales from fixing transactions
+      // Group by underlying MetalTransaction.transactionType to calculate properly
+      console.log("=== NET PURCHASE/SALES CALCULATION DEBUG ===");
+      console.log("Total fixing entries:", reportData.length);
+      
+      // Debug: Log balance in/out for each entry
+      console.log("\n📊 Balance In/Out Details:");
+      reportData.forEach((item, index) => {
+        console.log(`Entry ${index + 1}:`, {
+          voucher: item.voucher,
+          type: item.type,
+          transactionType: item.metalTransactionType,
+          pureWeightIn: item.pureWeightIn,
+          pureWeightOut: item.pureWeightOut,
+          netWeight: (item.pureWeightIn || 0) - (item.pureWeightOut || 0),
+          value: item.value
+        });
+      });
+
+      // Group by transactionType from MetalTransaction
+      // Net Purchase = (purchase + importPurchase) + (purchaseReturn + importPurchaseReturn)
+      // Net Sales = (sale + exportSale) + (saleReturn + exportSaleReturn)
+      // For hedge entries: same logic based on transactionType
+      
+      const purchaseTypes = ["purchase", "importPurchase"];
+      const purchaseReturnTypes = ["purchaseReturn", "importPurchaseReturn"];
+      const saleTypes = ["sale", "exportSale"];
+      const saleReturnTypes = ["saleReturn", "exportSaleReturn"];
+      
+      // For hedge entries, the logic is reversed:
+      // Net Purchase from hedge = (sale + exportSale + hedgeMetalPayment) - (purchaseReturn + importPurchaseReturn)
+      // Net Sales from hedge = (purchase + importPurchase + hedgeMetalReceipt + hedgeMetalReciept) - (saleReturn + exportSaleReturn)
+      const hedgePurchaseTypes = ["sale", "exportSale", "hedgeMetalPayment"];
+      const hedgePurchaseReturnTypes = ["purchaseReturn", "importPurchaseReturn"];
+      const hedgeSaleTypes = ["purchase", "importPurchase", "hedgeMetalReceipt", "hedgeMetalReciept"];
+      const hedgeSaleReturnTypes = ["saleReturn", "exportSaleReturn"];
+
+      // Calculate purchase totals
+      let purchaseGold = 0;
+      let purchaseValue = 0;
+      let purchaseReturnGold = 0;
+      let purchaseReturnValue = 0;
+      
+      // Calculate sale totals
+      let saleGold = 0;
+      let saleValue = 0;
+      let saleReturnGold = 0;
+      let saleReturnValue = 0;
+
+      // Process each fixing entry based on its underlying MetalTransaction.transactionType
+      // If transactionType is not available, use the fixing type (purchase-fixing or sales-fixing) as fallback
+      reportData.forEach((item) => {
+        const transactionType = item.metalTransactionType;
+        const fixingType = item.type; // purchase-fixing or sales-fixing
+        const pureWeightIn = Number(item.pureWeightIn || 0);
+        const pureWeightOut = Number(item.pureWeightOut || 0);
+        const netWeight = pureWeightIn - pureWeightOut;
+        const value = Number(item.value || 0);
+
+        // Check if this is a hedge entry (based on transactionType)
+        const isHedgeType = transactionType && (
+          transactionType === "hedgeMetalPayment" || 
+          transactionType === "hedgeMetalReceipt" || 
+          transactionType === "hedgeMetalReciept"
+        );
+
+        if (transactionType) {
+          // We have transactionType, use it for calculation
+          if (isHedgeType) {
+            // Hedge logic
+            if (hedgePurchaseTypes.includes(transactionType)) {
+              purchaseGold += netWeight;
+              purchaseValue += value;
+            } else if (hedgePurchaseReturnTypes.includes(transactionType)) {
+              purchaseReturnGold += netWeight;
+              purchaseReturnValue += value;
+            } else if (hedgeSaleTypes.includes(transactionType)) {
+              saleGold += Math.abs(netWeight); // Sales are typically negative, take abs
+              saleValue += Math.abs(value);
+            } else if (hedgeSaleReturnTypes.includes(transactionType)) {
+              saleReturnGold += Math.abs(netWeight);
+              saleReturnValue += Math.abs(value);
+            }
+          } else {
+            // Regular logic
+            if (purchaseTypes.includes(transactionType)) {
+              purchaseGold += netWeight;
+              purchaseValue += value;
+            } else if (purchaseReturnTypes.includes(transactionType)) {
+              purchaseReturnGold += netWeight;
+              purchaseReturnValue += value;
+            } else if (saleTypes.includes(transactionType)) {
+              saleGold += Math.abs(netWeight); // Sales are typically negative, take abs
+              saleValue += Math.abs(value);
+            } else if (saleReturnTypes.includes(transactionType)) {
+              saleReturnGold += Math.abs(netWeight);
+              saleReturnValue += Math.abs(value);
+            }
+          }
+        } else {
+          // No transactionType available, use fixing type as fallback
+          // purchase-fixing → goes to purchase
+          // sales-fixing → goes to sale
+          if (fixingType === "purchase-fixing") {
+            purchaseGold += netWeight;
+            purchaseValue += value;
+          } else if (fixingType === "sales-fixing") {
+            saleGold += Math.abs(netWeight);
+            saleValue += Math.abs(value);
+          }
+        }
+      });
+
+      // Net Purchase = purchase + purchaseReturn (sum, not subtract)
+      const netPurchaseGold = purchaseGold + purchaseReturnGold;
+      const netPurchaseValue = purchaseValue + purchaseReturnValue;
+
+      // Net Sales = sale + saleReturn (sum, not subtract)
+      const netSalesGold = saleGold + saleReturnGold;
+      const netSalesValue = saleValue + saleReturnValue;
+
+      // Debug: Log calculation breakdown
+      console.log("\n💰 Calculation Breakdown:");
+      console.log("Purchase Types:", {
+        purchaseGold,
+        purchaseValue,
+        purchaseReturnGold,
+        purchaseReturnValue,
+        netPurchaseGold,
+        netPurchaseValue
+      });
+      console.log("Sale Types:", {
+        saleGold,
+        saleValue,
+        saleReturnGold,
+        saleReturnValue,
+        netSalesGold,
+        netSalesValue
+      });
+      console.log("Final Net Purchase:", { gold: netPurchaseGold, value: netPurchaseValue });
+      console.log("Final Net Sales:", { gold: netSalesGold, value: netSalesValue });
+
+      // 6. Get adjustment data
+      const adjustmentData = await this.getOwnStockAdjustments(validatedFilters);
+      const adjustment = adjustmentData[0] || { totalGold: 0, totalValue: 0 };
+
+      // 7. Get purity gain/loss data
+      const purityData = await this.getOwnStockPurityDifference({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+      });
+      const purityDiff = purityData[0] || { totalGold: 0, totalValue: 0 };
+
+      // Separate purity gain and loss
+      const purityGain = purityDiff.totalGold > 0 ? { gold: purityDiff.totalGold, value: purityDiff.totalValue } : { gold: 0, value: 0 };
+      const purityLoss = purityDiff.totalGold < 0 ? { gold: Math.abs(purityDiff.totalGold), value: Math.abs(purityDiff.totalValue) } : { gold: 0, value: 0 };
+
+      // 8. Format the retrieved data for response
+      const formattedData = this.formatFixingReportData(
+        reportData, 
+        openingBalance, 
+        validatedFilters,
+        {
+          netPurchase: { gold: netPurchaseGold, value: netPurchaseValue },
+          netSales: { gold: netSalesGold, value: netSalesValue },
+          adjustmentData: { gold: adjustment.totalGold, value: adjustment.totalValue },
+          purityGain,
+          purityLoss,
+        }
+      );
       console.log("Formatted Data:", JSON.stringify(formattedData, null, 2));
 
       return {
@@ -4061,15 +4099,9 @@ export class ReportService {
         console.log("✗ NOT adding fixed filter - will show ALL transactions (fixed and unfixed)");
       }
 
-      // Step 4: Unwind stockItems
-      pipeline.push({
-        $unwind: {
-          path: "$metalTransaction.stockItems",
-          preserveNullAndEmptyArrays: false,
-        },
-      });
-
-      // Step 5: Group by transactionType category
+      // Step 4: Group by transactionType category
+      // Note: No $unwind on stockItems needed since we're using Registry-level fields
+      // (goldCredit, goldDebit, cashCredit, cashDebit) which are transaction-level, not stockItem-level
       pipeline.push({
         $group: {
           _id: {
@@ -5035,29 +5067,6 @@ export class ReportService {
         }
       }
 
-      // Define stock IN transaction types (adds to inventory)
-      const stockInTypes = [
-        "purchase",
-        "importPurchase",
-        "purchaseReturn",
-        "importPurchaseReturn",
-        "opening",
-        "initial",
-        "metalReceipt",
-        "hedgeMetalReceipt",
-        "hedgeMetalReciept", // Support both spellings
-      ];
-
-      // Define stock OUT transaction types (removes from inventory)
-      const stockOutTypes = [
-        "sale",
-        "exportSale",
-        "saleReturn",
-        "exportSaleReturn",
-        "metalPayment",
-        "hedgeMetalPayment",
-      ];
-
       const pipeline = [
         {
           $match: matchConditions,
@@ -5065,46 +5074,22 @@ export class ReportService {
         {
           $group: {
             _id: "$stockCode",
-            // Sum gross weight for each stockCode: stock in (positive) - stock out (negative)
+            // Sum gross weight for each stockCode based on action field
+            // action="add" → positive (add to inventory)
+            // action="remove" → negative (remove from inventory)
             sumGrossWeight: {
               $sum: {
-                $switch: {
-                  branches: [
-                    // Stock IN transaction types
-                    {
-                      case: { $in: ["$transactionType", stockInTypes] },
-                      then: { $ifNull: ["$grossWeight", 0] }, // Stock IN: positive
-                    },
-                    // Stock OUT transaction types
-                    {
-                      case: { $in: ["$transactionType", stockOutTypes] },
-                      then: { $multiply: [{ $ifNull: ["$grossWeight", 0] }, -1] }, // Stock OUT: negative
-                    },
-                    // METAL STOCK ADJUSTMENT: use action field
-                    {
-                      case: {
-                        $and: [
-                          { $eq: ["$transactionType", "adjustment"] },
-                          { $eq: ["$voucherType", "METAL STOCK ADJUSTMENT"] },
-                        ],
-                      },
-                      then: {
-                        $cond: [
-                          { $eq: ["$action", "add"] },
-                          { $ifNull: ["$grossWeight", 0] }, // action="add" → stock IN (positive)
-                          {
-                            $cond: [
-                              { $eq: ["$action", "remove"] },
-                              { $multiply: [{ $ifNull: ["$grossWeight", 0] }, -1] }, // action="remove" → stock OUT (negative)
-                              0, // Other actions: 0
-                            ],
-                          },
-                        ],
-                      },
-                    },
-                  ],
-                  default: 0, // Other types: 0
-                },
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $ifNull: ["$grossWeight", 0] }, // action="add" → positive
+                  {
+                    $cond: [
+                      { $eq: ["$action", "remove"] },
+                      { $multiply: [{ $ifNull: ["$grossWeight", 0] }, -1] }, // action="remove" → negative
+                      0, // Other actions (update, delete) → 0
+                    ],
+                  },
+                ],
               },
             },
           },
@@ -5169,8 +5154,6 @@ export class ReportService {
       // DEBUG: Log pipeline stages
       console.log("=== INVENTORY PURE WEIGHT DEBUG ===");
       console.log("Match Conditions:", JSON.stringify(matchConditions, null, 2));
-      console.log("Stock IN Types:", stockInTypes);
-      console.log("Stock OUT Types:", stockOutTypes);
 
       // Execute pipeline and log intermediate results
       const result = await InventoryLog.aggregate(pipeline);
@@ -5790,13 +5773,23 @@ export class ReportService {
   metalFxingPipeLine(filters) {
     const pipeline = [];
     
-    // Step 1: Start from Registry - match purchase-fixing and sales-fixing entries
+    // Step 1: Start from Registry - match purchase-fixing, sales-fixing, HEDGE_ENTRY, and OPEN-ACCOUNT-FIXING entries
+    // Include HEDGE_ENTRY when excludeHedging is false
+    const excludeHedgingValue = filters.excludeHedging;
+    const shouldExcludeHedge = excludeHedgingValue === true || excludeHedgingValue === "true";
+    
+    const registryTypes = ["purchase-fixing", "sales-fixing", "OPEN-ACCOUNT-FIXING"];
+    if (!shouldExcludeHedge) {
+      registryTypes.push("HEDGE_ENTRY");
+    }
+    
     const registryMatch = {
       isActive: true,
-      type: { $in: ["purchase-fixing", "sales-fixing"] },
+      type: { $in: registryTypes },
       $or: [
         { metalTransactionId: { $exists: true, $ne: null } },
-        { fixingTransactionId: { $exists: true, $ne: null } }
+        { fixingTransactionId: { $exists: true, $ne: null } },
+        { type: "OPEN-ACCOUNT-FIXING" } // OPEN-ACCOUNT-FIXING may not have metalTransactionId or fixingTransactionId
       ],
     };
 
@@ -5885,49 +5878,72 @@ export class ReportService {
     });
 
     // Step 6: Filter out entries where MetalTransaction or TransactionFixing don't match date filter
+    // OPEN-ACCOUNT-FIXING entries don't require MetalTransaction or TransactionFixing
     pipeline.push({
       $match: {
         $and: [
-          // Must have at least one of MetalTransaction or TransactionFixing
+          // Must have at least one of MetalTransaction, TransactionFixing, or be OPEN-ACCOUNT-FIXING
           {
             $or: [
               { "metalTransaction._id": { $exists: true } },
-              { "transactionFixing._id": { $exists: true } }
+              { "transactionFixing._id": { $exists: true } },
+              { type: "OPEN-ACCOUNT-FIXING" }
             ]
           }
         ]
       }
     });
 
-    // Step 7: Handle excludeHedging filter
+    // Step 7: Handle excludeHedging filter and HEDGE_ENTRY type mapping
     // excludeHedging: false → show hedge entries (hedge=true)
     // excludeHedging: true → only show purchase-fixing and sales-fixing where MetalTransaction.fixed = true
-    const excludeHedgingValue = filters.excludeHedging;
-    const shouldExcludeHedge = excludeHedgingValue === true || excludeHedgingValue === "true";
-
+    
     // Debug: Log match conditions
     console.log("=== METAL FIXING PIPELINE DEBUG ===");
     console.log("Starting from Registry, filtering by date in MetalTransaction and TransactionFixing");
     console.log("excludeHedging:", filters.excludeHedging, "shouldExcludeHedge:", shouldExcludeHedge);
+    console.log("Registry types included:", registryTypes);
 
     // Filter based on excludeHedging
     if (shouldExcludeHedge) {
       console.log("✓ Filtering: excludeHedging=true - only showing where MetalTransaction.fixed=true");
       // When excludeHedging is true, only show entries where MetalTransaction.fixed = true
+      // OPEN-ACCOUNT-FIXING entries are always included (they don't have MetalTransaction)
       pipeline.push({
         $match: {
           $or: [
+            { type: "OPEN-ACCOUNT-FIXING" }, // OPEN-ACCOUNT-FIXING always included
             { "metalTransaction._id": { $exists: false } }, // No MetalTransaction
             { "metalTransaction.fixed": true } // MetalTransaction exists and is fixed
           ]
         },
       });
     } else {
-      console.log("✓ Filtering: excludeHedging=false - including all entries");
-      // When excludeHedging is false, show all entries (no additional filter needed)
+      console.log("✓ Filtering: excludeHedging=false - including all entries, HEDGE_ENTRY, and OPEN-ACCOUNT-FIXING");
+      // When excludeHedging is false, show all entries including HEDGE_ENTRY and OPEN-ACCOUNT-FIXING
+      // For HEDGE_ENTRY, filter to only include entries where MetalTransaction.hedge = true
+      // OPEN-ACCOUNT-FIXING entries are always included
+      pipeline.push({
+        $match: {
+          $or: [
+            { type: "OPEN-ACCOUNT-FIXING" }, // OPEN-ACCOUNT-FIXING always included
+            { type: { $nin: ["HEDGE_ENTRY", "OPEN-ACCOUNT-FIXING"] } }, // Not HEDGE_ENTRY or OPEN-ACCOUNT-FIXING, include it
+            { 
+              // Is HEDGE_ENTRY, must have MetalTransaction with hedge = true
+              $and: [
+                { type: "HEDGE_ENTRY" },
+                { "metalTransaction.hedge": true }
+              ]
+            }
+          ]
+        },
+      });
     }
 
-    // Step 8: Lookup FixingPrice matching both TransactionFixing ID and MetalTransaction ID
+    // Step 8: Lookup FixingPrice matching EITHER fixingTransactionId OR metalTransactionId
+    // Match FixingPrice using ONE of the following:
+    // 1) If fixingTransactionId exists: FixingPrice.transactionFix === Registry.fixingTransactionId
+    // 2) Else if metalTransactionId exists: FixingPrice.transaction === Registry.metalTransactionId
     pipeline.push({
       $lookup: {
         from: "fixingprices",
@@ -5940,11 +5956,25 @@ export class ReportService {
             $match: {
               $expr: {
                 $and: [
-                  // Match by MetalTransaction ID (transaction field)
-                  { $eq: ["$transaction", "$$metalTxnId"] },
-                  // Match by TransactionFixing ID (transactionFix field)
-                  { $eq: ["$transactionFix", "$$fixingTxnId"] },
-                  { $eq: ["$status", "active"] }
+                  { $eq: ["$status", "active"] },
+                  {
+                    $or: [
+                      // Match by TransactionFixing ID if it exists
+                      {
+                        $and: [
+                          { $ne: ["$$fixingTxnId", null] },
+                          { $eq: ["$transactionFix", "$$fixingTxnId"] }
+                        ]
+                      },
+                      // Match by MetalTransaction ID if it exists
+                      {
+                        $and: [
+                          { $ne: ["$$metalTxnId", null] },
+                          { $eq: ["$transaction", "$$metalTxnId"] }
+                        ]
+                      }
+                    ]
+                  }
                 ]
               }
             }
@@ -5996,32 +6026,214 @@ export class ReportService {
         voucher: "$reference",
         date: "$transactionDate",
         narration: "$parties.customerName",
-        type: "$type", // Include type: purchase-fixing or sales-fixing
+        // Map HEDGE_ENTRY and OPEN-ACCOUNT-FIXING to purchase-fixing or sales-fixing
+        type: {
+          $cond: {
+            if: { $eq: ["$type", "HEDGE_ENTRY"] },
+            then: {
+              $switch: {
+                branches: [
+                  // PurchaseFix: sale-side transactions
+                  {
+                    case: {
+                      $in: [
+                        "$metalTransaction.transactionType",
+                        ["sale", "exportSale", "purchaseReturn", "importPurchaseReturn", "hedgeMetalPayment"],
+                      ],
+                    },
+                    then: "purchase-fixing",
+                  },
+                  // SaleFix: purchase-side transactions
+                  {
+                    case: {
+                      $in: [
+                        "$metalTransaction.transactionType",
+                        [
+                          "purchase",
+                          "importPurchase",
+                          "saleReturn",
+                          "exportSaleReturn",
+                          "hedgeMetalReceipt",
+                          "hedgeMetalReciept",
+                        ],
+                      ],
+                    },
+                    then: "sales-fixing",
+                  },
+                ],
+                default: "$type", // Fallback to original type if no match
+              },
+            },
+            else: {
+              // Handle OPEN-ACCOUNT-FIXING based on Registry.transactionType
+              $cond: {
+                if: { $eq: ["$type", "OPEN-ACCOUNT-FIXING"] },
+                then: {
+                  $switch: {
+                    branches: [
+                      {
+                        case: { $eq: ["$transactionType", "opening-purchaseFix"] },
+                        then: "purchase-fixing",
+                      },
+                      {
+                        case: { $eq: ["$transactionType", "opening-saleFix"] },
+                        then: "sales-fixing",
+                      },
+                    ],
+                    default: "$type",
+                  },
+                },
+                else: "$type", // Keep original type for purchase-fixing and sales-fixing
+              },
+            },
+          },
+        },
         pureWeightIn: { $ifNull: ["$goldCredit", 0] },
         pureWeightOut: { $ifNull: ["$goldDebit", 0] },
-        // Rate priority: FixingPrice.bidValue > FixingPrice.rateInGram > Registry.goldBidValue > default 2500
-        // If FixingPrice will be updated soon (doesn't exist yet), use Registry.goldBidValue
-        rate: { 
-          $ifNull: [
-            "$fixingPrice.bidValue",        // FixingPrice.bidValue (primary)
-            "$fixingPrice.rateInGram",     // FixingPrice.rateInGram (fallback)
-            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
-            2500                            // Default rate: 2500 if no FixingPrice and no goldBidValue
-          ]
+        // Calculate netGold and netCash for fallback calculation
+        netGold: {
+          $abs: {
+            $subtract: [
+              { $ifNull: ["$goldCredit", 0] },
+              { $ifNull: ["$goldDebit", 0] }
+            ]
+          }
         },
-        bidValue: { 
-          $ifNull: [
-            "$fixingPrice.bidValue",        // FixingPrice.bidValue
-            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
-            2500                            // Default: 2500 if no FixingPrice and no goldBidValue
-          ]
+        netCash: {
+          $abs: {
+            $subtract: [
+              { $ifNull: ["$cashDebit", 0] },
+              { $ifNull: ["$cashCredit", 0] }
+            ]
+          }
         },
-        currentBidValue: { 
-          $ifNull: [
-            "$fixingPrice.currentBidValue", // FixingPrice.currentBidValue
-            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
-            2500                            // Default: 2500 if no FixingPrice and no goldBidValue
-          ]
+        // Rate resolution: FixingPrice.bidValue → Registry.goldBidValue → calculated from cash/gold
+        // MUST follow same logic as bidValue to ensure consistency
+        // Per-voucher resolution - each voucher resolves independently
+        rate: {
+          $cond: {
+            // 1) If FixingPrice exists and has bidValue > 0: use FixingPrice.bidValue
+            if: {
+              $and: [
+                { $ne: ["$fixingPrice", null] },
+                { $ne: ["$fixingPrice.bidValue", null] },
+                { $gt: ["$fixingPrice.bidValue", 0] }
+              ]
+            },
+            then: "$fixingPrice.bidValue",
+            else: {
+              // 2) Else if Registry.goldBidValue > 0: use goldBidValue
+              $cond: {
+                if: { $gt: [{ $ifNull: ["$goldBidValue", 0] }, 0] },
+                then: "$goldBidValue",
+                else: {
+                  // 3) FINAL FALLBACK: Calculate from cash and gold
+                  // netGold = ABS(goldCredit - goldDebit)
+                  // netCash = ABS(cashDebit - cashCredit)
+                  // gramRate = netCash / netGold
+                  // ozRate = (gramRate / 3.674) * 31.1035
+                  // Requires BOTH netGold > 0 AND netCash > 0
+                  $cond: {
+                    if: {
+                      $and: [
+                        { $gt: ["$netGold", 0] },
+                        { $gt: ["$netCash", 0] }
+                      ]
+                    },
+                    then: {
+                      $multiply: [
+                        { $divide: ["$netCash", "$netGold"] },
+                        { $divide: [31.1035, 3.674] }
+                      ]
+                    },
+                    else: 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        // bidValue: Use FixingPrice.bidValue, fallback to Registry.goldBidValue, then calculate from cash/gold
+        // Per-voucher resolution - each voucher resolves independently
+        bidValue: {
+          $cond: {
+            // 1) If FixingPrice exists and has bidValue > 0: use FixingPrice.bidValue
+            if: {
+              $and: [
+                { $ne: ["$fixingPrice", null] },
+                { $ne: ["$fixingPrice.bidValue", null] },
+                { $gt: ["$fixingPrice.bidValue", 0] }
+              ]
+            },
+            then: "$fixingPrice.bidValue",
+            else: {
+              $cond: {
+                if: { $gt: [{ $ifNull: ["$goldBidValue", 0] }, 0] },
+                then: "$goldBidValue",
+                else: {
+                  // FINAL FALLBACK: Calculate from cash and gold
+                  // gramRate = netCash / netGold, ozRate = (gramRate / 3.674) * 31.1035
+                  // Requires BOTH netGold > 0 AND netCash > 0
+                  $cond: {
+                    if: {
+                      $and: [
+                        { $gt: ["$netGold", 0] },
+                        { $gt: ["$netCash", 0] }
+                      ]
+                    },
+                    then: {
+                      $multiply: [
+                        { $divide: ["$netCash", "$netGold"] },
+                        { $divide: [31.1035, 3.674] }
+                      ]
+                    },
+                    else: 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        // currentBidValue: Use FixingPrice.currentBidValue, fallback to Registry.goldBidValue, then calculate from cash/gold
+        // Per-voucher resolution - each voucher resolves independently
+        currentBidValue: {
+          $cond: {
+            // 1) If FixingPrice exists and has currentBidValue > 0: use FixingPrice.currentBidValue
+            if: {
+              $and: [
+                { $ne: ["$fixingPrice", null] },
+                { $ne: ["$fixingPrice.currentBidValue", null] },
+                { $gt: ["$fixingPrice.currentBidValue", 0] }
+              ]
+            },
+            then: "$fixingPrice.currentBidValue",
+            else: {
+              $cond: {
+                if: { $gt: [{ $ifNull: ["$goldBidValue", 0] }, 0] },
+                then: "$goldBidValue",
+                else: {
+                  // FINAL FALLBACK: Calculate from cash and gold
+                  // gramRate = netCash / netGold, ozRate = (gramRate / 3.674) * 31.1035
+                  // Requires BOTH netGold > 0 AND netCash > 0
+                  $cond: {
+                    if: {
+                      $and: [
+                        { $gt: ["$netGold", 0] },
+                        { $gt: ["$netCash", 0] }
+                      ]
+                    },
+                    then: {
+                      $multiply: [
+                        { $divide: ["$netCash", "$netGold"] },
+                        { $divide: [31.1035, 3.674] }
+                      ]
+                    },
+                    else: 0
+                  }
+                }
+              }
+            }
+          }
         },
         rateInGram: { 
           $ifNull: [
@@ -6030,13 +6242,19 @@ export class ReportService {
             2500                            // Default: 2500 if no FixingPrice and no goldBidValue
           ]
         },
+        // CRITICAL: Include cashDebit and cashCredit for value calculation in Step 13
+        // These fields are required to calculate value = cashDebit - cashCredit
+        cashDebit: { $ifNull: ["$cashDebit", 0] },
+        cashCredit: { $ifNull: ["$cashCredit", 0] },
         createdAt: 1,
         metalTransactionId: 1,
         fixingTransactionId: 1,
       },
     });
 
-    // Step 13: Calculate value
+    // Step 13: Calculate value using ONLY Registry fields (cashDebit - cashCredit)
+    // NEVER use rate × netGold - value MUST come from Registry fields
+    // Pass through bidValue and currentBidValue (already resolved per voucher in Step 11)
     pipeline.push({
       $project: {
         _id: 1,
@@ -6046,21 +6264,28 @@ export class ReportService {
         narration: { $ifNull: ["$narration", "--"] },
         pureWeightIn: { $round: ["$pureWeightIn", 2] },
         pureWeightOut: { $round: ["$pureWeightOut", 2] },
-        rate: { $round: ["$rate", 2] }, // Rate from FixingPrice or TransactionFixing.orders.bidValue
+        rate: { $round: ["$rate", 2] }, // Rate from FixingPrice or TransactionFixing.orders.bidValue (for display only)
+        // VALUE CALCULATION: Use ONLY Registry fields - cashDebit - cashCredit
+        // CRITICAL: Value may be NEGATIVE for sales-fixing (cashDebit < cashCredit)
+        // Do NOT clamp, abs, or zero negative values
+        // This applies to: purchase-fixing, sales-fixing, HEDGE_ENTRY, OPEN-ACCOUNT-FIXING
         value: {
           $round: [
             {
-              $multiply: [
-                "$rate",
-                { $subtract: ["$pureWeightIn", "$pureWeightOut"] }
+              $subtract: [
+                { $ifNull: ["$cashDebit", 0] },
+                { $ifNull: ["$cashCredit", 0] }
               ]
             },
             2
           ]
         },
+        // bidValue and currentBidValue already resolved per voucher in Step 11 (from FixingPrice with fallback)
         bidValue: { $round: ["$bidValue", 2] },
         currentBidValue: { $round: ["$currentBidValue", 2] },
         createdAt: 1,
+        metalTransactionType: "$metalTransaction.transactionType", // Include transactionType for calculation
+        metalTransactionId: 1,
       },
     });
 
@@ -6075,10 +6300,17 @@ export class ReportService {
     return pipeline;
   }
 
-  formatFixingReportData(reportData, openingBalance, filters) {
+  formatFixingReportData(reportData, openingBalance, filters, additionalData = {}) {
     const openingGold = openingBalance.opening || 0;
     const openingValue = openingBalance.openingValue || 0;
     const openingAverage = openingGold !== 0 ? openingValue / openingGold : 0;
+
+    // Extract additional data with defaults
+    const netPurchase = additionalData.netPurchase || { gold: 0, value: 0 };
+    const netSales = additionalData.netSales || { gold: 0, value: 0 };
+    const adjustmentData = additionalData.adjustmentData || { gold: 0, value: 0 };
+    const purityGain = additionalData.purityGain || { gold: 0, value: 0 };
+    const purityLoss = additionalData.purityLoss || { gold: 0, value: 0 };
 
     if (!reportData || reportData.length === 0) {
       return {
@@ -6095,6 +6327,26 @@ export class ReportService {
           totalValue: openingValue,
           average: openingAverage,
         },
+        netPurchase: {
+          gold: Number(netPurchase.gold.toFixed(2)),
+          value: Number(netPurchase.value.toFixed(2)),
+        },
+        netSales: {
+          gold: Number(netSales.gold.toFixed(2)),
+          value: Number(netSales.value.toFixed(2)),
+        },
+        adjustmentData: {
+          gold: Number(adjustmentData.gold.toFixed(2)),
+          value: Number(adjustmentData.value.toFixed(2)),
+        },
+        purityGain: {
+          gold: Number(purityGain.gold.toFixed(2)),
+          value: Number(purityGain.value.toFixed(2)),
+        },
+        purityLoss: {
+          gold: Number(purityLoss.gold.toFixed(2)),
+          value: Number(purityLoss.value.toFixed(2)),
+        },
       };
     }
 
@@ -6106,13 +6358,19 @@ export class ReportService {
       const pureWeightIn = Number(item.pureWeightIn || 0);
       const pureWeightOut = Number(item.pureWeightOut || 0);
       const rate = Number(item.rate || 0);
-      const value = Number(item.value || 0);
+      // CRITICAL: Value comes from pipeline (cashDebit - cashCredit)
+      // Value may be NEGATIVE for sales-fixing - do NOT clamp or zero
+      // Use nullish coalescing to preserve 0 but handle null/undefined
+      const value = item.value != null ? Number(item.value) : 0;
 
       // Update running balances
+      // Gold balance: pureWeightIn - pureWeightOut (may be negative)
       runningPureWeightBalance += pureWeightIn - pureWeightOut;
+      // Value balance: add value (may be negative for sales-fixing)
       runningValueBalance += value;
 
-      // Calculate average
+      // Calculate average: runningValueBalance / runningGoldBalance
+      // Only calculate when runningGoldBalance ≠ 0
       const average = runningPureWeightBalance !== 0 
         ? runningValueBalance / runningPureWeightBalance 
         : 0;
@@ -6161,6 +6419,26 @@ export class ReportService {
         average: Number(openingAverage.toFixed(2)),
       },
       summary,
+      netPurchase: {
+        gold: Number(netPurchase.gold.toFixed(2)),
+        value: Number(netPurchase.value.toFixed(2)),
+      },
+      netSales: {
+        gold: Number(netSales.gold.toFixed(2)),
+        value: Number(netSales.value.toFixed(2)),
+      },
+      adjustmentData: {
+        gold: Number(adjustmentData.gold.toFixed(2)),
+        value: Number(adjustmentData.value.toFixed(2)),
+      },
+      purityGain: {
+        gold: Number(purityGain.gold.toFixed(2)),
+        value: Number(purityGain.value.toFixed(2)),
+      },
+      purityLoss: {
+        gold: Number(purityLoss.gold.toFixed(2)),
+        value: Number(purityLoss.value.toFixed(2)),
+      },
     };
   }
 
