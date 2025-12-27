@@ -287,11 +287,13 @@ const deleteEntryById = async (req, res) => {
     if (!entry)
       return res.status(404).json({ success: false, message: "Not found" });
 
+    // Cleanup registry and inventory logs first
     await EntryService.cleanup(entry.voucherCode);
 
     if (entry.status === "approved") {
       if (entry.type.includes("metal")) {
-        await EntryService.reverseMetal(entry, entry.type === "metal-receipt");
+        // For metal entries: only reverse balances, don't create opposite inventory logs
+        await EntryService.reverseMetalBalancesOnly(entry, entry.type === "metal-receipt");
       } else {
         await EntryService.reverseCashTransaction(
           entry,

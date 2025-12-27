@@ -154,6 +154,8 @@ const entrySchema = new mongoose.Schema(
         remarks: {
           type: String,
           trim: true,
+          maxlength: [500, "Remarks cannot exceed 500 characters"],
+          default: "",
         },
       },
     ],
@@ -326,6 +328,17 @@ entrySchema.pre("save", function (next) {
 
   // Calculate totals for metal entries
   if (this.stockItems?.length) {
+    // Process and validate stockItems
+    this.stockItems = this.stockItems.map((item) => {
+      // Ensure remarks is properly handled
+      if (item.remarks !== undefined && item.remarks !== null) {
+        item.remarks = String(item.remarks).trim();
+      } else {
+        item.remarks = "";
+      }
+      return item;
+    });
+
     this.totalGrossWeight = this.stockItems.reduce(
       (sum, item) => sum + (item.grossWeight || 0),
       0

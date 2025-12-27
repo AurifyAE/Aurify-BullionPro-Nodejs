@@ -14,13 +14,12 @@ router.get('/metal-payments', authenticateToken, entryMasterController.getMetalP
 // PDC (Post-Dated Cheque) Management Routes - must be before /:id routes
 router.get('/pdc/pending', authenticateToken, entryMasterController.getPendingPDCs);
 router.get('/pdc/due-today', authenticateToken, entryMasterController.getPDCsDueToday);
-router.get('/pdc/:id', authenticateToken, entryMasterController.getEntryById);
+router.post('/pdc/:id/clear', authenticateToken, entryMasterController.clearPDC);
+router.post('/pdc/:id/bounce', authenticateToken, entryMasterController.bouncePDC);
 
-// Get entry by ID - must be after specific routes
+// General entry routes - must be after specific routes
 router.get('/:id', authenticateToken, entryMasterController.getEntryById);
-router.delete('/pdc/:id', authenticateToken, entryMasterController.deleteEntryById);
-router.patch('/pdc/:id/status', authenticateToken, entryMasterController.updateStatus);
-router.post('/pdc/:id/pdc/clear', authenticateToken, entryMasterController.clearPDC);
-router.post('/pdc/:id/pdc/bounce', authenticateToken, entryMasterController.bouncePDC);
+router.delete('/:id', authenticateToken, entryMasterController.deleteEntryById);
+router.patch('/:id/status', authenticateToken, entryMasterController.updateStatus);
 
 export default router;

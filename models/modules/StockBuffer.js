@@ -31,7 +31,6 @@ const StockBufferSchema = new mongoose.Schema(
       type: Date,
       required: [true, "Date is required"],
       default: Date.now,
-      index: true,
       unique: true, // Only one buffer per day
     },
     remarks: {
