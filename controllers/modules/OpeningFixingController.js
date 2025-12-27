@@ -53,3 +53,21 @@ export const getOpeningFixingById = async (req, res, next) => {
         next(error);
     }
 };
+
+export const updateOpeningFixing = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const adminId = req.admin.id;
+
+        const updated =
+            await OpeningFixingService.updateOpeningFixing(id, req.body, adminId);
+
+        res.status(200).json({
+            success: true,
+            data: updated,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
