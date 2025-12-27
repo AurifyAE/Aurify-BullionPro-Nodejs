@@ -1,9 +1,9 @@
-import OpeningFixingService from "../../services/modules/OpeningFixingService.js";
+import AccountFixingService from "../../services/modules/AccountFixingService.js";
 
-export const createOpeningFixing = async (req, res, next) => {
+export const createAccountFixing = async (req, res, next) => {
     try {
         const adminId = req.admin.id;
-        const result = await OpeningFixingService.createOpeningFixing(
+        const result = await AccountFixingService.createAccountFixing(
             req.body,
             adminId
         );
@@ -19,9 +19,9 @@ export const createOpeningFixing = async (req, res, next) => {
 };
 
 
-export const getAllOpeningFixings = async (req, res, next) => {
+export const getAllAccountFixings = async (req, res, next) => {
     try {
-        const data = await OpeningFixingService.fetchAllOpeningFixings();
+        const data = await AccountFixingService.fetchAllAccountFixings();
 
         res.status(200).json({
             success: true,
@@ -32,16 +32,15 @@ export const getAllOpeningFixings = async (req, res, next) => {
     }
 };
 
-export const getOpeningFixingById = async (req, res, next) => {
+export const getAccountFixingById = async (req, res, next) => {
     try {
         const { id } = req.params;
 
-        const fixing = await OpeningFixingService.fetchOpeningFixingById(id);
-
+        const fixing = await AccountFixingService.fetchAccountFixingById(id);
         if (!fixing) {
             return res.status(404).json({
                 success: false,
-                message: "Opening fixing not found",
+                message: "Account fixing not found",
             });
         }
 
@@ -54,16 +53,21 @@ export const getOpeningFixingById = async (req, res, next) => {
     }
 };
 
-export const updateOpeningFixing = async (req, res, next) => {
+
+export const updateAccountFixing = async (req, res, next) => {
     try {
         const { id } = req.params;
         const adminId = req.admin.id;
 
-        const updated =
-            await OpeningFixingService.updateOpeningFixing(id, req.body, adminId);
+        const updated = await AccountFixingService.updateAccountFixing(
+            id,
+            req.body,
+            adminId
+        );
 
         res.status(200).json({
             success: true,
+            message: "Account fixing updated successfully",
             data: updated,
         });
     } catch (error) {
@@ -71,16 +75,17 @@ export const updateOpeningFixing = async (req, res, next) => {
     }
 };
 
-export const deleteOpeningFixing = async (req, res, next) => {
+export const deleteAccountFixing = async (req, res, next) => {
     try {
         const { id } = req.params;
-        await OpeningFixingService.deleteOpeningFixing(id);
+
+        await AccountFixingService.deleteAccountFixing(id);
+
         res.status(200).json({
             success: true,
-            message: "Opening fixing deleted successfully",
+            message: "Account fixing deleted successfully",
         });
     } catch (error) {
         next(error);
     }
 };
-

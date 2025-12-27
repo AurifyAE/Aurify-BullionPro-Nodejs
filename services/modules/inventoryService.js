@@ -5,6 +5,8 @@ import { createAppError } from "../../utils/errorHandler.js";
 import MetalStock from "../../models/modules/MetalStock.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
 import BranchMaster from "../../models/modules/BranchMaster.js";
+import OpeningBalance from "../../models/modules/OpeningBalance.js";
+import { updatePartyOpeningBalance } from "../../utils/updatePartyOpeningBalance.js";
 
 class InventoryService {
   static async fetchAllInventory() {
@@ -395,11 +397,11 @@ class InventoryService {
       ];
 
       console.log("[GOLD_BALANCE] Executing aggregation pipeline...");
-      
+
       // Execute the full pipeline
       const stockBalances = await InventoryLog.aggregate(pipeline);
       console.log(`[GOLD_BALANCE] Aggregation completed. Found ${stockBalances.length} stocks with positive balance`);
-      
+
       // Also get all balances (including negative) for debugging
       const pipelineAllBalances = [
         ...pipeline.slice(0, -4), // Everything before the positive filter
@@ -425,7 +427,7 @@ class InventoryService {
         console.log("[GOLD_BALANCE] Sample stock balances:", JSON.stringify(stockBalances.slice(0, 3), null, 2));
       } else {
         console.log("[GOLD_BALANCE] WARNING: No stocks found with positive balance!");
-        
+
         // Debug: Check what's happening before the final filter
         const debugPipeline = [
           {
@@ -555,7 +557,7 @@ class InventoryService {
       const positiveBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) > 0);
       const negativeBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) < 0);
       const zeroBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) === 0);
-      
+
       console.log(`[GOLD_BALANCE] Total stocks: ${stockBalances.length}`);
       console.log(`[GOLD_BALANCE] Positive: ${positiveBalances.length}, Negative: ${negativeBalances.length}, Zero: ${zeroBalances.length}`);
       console.log(`[GOLD_BALANCE] Total pure gold calculated: ${totalPureGold}`);
@@ -563,12 +565,12 @@ class InventoryService {
       // Create breakdown array with percentages
       // For percentage calculation, use absolute value of total to avoid issues with negative totals
       const totalForPercentage = Math.abs(totalPureGold) || 1; // Avoid division by zero
-      
+
       const breakdown = stockBalances.map((stock) => ({
         type: stock.stockName || "Other",
         weight: stock.totalPureWeight,
-        percentage: totalForPercentage > 0 
-          ? Math.round((Math.abs(stock.totalPureWeight) / totalForPercentage) * 100) 
+        percentage: totalForPercentage > 0
+          ? Math.round((Math.abs(stock.totalPureWeight) / totalForPercentage) * 100)
           : 0,
       }));
 
@@ -619,6 +621,73 @@ class InventoryService {
         "Failed to fetch inventory Logs",
         500,
         "FETCH_INVENTORY_LOG_ERROR"
+      );
+    }
+  }
+
+  static async deleteVoucherByVoucher(voucherId) {
+
+    try {
+      const result = await InventoryLog.deleteMany({ voucherCode: voucherId });
+      console.log("Deleted inventory logs for voucherId:", voucherId, "Result:", result);
+
+      const registryResult = await Registry.deleteMany({ reference: voucherId });
+      console.log("Deleted registry entries for voucherId:", voucherId, "Result:", registryResult);
+
+      return result;
+    } catch (error) {
+      throw createAppError(
+        "Failed to fetch inventory Logs",
+        500,
+        "FETCH_INVENTORY_LOG_ERROR"
+      );
+    }
+  }
+
+  static async deleteOpeningBalanceByVoucher(voucherId) {
+    try {
+      // first reverse the party opening balance effects
+      const openingBalances = await OpeningBalance.find({ voucherCode: voucherId });
+
+      for (const ob of openingBalances) {
+        await this.reverseOpeningBalanceEffects(ob);
+
+      }
+      const result = await OpeningBalance.deleteMany({ voucherCode: voucherId });
+      console.log("Deleted inventory logs for voucherId:", voucherId, "Result:", result);
+
+      const registryResult = await Registry.deleteMany({ reference: voucherId });
+      console.log("Deleted registry entries for voucherId:", voucherId, "Result:", registryResult);
+
+      return result;
+    } catch (error) {
+      throw createAppError(
+        "Failed to fetch inventory Logs",
+        500,
+        "FETCH_INVENTORY_LOG_ERROR"
+      );
+    }
+  }
+
+  static async reverseOpeningBalanceEffects(openingBalance) {
+    try {
+      const partyId = openingBalance.partyId;
+      const assetType = openingBalance.assetType;
+      const assetCode = openingBalance.assetCode;
+      const value = openingBalance.value || 0;
+
+      await updatePartyOpeningBalance({
+        partyId,
+        assetType,
+        assetCode,
+        value,
+        reverse: true
+      });
+    } catch (error) {
+      throw createAppError(
+        "Failed to reverse opening balance effects",
+        500,
+        "REVERSE_OPENING_BALANCE_ERROR"
       );
     }
   }

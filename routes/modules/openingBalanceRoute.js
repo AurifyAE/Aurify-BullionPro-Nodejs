@@ -6,7 +6,7 @@ const router = express.Router();
 router.use(authenticateToken);
 
 router.post('/', createPartyOpeningBalance);
-router.put('/:voucherId', updateOpeningBalance);
+router.put('/voucher/:VoucherID', updateOpeningBalance);
 router.get('/', getAllPartyOpeningBalances);
 // router.post('/opening-balance', openingBalanceTransfer);
 

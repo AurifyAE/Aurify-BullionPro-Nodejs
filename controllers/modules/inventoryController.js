@@ -53,6 +53,29 @@ export const deleteInventoryLogById = async (req, res, next) => {
     }
 };
 
+export const deleteVoucherByVoucher = async (req, res, next) => {
+    console.log("Delete log controller hit");
+    try {
+        const response = await InventoryService.deleteVoucherByVoucher(req.params.id)
+        res.status(200).json({ message: "Inventory log deleted successfully" });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const deleteOpeningBalanceByVoucher = async (req, res, next) => {
+    console.log("Delete log controller hit");
+    try {
+        const response = await InventoryService.deleteOpeningBalanceByVoucher(req.params.id)
+        
+        res.status(200).json({ message: "Inventory log deleted successfully" });
+    } catch (error) {
+        next(error);
+    }
+};
+
+
+
 
 
 export const getAllLogs = async (req, res, next) => {

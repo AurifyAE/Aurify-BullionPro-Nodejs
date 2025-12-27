@@ -61,6 +61,8 @@ export const updateStockAdjustment = async (req, res, next) => {
         const { id } = req.params;
         const adminId = req.admin?.id;
 
+        console.log("Updating stock adjustment with ID:", id, "by admin ID:", adminId);
+
         if (!adminId) {
             return res.status(401).json({ message: "Unauthorized" });
         }

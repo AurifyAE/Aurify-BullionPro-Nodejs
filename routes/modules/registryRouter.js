@@ -22,7 +22,9 @@ import {
   getRegistryFixingTransaction,
   getCashEntryAuditTrail,
   getStockAdjustmentAuditTrail,
-  getOpeningFixingAuditTrail
+  getOpeningFixingAuditTrail,
+  getOpeningStockAuditTrail,
+  getOpeningBalanceAuditTrail
 } from "../../controllers/modules/RegistryController.js";
 import { authenticateToken } from "../../middleware/authMiddleware.js";
 import {
@@ -80,49 +82,22 @@ router.get(
   validateDateRange,
   getRegistriesByCostCenter
 );
-
-// Get registry by ID
-router.get("/:id", validateObjectId("id"), getRegistryById);
-
-// Update registry
-router.put(
-  "/:id",
-  validateObjectId("id"),
-  validateRegistryUpdate,
-  updateRegistry
-);
-
-// Update registry status only
-router.patch(
-  "/:id/status",
-  validateObjectId("id"),
-  validateRequiredFields(["status"]),
-  validateEnum("status", ["pending", "completed", "cancelled"]),
-  updateRegistryStatus
-);
-
-// Soft delete registry
-router.delete(
-  "/:id",
-  validateObjectId("id"),
-  authenticateToken,
-  deleteRegistry
-);
-
-// Permanent delete registry
-router.delete(
-  "/:id/permanent",
-  validateObjectId("id"),
-  permanentDeleteRegistry
-);
-
-
-//AuditTrail
+// ================= AUDIT TRAILS =================
 router.get("/transaction/:metalTransactionId", getRegistryAuditTrailById);
-router.get("/Hedge/:metalTransactionId", getRegistryHedgeAuditTrailById);
+router.get("/hedge/:metalTransactionId", getRegistryHedgeAuditTrailById);
 router.get("/fixing/:fixingTransactionId", getRegistryFixingTransaction);
 router.get("/cash-entry/:entryTransactionId", getCashEntryAuditTrail);
 router.get("/stock-adjustment/:stockAdjustmentId", getStockAdjustmentAuditTrail);
 router.get("/opening-fixing/:purchaseFixingId", getOpeningFixingAuditTrail);
+router.get("/opening-stock/:purchaseFixingId", getOpeningStockAuditTrail);
+router.get("/opening-balance/:purchaseFixingId", getOpeningBalanceAuditTrail);
+
+// ================= GENERIC ID ROUTES (LAST) =================
+router.get("/:id", validateObjectId("id"), getRegistryById);
+router.put("/:id", validateObjectId("id"), validateRegistryUpdate, updateRegistry);
+router.patch("/:id/status", validateObjectId("id"), updateRegistryStatus);
+router.delete("/:id", validateObjectId("id"), deleteRegistry);
+router.delete("/:id/permanent", validateObjectId("id"), permanentDeleteRegistry);
+
 
 export default router;

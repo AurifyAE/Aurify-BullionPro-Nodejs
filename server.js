@@ -39,6 +39,8 @@ import dealStrategyRoutes from "./routes/modules/dealStrategyRoutes.js";
 import stockBufferRoutes from "./routes/modules/stockBufferRoutes.js";
 import draftingRoutes from "./routes/modules/draftingRoutes.js";
 import openingFixingRoutes from "./routes/modules/openingFixingRoutes.js";
+import accountFixingRoutes from "./routes/modules/accountFixingRoutes.js";
+import designationRoutes from "./routes/modules/designationRoutes.js";
 import { mongodb } from "./config/db.js";
 import { errorHandler } from "./utils/errorHandler.js";
 
@@ -121,6 +123,8 @@ app.use("/api/v1/deal-strategy", dealStrategyRoutes);
 app.use("/api/v1/stock-buffer", stockBufferRoutes);
 app.use("/api/v1/draftings", draftingRoutes);
 app.use("/api/v1/opening-fixing", openingFixingRoutes);
+app.use("/api/v1/opening-account-fixing", accountFixingRoutes);
+app.use("/api/v1/designations", designationRoutes);
 
 // Global error handling middleware
 app.use(errorHandler);

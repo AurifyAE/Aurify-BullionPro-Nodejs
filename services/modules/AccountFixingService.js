@@ -1,13 +1,14 @@
 import mongoose from "mongoose";
-import OpeningFixing from "../../models/modules/OpeningFixing.js";
+import AccountFixing from "../../models/modules/accountFixing.js";
 import MetalRate from "../../models/modules/MetalRateMaster.js";
 import { createAppError } from "../../utils/errorHandler.js";
 import Registry from "../../models/modules/Registry.js";
 
-class OpeningFixingService {
-    static async createOpeningFixing(body, adminId) {
+class AccountFixingService {
+    static async createAccountFixing(body, adminId) {
         const session = await mongoose.startSession();
         session.startTransaction();
+
         try {
             const {
                 voucherNumber,
@@ -16,14 +17,18 @@ class OpeningFixingService {
                 voucherDate,
                 divisionId,
                 salesmanId,
-                position,
+                position, // PURCHASE | SALE
                 pureWeight,
                 weightOz,
                 metalRateId,
-                bidvalue
+                bidvalue,
+                metalRateValue,
+                metalValue
             } = body;
 
-            // 1️⃣ Fetch metal rate (authoritative source)
+            console.log(body)
+
+            // 1️⃣ Fetch metal rate (authoritative)
             const metalRate = await MetalRate.findById(metalRateId).session(session);
             if (!metalRate) {
                 throw createAppError("Invalid metal rate", 400);
@@ -34,28 +39,21 @@ class OpeningFixingService {
                 throw createAppError("Conversion factor missing in metal rate", 400);
             }
 
-            // 2️⃣ Business calculation (FINAL)
-            const metalValue = Number(pureWeight) * convFactGms;
-            let accountingImpact;
+            // 2️⃣ Calculate value (BACKEND AUTHORITY)
+     
+            console.log(position)
 
-            if (position === "LONG") {
-                accountingImpact = {
-                    gold: "DEBIT",
-                    cash: "CREDIT",
-                };
-            } else if (position === "SHORT") {
-                accountingImpact = {
-                    gold: "CREDIT",
-                    cash: "DEBIT",
-                };
+            let accountingImpact;
+            if (position === "PURCHASE") {
+                accountingImpact = { gold: "DEBIT", cash: "CREDIT" };
+            } else if (position === "SALE") {
+                accountingImpact = { gold: "CREDIT", cash: "DEBIT" };
             } else {
                 throw createAppError("Invalid position type", 400);
             }
 
-            console.log(body)
-
-            // 3️⃣ Create document
-            const fixing = await OpeningFixing.create(
+            // 3️⃣ Create fixing
+            const fixing = await AccountFixing.create(
                 [
                     {
                         voucherNumber,
@@ -74,70 +72,53 @@ class OpeningFixingService {
 
                         metalRate: metalRateId,
                         metalRateValue: convFactGms,
-                        metalValue: body.metalValue,
+                        metalValue,
 
-                        accountingImpact, // ✅ REQUIRED FIELD FIXED
-
+                        accountingImpact,
                         createdBy: adminId,
                     },
                 ],
-                { session, ordered: true }
+                { session }
             );
 
+            // 4️⃣ Ledger logic
+            const isPurchase = position === "PURCHASE";
 
-            const isLong = position === "LONG";
+            const goldDebit = isPurchase ? pureWeight : 0;
+            const goldCredit = isPurchase ? 0 : pureWeight;
 
-            const goldDebit = isLong ? pureWeight : 0;
-            const goldCredit = isLong ? 0 : pureWeight;
+            const cashDebit = isPurchase ? 0 : metalValue;
+            const cashCredit = isPurchase ? metalValue : 0;
 
-            const cashDebit = isLong ? 0 : body.metalValue;
-            const cashCredit = isLong ? body.metalValue : 0;
-
-            console.log(metalValue)
-            console.log(body)
-
-            // ✅ log in the exact order you want
-            console.log(
-                goldCredit,
-                goldDebit,
-                cashCredit,
-                cashDebit
-            );
-
-
-            const registryEntry = await Registry.create(
+            // 5️⃣ Registry entry
+            await Registry.create(
                 [
                     {
-                        transactionId: fixing[0]._id,
-                        transactionType: "opening",
+                        transactionId: await Registry.generateTransactionId(),
+                        transactionType: isPurchase ? "opening-purchaseFix" : "opening-saleFix",
 
                         assetType: "XAU",
                         currencyRate: 1,
 
                         costCenter: "INVENTORY",
-                        type: "OPENING_FIXING_POSITION",
-                        description: "OPENING FIXING POSITION",
+                        type: "OPEN-ACCOUNT-FIXING",
+                        description: "ACCOUNT FIXING ENTRY",
 
                         party: null,
                         isBullion: true,
 
-                        // 💰 CASH LEDGER
                         cashDebit,
                         cashCredit,
 
-                        // 🪙 GOLD LEDGER
                         goldDebit,
                         goldCredit,
 
-                        // VALUE SNAPSHOT
                         value: metalValue,
-                        goldBidValue: null,
 
                         debit: cashDebit,
                         credit: cashCredit,
 
                         reference: voucherNumber,
-                        hedgeReference: null,
 
                         status: "completed",
                         isActive: true,
@@ -147,10 +128,8 @@ class OpeningFixingService {
                         transactionDate: voucherDate,
                     },
                 ],
-                { session, ordered: true }
+                { session }
             );
-
-
 
             await session.commitTransaction();
             session.endSession();
@@ -163,8 +142,9 @@ class OpeningFixingService {
         }
     }
 
-    static async fetchAllOpeningFixings() {
-        const fixings = await OpeningFixing.find()
+
+    static async fetchAllAccountFixings() {
+        const fixings = await AccountFixing.find()
             .populate("division", "code description")
             .populate("salesman", "name")
             .populate("metalRate", "rateType convFactGms")
@@ -175,12 +155,12 @@ class OpeningFixingService {
         return fixings;
     }
 
-    static async fetchOpeningFixingById(id) {
+    static async fetchAccountFixingById(id) {
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return null;
         }
 
-        const fixing = await OpeningFixing.findById(id)
+        const fixing = await AccountFixing.findById(id)
             .populate("division", "name code")
             .populate("salesman", "name")
             .populate("metalRate", "rateType convFactGms")
@@ -190,25 +170,25 @@ class OpeningFixingService {
         return fixing;
     }
 
-    static async updateOpeningFixing(id, body, adminId) {
+    static async updateAccountFixing(id, body, adminId) {
         const session = await mongoose.startSession();
         session.startTransaction();
 
         try {
             if (!mongoose.Types.ObjectId.isValid(id)) {
-                throw createAppError("Invalid opening fixing ID", 400);
+                throw createAppError("Invalid account fixing ID", 400);
             }
 
-            const existing = await OpeningFixing.findById(id).session(session);
+            const existing = await AccountFixing.findById(id).session(session);
             if (!existing) {
-                throw createAppError("Opening fixing not found", 404);
+                throw createAppError("Account fixing not found", 404);
             }
 
             const {
                 voucherDate,
                 divisionId,
                 salesmanId,
-                position,
+                position,        // PURCHASE | SALE
                 pureWeight,
                 weightOz,
                 metalRateId,
@@ -226,23 +206,26 @@ class OpeningFixingService {
                 throw createAppError("Conversion factor missing in metal rate", 400);
             }
 
-            // 2️⃣ Recalculate values (SOURCE OF TRUTH)
+            // 2️⃣ Recalculate value (BACKEND AUTHORITY)
             const metalValue = Number(pureWeight) * convFactGms;
 
             let accountingImpact;
-            if (position === "LONG") {
+            if (position === "PURCHASE") {
                 accountingImpact = { gold: "DEBIT", cash: "CREDIT" };
-            } else if (position === "SHORT") {
+            } else if (position === "SALE") {
                 accountingImpact = { gold: "CREDIT", cash: "DEBIT" };
             } else {
                 throw createAppError("Invalid position type", 400);
             }
 
-            // 3️⃣ Reverse old registry
-            await Registry.deleteMany({ reference: existing.voucherNumber }).session(session);
+            // 3️⃣ Reverse old registry entries
+            await Registry.deleteMany(
+                { reference: existing.voucherNumber },
+                { session }
+            );
 
             // 4️⃣ Update fixing
-            const updatedFixing = await OpeningFixing.findByIdAndUpdate(
+            const updatedFixing = await AccountFixing.findByIdAndUpdate(
                 id,
                 {
                     voucherDate,
@@ -262,38 +245,36 @@ class OpeningFixingService {
             );
 
             // 5️⃣ Recreate registry entry
-            const isLong = position === "LONG";
+            const isPurchase = position === "PURCHASE";
 
-            const goldDebit = isLong ? pureWeight : 0;
-            const goldCredit = isLong ? 0 : pureWeight;
+            const goldDebit = isPurchase ? pureWeight : 0;
+            const goldCredit = isPurchase ? 0 : pureWeight;
 
-            const cashDebit = isLong ? 0 : metalValue;
-            const cashCredit = isLong ? metalValue : 0;
+            const cashDebit = isPurchase ? 0 : metalValue;
+            const cashCredit = isPurchase ? metalValue : 0;
 
             await Registry.create(
                 [
                     {
                         transactionId: updatedFixing._id,
-                        transactionType: "opening",
+                        transactionType: "account-fixing",
 
                         assetType: "XAU",
                         currencyRate: 1,
 
                         costCenter: "INVENTORY",
-                        type: "OPENING_FIXING_POSITION",
-                        description: "OPENING FIXING POSITION",
+                        type: "ACCOUNT_FIXING",
+                        description: "ACCOUNT FIXING ENTRY",
 
                         party: null,
                         isBullion: true,
 
                         cashDebit,
                         cashCredit,
-
                         goldDebit,
                         goldCredit,
 
                         value: metalValue,
-                        goldBidValue: null,
 
                         debit: cashDebit,
                         credit: cashCredit,
@@ -308,7 +289,7 @@ class OpeningFixingService {
                         transactionDate: voucherDate,
                     },
                 ],
-                { session, ordered: true }
+                { session }
             );
 
             await session.commitTransaction();
@@ -322,30 +303,28 @@ class OpeningFixingService {
         }
     }
 
-    static async deleteOpeningFixing(id) {
+    static async deleteAccountFixing(id) {
         const session = await mongoose.startSession();
         session.startTransaction();
 
         try {
             if (!mongoose.Types.ObjectId.isValid(id)) {
-                throw createAppError("Invalid opening fixing ID", 400);
+                throw createAppError("Invalid account fixing ID", 400);
             }
 
-            const fixing = await OpeningFixing.findById(id).session(session);
+            const fixing = await AccountFixing.findById(id).session(session);
             if (!fixing) {
-                throw createAppError("Opening fixing not found", 404);
+                throw createAppError("Account fixing not found", 404);
             }
 
-            // 1️⃣ Delete registry entries (ledger)
+            // 1️⃣ Delete registry entries
             await Registry.deleteMany(
-                {
-                    reference: fixing.voucherNumber,
-                },
+                { reference: fixing.voucherNumber },
                 { session }
             );
 
-            // 2️⃣ Delete fixing document
-            await OpeningFixing.deleteOne(
+            // 2️⃣ Delete fixing
+            await AccountFixing.deleteOne(
                 { _id: id },
                 { session }
             );
@@ -361,7 +340,6 @@ class OpeningFixingService {
         }
     }
 
-
 }
 
-export default OpeningFixingService;
+export default AccountFixingService;

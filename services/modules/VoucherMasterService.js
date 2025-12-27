@@ -10,6 +10,7 @@ import InventoryLog from "../../models/modules/InventoryLog.js";
 import StockAdjustment from "../../models/modules/StockAdjustment.js";
 import OpeningBalance from "../../models/modules/OpeningBalance.js";
 import OpeningFixing from "../../models/modules/OpeningFixing.js";
+import accountFixing from "../../models/modules/accountFixing.js";
 
 class VoucherMasterService {
   // Cache for voucher configurations to reduce DB queries
@@ -274,6 +275,15 @@ class VoucherMasterService {
         console.log(`[getTransactionCount] Next Voucher Count:`, nextCount);
 
         return nextCount;
+      }
+
+      if (moduleLC === "opening-account-fixing") {
+        console.log(`[getTransactionCount] Using model: OpeningFixing`);
+
+        const count = await accountFixing.countDocuments();
+
+        console.log(`[getTransactionCount] Distinct Voucher Count:`, count);
+        return count;
       }
 
 
