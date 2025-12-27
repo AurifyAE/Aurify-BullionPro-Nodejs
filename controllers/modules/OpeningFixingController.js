@@ -71,3 +71,16 @@ export const updateOpeningFixing = async (req, res, next) => {
     }
 };
 
+export const deleteOpeningFixing = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        await OpeningFixingService.deleteOpeningFixing(id);
+        res.status(200).json({
+            success: true,
+            message: "Opening fixing deleted successfully",
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+

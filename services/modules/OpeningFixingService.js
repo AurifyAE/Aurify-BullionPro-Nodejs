@@ -322,6 +322,46 @@ class OpeningFixingService {
         }
     }
 
+    static async deleteOpeningFixing(id) {
+        const session = await mongoose.startSession();
+        session.startTransaction();
+
+        try {
+            if (!mongoose.Types.ObjectId.isValid(id)) {
+                throw createAppError("Invalid opening fixing ID", 400);
+            }
+
+            const fixing = await OpeningFixing.findById(id).session(session);
+            if (!fixing) {
+                throw createAppError("Opening fixing not found", 404);
+            }
+
+            // 1️⃣ Delete registry entries (ledger)
+            await Registry.deleteMany(
+                {
+                    reference: fixing.voucherNumber,
+                },
+                { session }
+            );
+
+            // 2️⃣ Delete fixing document
+            await OpeningFixing.deleteOne(
+                { _id: id },
+                { session }
+            );
+
+            await session.commitTransaction();
+            session.endSession();
+
+            return true;
+        } catch (err) {
+            await session.abortTransaction();
+            session.endSession();
+            throw err;
+        }
+    }
+
+
 }
 
 export default OpeningFixingService;
