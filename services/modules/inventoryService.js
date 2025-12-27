@@ -6,6 +6,7 @@ import MetalStock from "../../models/modules/MetalStock.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
 import BranchMaster from "../../models/modules/BranchMaster.js";
 import OpeningBalance from "../../models/modules/OpeningBalance.js";
+import { updatePartyOpeningBalance } from "../../utils/updatePartyOpeningBalance.js";
 
 class InventoryService {
   static async fetchAllInventory() {
@@ -643,21 +644,50 @@ class InventoryService {
     }
   }
 
-    static async deleteOpeningBalanceByVoucher(voucherId) {
-
+  static async deleteOpeningBalanceByVoucher(voucherId) {
     try {
+      // first reverse the party opening balance effects
+      const openingBalances = await OpeningBalance.find({ voucherCode: voucherId });
+
+      for (const ob of openingBalances) {
+        await this.reverseOpeningBalanceEffects(ob);
+
+      }
       const result = await OpeningBalance.deleteMany({ voucherCode: voucherId });
       console.log("Deleted inventory logs for voucherId:", voucherId, "Result:", result);
 
       const registryResult = await Registry.deleteMany({ reference: voucherId });
       console.log("Deleted registry entries for voucherId:", voucherId, "Result:", registryResult);
-      
+
       return result;
     } catch (error) {
       throw createAppError(
         "Failed to fetch inventory Logs",
         500,
         "FETCH_INVENTORY_LOG_ERROR"
+      );
+    }
+  }
+
+  static async reverseOpeningBalanceEffects(openingBalance) {
+    try {
+      const partyId = openingBalance.partyId;
+      const assetType = openingBalance.assetType;
+      const assetCode = openingBalance.assetCode;
+      const value = openingBalance.value || 0;
+
+      await updatePartyOpeningBalance({
+        partyId,
+        assetType,
+        assetCode,
+        value,
+        reverse: true
+      });
+    } catch (error) {
+      throw createAppError(
+        "Failed to reverse opening balance effects",
+        500,
+        "REVERSE_OPENING_BALANCE_ERROR"
       );
     }
   }
