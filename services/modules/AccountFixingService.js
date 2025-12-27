@@ -22,7 +22,11 @@ class AccountFixingService {
                 weightOz,
                 metalRateId,
                 bidvalue,
+                metalRateValue,
+                metalValue
             } = body;
+
+            console.log(body)
 
             // 1️⃣ Fetch metal rate (authoritative)
             const metalRate = await MetalRate.findById(metalRateId).session(session);
@@ -36,7 +40,7 @@ class AccountFixingService {
             }
 
             // 2️⃣ Calculate value (BACKEND AUTHORITY)
-            const metalValue = Number(pureWeight) * convFactGms;
+     
             console.log(position)
 
             let accountingImpact;
