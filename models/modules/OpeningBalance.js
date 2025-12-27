@@ -35,7 +35,7 @@ const openingBalanceSchema = new mongoose.Schema(
             required: true,
         },
 
-       
+
         voucherCode: {
             type: String,
             required: true,

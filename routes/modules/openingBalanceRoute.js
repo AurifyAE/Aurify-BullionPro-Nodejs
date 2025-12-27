@@ -5,7 +5,7 @@ import { createPartyOpeningBalance, getAllPartyOpeningBalances, updateOpeningBal
 const router = express.Router();
 router.use(authenticateToken);
 
-router.post('/', createPartyOpeningBalance);
+router.post('/add', createPartyOpeningBalance);
 router.put('/voucher/:VoucherID', updateOpeningBalance);
 router.get('/', getAllPartyOpeningBalances);
 // router.post('/opening-balance', openingBalanceTransfer);

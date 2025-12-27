@@ -71,7 +71,7 @@ class AccountFixingService {
                         weightOz,
 
                         metalRate: metalRateId,
-                        metalRateValue: convFactGms,
+                        metalRateValue,
                         metalValue,
 
                         accountingImpact,
@@ -193,6 +193,8 @@ class AccountFixingService {
                 weightOz,
                 metalRateId,
                 bidvalue,
+                metalValue,
+                metalRateValue
             } = body;
 
             // 1️⃣ Fetch authoritative metal rate
@@ -207,7 +209,7 @@ class AccountFixingService {
             }
 
             // 2️⃣ Recalculate value (BACKEND AUTHORITY)
-            const metalValue = Number(pureWeight) * convFactGms;
+            // const metalValue = Number(pureWeight) * convFactGms;
 
             let accountingImpact;
             if (position === "PURCHASE") {
@@ -235,7 +237,7 @@ class AccountFixingService {
                     pureWeight,
                     weightOz,
                     metalRate: metalRateId,
-                    metalRateValue: convFactGms,
+                    metalRateValue,
                     metalValue,
                     bidvalue,
                     accountingImpact,
@@ -257,13 +259,13 @@ class AccountFixingService {
                 [
                     {
                         transactionId: updatedFixing._id,
-                        transactionType: "account-fixing",
+                        transactionType: isPurchase ? "opening-purchaseFix" : "opening-saleFix",
 
                         assetType: "XAU",
                         currencyRate: 1,
 
                         costCenter: "INVENTORY",
-                        type: "ACCOUNT_FIXING",
+                        type: "OPEN-ACCOUNT-FIXING",
                         description: "ACCOUNT FIXING ENTRY",
 
                         party: null,
