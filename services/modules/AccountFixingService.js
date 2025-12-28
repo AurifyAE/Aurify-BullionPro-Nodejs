@@ -94,7 +94,7 @@ class AccountFixingService {
             await Registry.create(
                 [
                     {
-                        transactionId: await Registry.generateTransactionId(),
+                        transactionId: fixing[0]._id.toString(), // Use AccountFixing ID as transactionId
                         transactionType: isPurchase ? "opening-purchaseFix" : "opening-saleFix",
 
                         assetType: "XAU",
@@ -258,7 +258,7 @@ class AccountFixingService {
             await Registry.create(
                 [
                     {
-                        transactionId: updatedFixing._id,
+                        transactionId: updatedFixing._id.toString(), // Use AccountFixing ID as transactionId
                         transactionType: isPurchase ? "opening-purchaseFix" : "opening-saleFix",
 
                         assetType: "XAU",
