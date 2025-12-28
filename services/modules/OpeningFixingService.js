@@ -20,7 +20,9 @@ class OpeningFixingService {
                 pureWeight,
                 weightOz,
                 metalRateId,
-                bidvalue
+                bidvalue,
+                metalRateValue,
+                metalValue
             } = body;
 
             // 1️⃣ Fetch metal rate (authoritative source)
@@ -35,7 +37,6 @@ class OpeningFixingService {
             }
 
             // 2️⃣ Business calculation (FINAL)
-            const metalValue = Number(pureWeight) * convFactGms;
             let accountingImpact;
 
             if (position === "LONG") {
@@ -73,8 +74,8 @@ class OpeningFixingService {
                         weightOz,
 
                         metalRate: metalRateId,
-                        metalRateValue: convFactGms,
-                        metalValue: body.metalValue,
+                        metalRateValue: metalRateValue,
+                        metalValue,
 
                         accountingImpact, // ✅ REQUIRED FIELD FIXED
 
@@ -213,6 +214,8 @@ class OpeningFixingService {
                 weightOz,
                 metalRateId,
                 bidvalue,
+                metalRateValue,
+                metalValue
             } = body;
 
             // 1️⃣ Fetch authoritative metal rate
@@ -227,7 +230,6 @@ class OpeningFixingService {
             }
 
             // 2️⃣ Recalculate values (SOURCE OF TRUTH)
-            const metalValue = Number(pureWeight) * convFactGms;
 
             let accountingImpact;
             if (position === "LONG") {
@@ -252,7 +254,7 @@ class OpeningFixingService {
                     pureWeight,
                     weightOz,
                     metalRate: metalRateId,
-                    metalRateValue: convFactGms,
+                    metalRateValue,
                     metalValue,
                     bidvalue,
                     accountingImpact,

@@ -40,7 +40,7 @@ class AccountFixingService {
             }
 
             // 2️⃣ Calculate value (BACKEND AUTHORITY)
-     
+
             console.log(position)
 
             let accountingImpact;
@@ -71,7 +71,7 @@ class AccountFixingService {
                         weightOz,
 
                         metalRate: metalRateId,
-                        metalRateValue: convFactGms,
+                        metalRateValue: metalRateValue,
                         metalValue,
 
                         accountingImpact,
@@ -188,27 +188,22 @@ class AccountFixingService {
                 voucherDate,
                 divisionId,
                 salesmanId,
-                position,        // PURCHASE | SALE
+                position,          // PURCHASE | SALE
                 pureWeight,
                 weightOz,
                 metalRateId,
+                metalRateValue,    // ✅ TRUST FE
+                metalValue,        // ✅ TRUST FE
                 bidvalue,
             } = body;
 
-            // 1️⃣ Fetch authoritative metal rate
+            // 1️⃣ Validate metal rate exists (do NOT recalc)
             const metalRate = await MetalRate.findById(metalRateId).session(session);
             if (!metalRate) {
                 throw createAppError("Invalid metal rate", 400);
             }
 
-            const convFactGms = Number(metalRate.convFactGms || 0);
-            if (!convFactGms) {
-                throw createAppError("Conversion factor missing in metal rate", 400);
-            }
-
-            // 2️⃣ Recalculate value (BACKEND AUTHORITY)
-            const metalValue = Number(pureWeight) * convFactGms;
-
+            // 2️⃣ Accounting impact (ONLY LOGIC BACKEND OWNS)
             let accountingImpact;
             if (position === "PURCHASE") {
                 accountingImpact = { gold: "DEBIT", cash: "CREDIT" };
@@ -218,13 +213,13 @@ class AccountFixingService {
                 throw createAppError("Invalid position type", 400);
             }
 
-            // 3️⃣ Reverse old registry entries
+            // 3️⃣ Remove old registry
             await Registry.deleteMany(
                 { reference: existing.voucherNumber },
                 { session }
             );
 
-            // 4️⃣ Update fixing
+            // 4️⃣ Update fixing (NO RECALC)
             const updatedFixing = await AccountFixing.findByIdAndUpdate(
                 id,
                 {
@@ -235,8 +230,8 @@ class AccountFixingService {
                     pureWeight,
                     weightOz,
                     metalRate: metalRateId,
-                    metalRateValue: convFactGms,
-                    metalValue,
+                    metalRateValue,   // ✅ keep actual rate
+                    metalValue,       // ✅ keep actual value
                     bidvalue,
                     accountingImpact,
                     updatedBy: adminId,
@@ -244,7 +239,7 @@ class AccountFixingService {
                 { new: true, session }
             );
 
-            // 5️⃣ Recreate registry entry
+            // 5️⃣ Recreate registry
             const isPurchase = position === "PURCHASE";
 
             const goldDebit = isPurchase ? pureWeight : 0;
@@ -256,14 +251,16 @@ class AccountFixingService {
             await Registry.create(
                 [
                     {
-                        transactionId: updatedFixing._id,
-                        transactionType: "account-fixing",
+                        transactionId: await Registry.generateTransactionId(),
+                        transactionType: isPurchase
+                            ? "opening-purchaseFix"
+                            : "opening-saleFix",
 
                         assetType: "XAU",
                         currencyRate: 1,
 
                         costCenter: "INVENTORY",
-                        type: "ACCOUNT_FIXING",
+                        type: "OPEN-ACCOUNT-FIXING",
                         description: "ACCOUNT FIXING ENTRY",
 
                         party: null,
@@ -302,6 +299,7 @@ class AccountFixingService {
             throw err;
         }
     }
+
 
     static async deleteAccountFixing(id) {
         const session = await mongoose.startSession();
