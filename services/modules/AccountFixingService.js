@@ -71,7 +71,7 @@ class AccountFixingService {
                         weightOz,
 
                         metalRate: metalRateId,
-                        metalRateValue: metalRateValue,
+                        metalRateValue,
                         metalValue,
 
                         accountingImpact,
@@ -94,7 +94,7 @@ class AccountFixingService {
             await Registry.create(
                 [
                     {
-                        transactionId: await Registry.generateTransactionId(),
+                        transactionId: fixing[0]._id.toString(), // Use AccountFixing ID as transactionId
                         transactionType: isPurchase ? "opening-purchaseFix" : "opening-saleFix",
 
                         assetType: "XAU",
@@ -195,6 +195,8 @@ class AccountFixingService {
                 metalRateValue,    // ✅ TRUST FE
                 metalValue,        // ✅ TRUST FE
                 bidvalue,
+                metalValue,
+                metalRateValue
             } = body;
 
             // 1️⃣ Validate metal rate exists (do NOT recalc)
@@ -203,7 +205,14 @@ class AccountFixingService {
                 throw createAppError("Invalid metal rate", 400);
             }
 
-            // 2️⃣ Accounting impact (ONLY LOGIC BACKEND OWNS)
+            const convFactGms = Number(metalRate.convFactGms || 0);
+            if (!convFactGms) {
+                throw createAppError("Conversion factor missing in metal rate", 400);
+            }
+
+            // 2️⃣ Recalculate value (BACKEND AUTHORITY)
+            // const metalValue = Number(pureWeight) * convFactGms;
+
             let accountingImpact;
             if (position === "PURCHASE") {
                 accountingImpact = { gold: "DEBIT", cash: "CREDIT" };
@@ -230,8 +239,8 @@ class AccountFixingService {
                     pureWeight,
                     weightOz,
                     metalRate: metalRateId,
-                    metalRateValue,   // ✅ keep actual rate
-                    metalValue,       // ✅ keep actual value
+                    metalRateValue,
+                    metalValue,
                     bidvalue,
                     accountingImpact,
                     updatedBy: adminId,
@@ -251,10 +260,8 @@ class AccountFixingService {
             await Registry.create(
                 [
                     {
-                        transactionId: await Registry.generateTransactionId(),
-                        transactionType: isPurchase
-                            ? "opening-purchaseFix"
-                            : "opening-saleFix",
+                        transactionId: updatedFixing._id.toString(), // Use AccountFixing ID as transactionId
+                        transactionType: isPurchase ? "opening-purchaseFix" : "opening-saleFix",
 
                         assetType: "XAU",
                         currencyRate: 1,

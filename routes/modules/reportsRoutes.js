@@ -13,7 +13,7 @@ router.post("/stock-analysis", getStockAnalysis);
 router.post("/transaction-summary", getTransactionSummary);
 router.post("/sales-analysis", getSalesAnalysis);
 router.post("/own-stock", getOwnStock);
-router.post("/metal-fixing", metalFixing);
+router.post("/fixing-registry", metalFixing);
 router.post("/account-statements", accountStatements);
 
 router.get("/dashboard", getDashboard);

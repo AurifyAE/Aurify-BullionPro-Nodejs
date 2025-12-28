@@ -2041,7 +2041,7 @@ class RegistryService {
       const isMakingCharges = r.type === "MAKING_CHARGES";
 
       return {
-        description: r.description || "OPENING STOCK",
+        description: r.type || "OPENING STOCK",
         accCode: r.costCenter || "INVENTORY",
 
         // 💰 CASH (Making Charges)

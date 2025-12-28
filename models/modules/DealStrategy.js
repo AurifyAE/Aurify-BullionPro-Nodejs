@@ -6,7 +6,6 @@ const DealStrategySchema = new mongoose.Schema(
       type: Date,
       required: [true, "Date is required"],
       unique: true,
-      index: true,
     },
     lbma: {
       value: {

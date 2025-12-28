@@ -127,9 +127,17 @@ class EntryService {
           type: "GOLD_STOCK",
           description: desc,
           value: item.grossWeight,
-          credit: item.grossWeight,
+          debit: item.grossWeight, // Receipt: GOLD_STOCK is debited (stock increases)
+          credit: 0,
+          grossWeight: item.grossWeight,
+          pureWeight: item.purityWeight,
+          purity: item.purity,
+          metalId: item.stock, // Add metal/stock ID
+          transactionDate: entry.voucherDate || new Date(),
           reference: entry.voucherCode,
           createdBy: entry.enteredBy,
+          assetType: "AED",
+          currencyRate: 1,
         },
         {
           transactionType: entry.type,
@@ -138,9 +146,17 @@ class EntryService {
           type: "GOLD",
           description: desc,
           value: item.purityWeight,
-          debit: item.purityWeight,
+          credit: item.purityWeight, // Receipt: GOLD is credited (gold comes in)
+          debit: 0,
+          grossWeight: item.grossWeight,
+          pureWeight: item.purityWeight,
+          purity: item.purity,
+          metalId: item.stock, // Add metal/stock ID
+          transactionDate: entry.voucherDate || new Date(),
           reference: entry.voucherCode,
           createdBy: entry.enteredBy,
+          assetType: "AED",
+          currencyRate: 1,
         },
         {
           transactionType: entry.type,
@@ -150,9 +166,17 @@ class EntryService {
           description: desc,
           value: item.purityWeight,
           credit: item.purityWeight,
+          debit: 0,
+          grossWeight: item.grossWeight,
+          pureWeight: item.purityWeight,
+          purity: item.purity,
+          metalId: item.stock, // Add metal/stock ID
+          transactionDate: entry.voucherDate || new Date(),
           reference: entry.voucherCode,
           createdBy: entry.enteredBy,
           party: entry.party,
+          assetType: "AED",
+          currencyRate: 1,
         },
       ]);
 
@@ -205,9 +229,17 @@ class EntryService {
           type: "GOLD_STOCK",
           description: desc,
           value: item.grossWeight,
-          debit: item.grossWeight,
+          credit: item.grossWeight, // Payment: GOLD_STOCK is credited (stock decreases)
+          debit: 0,
+          grossWeight: item.grossWeight,
+          pureWeight: item.purityWeight,
+          purity: item.purity,
+          metalId: item.stock, // Add metal/stock ID
+          transactionDate: entry.voucherDate || new Date(),
           reference: entry.voucherCode,
           createdBy: entry.enteredBy,
+          assetType: "AED",
+          currencyRate: 1,
         },
         {
           transactionType: entry.type,
@@ -216,9 +248,17 @@ class EntryService {
           type: "GOLD",
           description: desc,
           value: item.purityWeight,
-          credit: item.purityWeight,
+          debit: item.purityWeight, // Payment: GOLD is debited (gold goes out)
+          credit: 0,
+          grossWeight: item.grossWeight,
+          pureWeight: item.purityWeight,
+          purity: item.purity,
+          metalId: item.stock, // Add metal/stock ID
+          transactionDate: entry.voucherDate || new Date(),
           reference: entry.voucherCode,
           createdBy: entry.enteredBy,
+          assetType: "AED",
+          currencyRate: 1,
         },
         {
           transactionType: entry.type,
@@ -228,9 +268,17 @@ class EntryService {
           description: desc,
           value: item.purityWeight,
           debit: item.purityWeight,
+          credit: 0,
+          grossWeight: item.grossWeight,
+          pureWeight: item.purityWeight,
+          purity: item.purity,
+          metalId: item.stock, // Add metal/stock ID
+          transactionDate: entry.voucherDate || new Date(),
           reference: entry.voucherCode,
           createdBy: entry.enteredBy,
           party: entry.party,
+          assetType: "AED",
+          currencyRate: 1,
         },
       ]);
 
@@ -768,6 +816,47 @@ class EntryService {
   }
 
   // ------------------------------------------------------------------------
+  // REVERSE METAL BALANCES AND INVENTORY (for delete - no inventory logs)
+  // ------------------------------------------------------------------------
+  static async reverseMetalBalancesOnly(entry, isReceipt = true) {
+    const account = await Account.findById(entry.party);
+    if (!account) return;
+
+    const { default: Inventory } = await import("../../models/modules/inventory.js");
+
+    for (const item of entry.stockItems) {
+      // Reverse party gold balance
+      const prev = account.balances.goldBalance?.totalGrams || 0;
+      account.balances.goldBalance = {
+        totalGrams: prev + (isReceipt ? -item.purityWeight : item.purityWeight),
+        lastUpdated: new Date(),
+      };
+
+      // Reverse inventory changes without creating logs
+      const metalId = new mongoose.Types.ObjectId(item.stock);
+      const inventory = await Inventory.findOne({ metal: metalId });
+      
+      if (inventory) {
+        // Calculate deltas (opposite of original transaction)
+        // Receipt: originally added inventory, so we subtract
+        // Payment: originally subtracted inventory, so we add
+        const factor = isReceipt ? -1 : 1;
+        const pcsDelta = factor * (item.pieces || 0);
+        const weightDelta = factor * (item.grossWeight || 0);
+
+        // Apply deltas
+        inventory.pcsCount += pcsDelta;
+        inventory.grossWeight += weightDelta;
+        inventory.pureWeight = inventory.grossWeight * (inventory.purity || 1);
+
+        await inventory.save();
+      }
+    }
+
+    await account.save();
+  }
+
+  // ------------------------------------------------------------------------
   // CLEANUP REGISTRY + INVENTORY LOGS + PDC SCHEDULES
   // ------------------------------------------------------------------------
   static async cleanup(voucherCode) {
@@ -965,7 +1054,7 @@ class EntryService {
         .populate("enteredBy", "name")
         .populate("cash.currency", "currencyCode")
         .populate("stockItems.stock", "code")
-        .sort({ voucherDate: -1 })
+        .sort({ createdAt: -1, voucherDate: -1 }) // LIFO: Last In First Out - newest entries first
         .skip((page - 1) * limit)
         .limit(limit),
 

@@ -1,5 +1,8 @@
-import mongoose from "mongoose";
+  import mongoose from "mongoose";
 import Registry from "../../models/modules/Registry.js";
+import MetalTransaction from "../../models/modules/MetalTransaction.js";
+import FixingPrice from "../../models/modules/FixingPrice.js";
+import TransactionFixing from "../../models/modules/TransactionFixing.js";
 
 import moment from "moment";
 import { log } from "console";
@@ -762,22 +765,72 @@ export class ReportService {
       const validatedFilters = this.validateFilters(filters);
 
       // 2. Get opening balance (only OFP type)
-      let openingBalance = { opening: 0, purityDifference: 0, netPurchase: 0 };
-      if (!filters.excludeOpening && filters.fromDate) {
+      // excludeOpening: true → don't show opening, excludeOpening: false → show opening
+      let openingBalance = { opening: 0, openingValue: 0 };
+      const excludeOpening = filters.excludeOpening === true || filters.excludeOpening === "true";
+      if (!excludeOpening && filters.fromDate) {
         openingBalance = await this.getOwnStockOpeningBalance(filters.fromDate, validatedFilters);
       }
 
-      // 3. Get MetalTransaction data (fixed=true only)
-      const metalTransactionData = await this.getOwnStockMetalTransactions(validatedFilters);
+      // 3. Get MetalTransaction data (respects excludeHedging filter)
+      // Pass excludeHedging from original filters since it's not in validatedFilters
+      const metalTransactionData = await this.getOwnStockMetalTransactions({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+      });
 
       // 4. Get Purchase Fix / Sale Fix from TransactionFixing
       const fixingData = await this.getOwnStockFixingTransactions(validatedFilters);
 
+      // 4a. Get Hedge Entries as Fixing Transactions (only when excludeHedging === false)
+      const hedgeFixingData = await this.getOwnStockHedgeFixingTransactions({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+      });
+
+      // Merge hedge fixing data into fixing data by category
+      const mergedFixingData = [...fixingData];
+      hedgeFixingData.forEach((hedgeFix) => {
+        const existingIndex = mergedFixingData.findIndex(
+          (fix) => fix.category === hedgeFix.category
+        );
+        if (existingIndex >= 0) {
+          // Merge into existing category
+          mergedFixingData[existingIndex].totalGold += hedgeFix.totalGold || 0;
+          mergedFixingData[existingIndex].totalValue += hedgeFix.totalValue || 0;
+        } else {
+          // Add as new category
+          mergedFixingData.push(hedgeFix);
+        }
+      });
+
+      // 4b. Get Open Account Fixing Transactions
+      const openAccountFixingData = await this.getOwnStockOpenAccountFixingTransactions(validatedFilters);
+
+      // Merge open account fixing data into fixing data by category
+      openAccountFixingData.forEach((openAccountFix) => {
+        const existingIndex = mergedFixingData.findIndex(
+          (fix) => fix.category === openAccountFix.category
+        );
+        if (existingIndex >= 0) {
+          // Merge into existing category
+          mergedFixingData[existingIndex].totalGold += openAccountFix.totalGold || 0;
+          mergedFixingData[existingIndex].totalValue += openAccountFix.totalValue || 0;
+        } else {
+          // Add as new category
+          mergedFixingData.push(openAccountFix);
+        }
+      });
+
       // 5. Get Adjustments (MSA)
       const adjustmentData = await this.getOwnStockAdjustments(validatedFilters);
 
-      // 6. Get Purity Gain/Loss
-      const purityData = await this.getOwnStockPurityDifference(validatedFilters);
+      // 6. Get Purity Gain/Loss (respects excludeHedging filter)
+      // Pass excludeHedging from original filters since it's not in validatedFilters
+      const purityData = await this.getOwnStockPurityDifference({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+      });
 
       // 7. Get Receivables and Payables
       const receivablesPayables = await this.getOwnStockReceivablesPayables();
@@ -785,16 +838,23 @@ export class ReportService {
       // 8. Get Inventory Logs summary
       const inventoryData = await this.getOwnStockInventoryLogs(validatedFilters);
 
-      // 9. Format the output
+      // 9. Get Pure Weight Gold Jewelry from InventoryLog
+      const pureWtGoldJew = await this.getOwnStockPureWtGoldJew(validatedFilters);
+
+      // 10. Format the output
       const formatted = this.formatOwnStockData({
         openingBalance,
         metalTransactionData,
-        fixingData,
+        fixingData: mergedFixingData, // Use merged fixing data (includes hedge entries)
         adjustmentData,
         purityData,
         receivablesPayables,
         inventoryData,
-        filters: validatedFilters
+        pureWtGoldJew,
+        filters: {
+          ...validatedFilters,
+          excludeOpening: filters.excludeOpening, // Pass excludeOpening from original filters
+        }
       });
 
       // 10. Return structured response
@@ -814,28 +874,267 @@ export class ReportService {
 
   async getMetalFixingReports(filters) {
     try {
-
-      // Validate and format input filters
+      // 1. Validate and format input filters
       const validatedFilters = this.validateFilters(filters);
 
-      // Construct MongoDB aggregation pipeline
-      const pipeline = this.metalFxingPipeLine(validatedFilters);
+      // 2. Handle excludeOpening - get opening balance if needed
+      // excludeOpening: false → show opening balance, excludeOpening: true → don't show opening
+      let openingBalance = { opening: 0, openingValue: 0 };
+      const excludeOpening = filters.excludeOpening === true || filters.excludeOpening === "true";
+      if (!excludeOpening && filters.fromDate) {
+        openingBalance = await this.getOwnStockOpeningBalance(filters.fromDate, validatedFilters);
+      }
 
-      // Execute aggregation query
+      // 3. Construct MongoDB aggregation pipeline for fixing reports
+      // Pass excludeHedging from original filters since it's not in validatedFilters
+      const pipeline = this.metalFxingPipeLine({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+        excludeOpening: filters.excludeOpening,
+      });
+
+      // 4. Execute aggregation query with debugging
+      console.log("=== METAL FIXING REPORT DEBUG ===");
+      console.log("Filters:", JSON.stringify(validatedFilters, null, 2));
+      console.log("excludeOpening:", filters.excludeOpening);
+      console.log("excludeHedging:", filters.excludeHedging);
+      console.log("Opening Balance:", openingBalance);
+      console.log("Pipeline stages:", pipeline.length);
+      
+      // Debug: Check initial match count on Registry
+      const initialMatch = {
+        isActive: true,
+        type: { $in: ["purchase-fixing", "sales-fixing", "OPEN-ACCOUNT-FIXING"] },
+        $or: [
+          { metalTransactionId: { $exists: true, $ne: null } },
+          { fixingTransactionId: { $exists: true, $ne: null } },
+          { type: "OPEN-ACCOUNT-FIXING" } // OPEN-ACCOUNT-FIXING may not have metalTransactionId or fixingTransactionId
+        ],
+      };
+      if (validatedFilters.startDate || validatedFilters.endDate) {
+        initialMatch.transactionDate = {};
+        if (validatedFilters.startDate) {
+          initialMatch.transactionDate.$gte = new Date(validatedFilters.startDate);
+        }
+        if (validatedFilters.endDate) {
+          initialMatch.transactionDate.$lte = new Date(validatedFilters.endDate);
+        }
+      }
+      
+      const initialMatchCount = await Registry.countDocuments(initialMatch);
+      console.log("✅ Initial Match Count (Registry with purchase-fixing or sales-fixing):", initialMatchCount);
+      console.log("📅 Date Range:", {
+        startDate: validatedFilters.startDate,
+        endDate: validatedFilters.endDate
+      });
+      
+      // Debug: Check if any Registry entries exist
+      if (initialMatchCount > 0) {
+        const sampleRegistry = await Registry.find(initialMatch).limit(5).lean();
+        console.log("📋 Sample Registry entries (first 5):", JSON.stringify(sampleRegistry.map(r => ({
+          _id: r._id,
+          reference: r.reference,
+          type: r.type,
+          transactionDate: r.transactionDate,
+          metalTransactionId: r.metalTransactionId,
+          fixingTransactionId: r.fixingTransactionId
+        })), null, 2));
+      } else {
+        console.log("❌ No Registry entries found matching initial criteria!");
+      }
+      
+      console.log("🔄 Executing aggregation pipeline on Registry...");
       const reportData = await Registry.aggregate(pipeline);
+      console.log("📊 Final Report Data Length:", reportData.length);
+      if (reportData.length > 0) {
+        console.log("✅ First record sample:", JSON.stringify(reportData[0], null, 2));
+      } else {
+        console.log("❌ No records returned from pipeline!");
+      }
 
-      // Format the retrieved data for response
-      const formattedData = this.formatReportData(reportData, validatedFilters);
+      // 5. Calculate netPurchase and netSales from fixing transactions
+      // Group by underlying MetalTransaction.transactionType to calculate properly
+      console.log("=== NET PURCHASE/SALES CALCULATION DEBUG ===");
+      console.log("Total fixing entries:", reportData.length);
+      
+      // Debug: Log balance in/out for each entry
+      console.log("\n📊 Balance In/Out Details:");
+      reportData.forEach((item, index) => {
+        console.log(`Entry ${index + 1}:`, {
+          voucher: item.voucher,
+          type: item.type,
+          transactionType: item.metalTransactionType,
+          pureWeightIn: item.pureWeightIn,
+          pureWeightOut: item.pureWeightOut,
+          netWeight: (item.pureWeightIn || 0) - (item.pureWeightOut || 0),
+          value: item.value
+        });
+      });
+
+      // Group by transactionType from MetalTransaction
+      // Net Purchase = (purchase + importPurchase) + (purchaseReturn + importPurchaseReturn)
+      // Net Sales = (sale + exportSale) + (saleReturn + exportSaleReturn)
+      // For hedge entries: same logic based on transactionType
+      
+      const purchaseTypes = ["purchase", "importPurchase"];
+      const purchaseReturnTypes = ["purchaseReturn", "importPurchaseReturn"];
+      const saleTypes = ["sale", "exportSale"];
+      const saleReturnTypes = ["saleReturn", "exportSaleReturn"];
+      
+      // For hedge entries, the logic is reversed:
+      // Net Purchase from hedge = (sale + exportSale + hedgeMetalPayment) - (purchaseReturn + importPurchaseReturn)
+      // Net Sales from hedge = (purchase + importPurchase + hedgeMetalReceipt + hedgeMetalReciept) - (saleReturn + exportSaleReturn)
+      const hedgePurchaseTypes = ["sale", "exportSale", "hedgeMetalPayment"];
+      const hedgePurchaseReturnTypes = ["purchaseReturn", "importPurchaseReturn"];
+      const hedgeSaleTypes = ["purchase", "importPurchase", "hedgeMetalReceipt", "hedgeMetalReciept"];
+      const hedgeSaleReturnTypes = ["saleReturn", "exportSaleReturn"];
+
+      // Calculate purchase totals
+      let purchaseGold = 0;
+      let purchaseValue = 0;
+      let purchaseReturnGold = 0;
+      let purchaseReturnValue = 0;
+      
+      // Calculate sale totals
+      let saleGold = 0;
+      let saleValue = 0;
+      let saleReturnGold = 0;
+      let saleReturnValue = 0;
+
+      // Process each fixing entry based on its underlying MetalTransaction.transactionType
+      // If transactionType is not available, use the fixing type (purchase-fixing or sales-fixing) as fallback
+      reportData.forEach((item) => {
+        const transactionType = item.metalTransactionType;
+        const fixingType = item.type; // purchase-fixing or sales-fixing
+        const pureWeightIn = Number(item.pureWeightIn || 0);
+        const pureWeightOut = Number(item.pureWeightOut || 0);
+        const netWeight = pureWeightIn - pureWeightOut;
+        const value = Number(item.value || 0);
+
+        // Check if this is a hedge entry (based on transactionType)
+        const isHedgeType = transactionType && (
+          transactionType === "hedgeMetalPayment" || 
+          transactionType === "hedgeMetalReceipt" || 
+          transactionType === "hedgeMetalReciept"
+        );
+
+        if (transactionType) {
+          // We have transactionType, use it for calculation
+          if (isHedgeType) {
+            // Hedge logic
+            if (hedgePurchaseTypes.includes(transactionType)) {
+              purchaseGold += netWeight;
+              purchaseValue += value;
+            } else if (hedgePurchaseReturnTypes.includes(transactionType)) {
+              purchaseReturnGold += netWeight;
+              purchaseReturnValue += value;
+            } else if (hedgeSaleTypes.includes(transactionType)) {
+              saleGold += Math.abs(netWeight); // Sales are typically negative, take abs
+              saleValue += Math.abs(value);
+            } else if (hedgeSaleReturnTypes.includes(transactionType)) {
+              saleReturnGold += Math.abs(netWeight);
+              saleReturnValue += Math.abs(value);
+            }
+          } else {
+            // Regular logic
+            if (purchaseTypes.includes(transactionType)) {
+              purchaseGold += netWeight;
+              purchaseValue += value;
+            } else if (purchaseReturnTypes.includes(transactionType)) {
+              purchaseReturnGold += netWeight;
+              purchaseReturnValue += value;
+            } else if (saleTypes.includes(transactionType)) {
+              saleGold += Math.abs(netWeight); // Sales are typically negative, take abs
+              saleValue += Math.abs(value);
+            } else if (saleReturnTypes.includes(transactionType)) {
+              saleReturnGold += Math.abs(netWeight);
+              saleReturnValue += Math.abs(value);
+            }
+          }
+        } else {
+          // No transactionType available, use fixing type as fallback
+          // purchase-fixing → goes to purchase
+          // sales-fixing → goes to sale
+          if (fixingType === "purchase-fixing") {
+            purchaseGold += netWeight;
+            purchaseValue += value;
+          } else if (fixingType === "sales-fixing") {
+            saleGold += Math.abs(netWeight);
+            saleValue += Math.abs(value);
+          }
+        }
+      });
+
+      // Net Purchase = purchase + purchaseReturn (sum, not subtract)
+      const netPurchaseGold = purchaseGold + purchaseReturnGold;
+      const netPurchaseValue = purchaseValue + purchaseReturnValue;
+
+      // Net Sales = sale + saleReturn (sum, not subtract)
+      const netSalesGold = saleGold + saleReturnGold;
+      const netSalesValue = saleValue + saleReturnValue;
+
+      // Debug: Log calculation breakdown
+      console.log("\n💰 Calculation Breakdown:");
+      console.log("Purchase Types:", {
+        purchaseGold,
+        purchaseValue,
+        purchaseReturnGold,
+        purchaseReturnValue,
+        netPurchaseGold,
+        netPurchaseValue
+      });
+      console.log("Sale Types:", {
+        saleGold,
+        saleValue,
+        saleReturnGold,
+        saleReturnValue,
+        netSalesGold,
+        netSalesValue
+      });
+      console.log("Final Net Purchase:", { gold: netPurchaseGold, value: netPurchaseValue });
+      console.log("Final Net Sales:", { gold: netSalesGold, value: netSalesValue });
+
+      // 6. Get adjustment data
+      const adjustmentData = await this.getOwnStockAdjustments(validatedFilters);
+      const adjustment = adjustmentData[0] || { totalGold: 0, totalValue: 0 };
+
+      // 7. Get purity gain/loss data
+      const purityData = await this.getOwnStockPurityDifference({
+        ...validatedFilters,
+        excludeHedging: filters.excludeHedging,
+      });
+      const purityDiff = purityData[0] || { totalGold: 0, totalValue: 0 };
+
+      // Separate purity gain and loss
+      const purityGain = purityDiff.totalGold > 0 ? { gold: purityDiff.totalGold, value: purityDiff.totalValue } : { gold: 0, value: 0 };
+      const purityLoss = purityDiff.totalGold < 0 ? { gold: Math.abs(purityDiff.totalGold), value: Math.abs(purityDiff.totalValue) } : { gold: 0, value: 0 };
+
+      // 8. Format the retrieved data for response
+      const formattedData = this.formatFixingReportData(
+        reportData, 
+        openingBalance, 
+        validatedFilters,
+        {
+          netPurchase: { gold: netPurchaseGold, value: netPurchaseValue },
+          netSales: { gold: netSalesGold, value: netSalesValue },
+          adjustmentData: { gold: adjustment.totalGold, value: adjustment.totalValue },
+          purityGain,
+          purityLoss,
+        }
+      );
+      console.log("Formatted Data:", JSON.stringify(formattedData, null, 2));
 
       return {
         success: true,
-        data: reportData,
+        data: formattedData,
         filters: validatedFilters,
         totalRecords: reportData.length,
       };
     } catch (error) {
+      console.error("Error in getMetalFixingReports:", error);
+      console.error("Error stack:", error.stack);
       throw new Error(
-        `Failed to generate metal stock ledger report: ${error.message}`
+        `Failed to generate metal fixing report: ${error.message}`
       );
     }
   }
@@ -3609,7 +3908,7 @@ export class ReportService {
         {
           $project: {
             _id: 0,
-            opening: { $subtract: ["$totalGoldCredit", "$totalGoldDebit"] },
+            opening: { $subtract: ["$totalGoldDebit", "$totalGoldCredit"] },
             openingValue: "$totalValue",
           },
         },
@@ -3641,14 +3940,14 @@ export class ReportService {
           receivables: [
             {
               $match: {
-                "balances.goldBalance.totalGrams": { $lt: 0 }
+                "balances.goldBalance.totalGrams": { $gt: 0 }
               }
             },
             {
               $group: {
                 _id: null,
                 totalReceivableGrams: {
-                  $sum: { $abs: "$balances.goldBalance.totalGrams" }
+                  $sum: { $multiply: ["$balances.goldBalance.totalGrams", -1] }
                 },
                 accountCount: { $sum: 1 } // Count number of accounts
               }
@@ -3657,14 +3956,14 @@ export class ReportService {
           payables: [
             {
               $match: {
-                "balances.goldBalance.totalGrams": { $gt: 0 }
+                "balances.goldBalance.totalGrams": { $lt: 0 }
               }
             },
             {
               $group: {
                 _id: null,
                 totalPayableGrams: {
-                  $sum: "$balances.goldBalance.totalGrams"
+                  $sum: { $abs: "$balances.goldBalance.totalGrams" }
                 },
                 accountCount: { $sum: 1 } // Count number of accounts
               }
@@ -3715,19 +4014,25 @@ export class ReportService {
     return pipeline;
   }
 
-  // Get MetalTransaction data grouped by transactionType (fixed=true only)
+  // Get MetalTransaction data grouped by transactionType
+  // IMPORTANT: This method is Registry-based - only includes MetalTransaction records that have matching Registry entries
+  // Filters Registry by type "purchase-fixing" or "sales-fixing" with valid metalTransactionId
+  // Then matches to MetalTransaction collection to get transaction details
   async getOwnStockMetalTransactions(filters) {
     try {
       const matchConditions = {
         isActive: true,
-        transactionDate: {},
       };
 
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
       }
 
       // Apply voucher filter if provided
@@ -3739,13 +4044,27 @@ export class ReportService {
         voucherMatch = { $or: regexFilters };
       }
 
+      // Determine type filter and fixed filter based on excludeHedging
+      // excludeHedging: true = only show fixed=true transactions (exclude hedging/unfixed)
+      // excludeHedging: false = show all transactions (include hedging/unfixed)
+      // Handle both boolean and string values
+      const excludeHedgingValue = filters.excludeHedging;
+      const shouldFilterByFixed = excludeHedgingValue === true || excludeHedgingValue === "true";
+      const registryTypes = ["purchase-fixing", "sales-fixing"];
+      
+      // Debug logging
+      console.log("=== getOwnStockMetalTransactions DEBUG ===");
+      console.log("excludeHedging raw value:", excludeHedgingValue, "type:", typeof excludeHedgingValue);
+      console.log("shouldFilterByFixed:", shouldFilterByFixed);
+      console.log("===========================================");
+      
       const pipeline = [
-        // Step 1: Match Registry by date, voucher, and type GOLD_STOCK or purchase-fixing/sales-fixing
+        // Step 1: Match Registry by date, voucher, and type
         {
           $match: {
             ...matchConditions,
             ...voucherMatch,
-            type: { $in: ["purchase-fixing", "sales-fixing"] }, // Filter GOLD_STOCK or fixing types
+            type: { $in: registryTypes },
             metalTransactionId: { $exists: true, $ne: null },
           },
         },
@@ -3764,84 +4083,90 @@ export class ReportService {
             preserveNullAndEmptyArrays: false,
           },
         },
-        // Step 3: Filter only fixed=true transactions
-        {
+      ];
+
+      // Step 3: Conditionally filter by fixed=true only when excludeHedging is true
+      // When excludeHedging is true, only show fixed transactions (exclude hedging/unfixed)
+      // When excludeHedging is false, show all transactions (include hedging/unfixed)
+      if (shouldFilterByFixed) {
+        console.log("✓ Adding fixed=true filter to pipeline (excluding hedging/unfixed)");
+        pipeline.push({
           $match: {
             "metalTransaction.fixed": true,
           },
-        },
-        // Step 4: Unwind stockItems
-        {
-          $unwind: {
-            path: "$metalTransaction.stockItems",
-            preserveNullAndEmptyArrays: false,
+        });
+      } else {
+        console.log("✗ NOT adding fixed filter - will show ALL transactions (fixed and unfixed)");
+      }
+
+      // Step 4: Group by transactionType category
+      // Note: No $unwind on stockItems needed since we're using Registry-level fields
+      // (goldCredit, goldDebit, cashCredit, cashDebit) which are transaction-level, not stockItem-level
+      pipeline.push({
+        $group: {
+          _id: {
+            $switch: {
+              branches: [
+                { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: "purchase" },
+                { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: "purchaseReturn" },
+                { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: "sale" },
+                { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: "saleReturn" },
+              ],
+              default: "other",
+            },
           },
-        },
-        // Step 5: Group by transactionType category
-        {
-          $group: {
-            _id: {
+          totalGold: {
+            $sum: {
               $switch: {
                 branches: [
-                  { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: "purchase" },
-                  { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: "purchaseReturn" },
-                  { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: "sale" },
-                  { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: "saleReturn" },
+                  // Purchase: goldCredit increases stock
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$goldCredit", 0] } },
+                  // Purchase Return: goldDebit decreases stock (negative)
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
+                  // Sale: goldDebit decreases stock (negative)
+                  { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
+                  // Sale Return: goldCredit increases stock
+                  { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$goldCredit", 0] } },
                 ],
-                default: "other",
+                default: 0,
               },
             },
-            totalGold: {
-              $sum: {
-                $switch: {
-                  branches: [
-                    // Purchase: goldCredit increases stock
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$goldCredit", 0] } },
-                    // Purchase Return: goldDebit decreases stock (negative)
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
-                    // Sale: goldDebit decreases stock (negative)
-                    { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$goldDebit", 0] }, -1] } },
-                    // Sale Return: goldCredit increases stock
-                    { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$goldCredit", 0] } },
-                  ],
-                  default: 0,
-                },
+          },
+          totalValue: {
+            $sum: {
+              $switch: {
+                branches: [
+                  // Purchase: cashDebit is the cost (positive)
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$cashDebit", 0] } },
+                  // Purchase Return: cashCredit is refund (negative)
+                  { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
+                  // Sale: cashCredit is revenue (negative for net calculation)
+                  { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
+                  // Sale Return: cashDebit is refund (positive)
+                  { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$cashDebit", 0] } },
+                ],
+                default: 0,
               },
             },
-            totalValue: {
-              $sum: {
-                $switch: {
-                  branches: [
-                    // Purchase: cashDebit is the cost (positive)
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchase", "importPurchase"]] }, then: { $ifNull: ["$cashDebit", 0] } },
-                    // Purchase Return: cashCredit is refund (negative)
-                    { case: { $in: ["$metalTransaction.transactionType", ["purchaseReturn", "importPurchaseReturn"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
-                    // Sale: cashCredit is revenue (negative for net calculation)
-                    { case: { $in: ["$metalTransaction.transactionType", ["sale", "exportSale"]] }, then: { $multiply: [{ $ifNull: ["$cashCredit", 0] }, -1] } },
-                    // Sale Return: cashDebit is refund (positive)
-                    { case: { $in: ["$metalTransaction.transactionType", ["saleReturn", "exportSaleReturn"]] }, then: { $ifNull: ["$cashDebit", 0] } },
-                  ],
-                  default: 0,
-                },
-              },  
-            },
           },
         },
-        {
-          $project: {
-            _id: 0,
-            category: "$_id",
-            totalGold: 1,
-            totalValue: 1,
-          },
+      });
+
+      pipeline.push({
+        $project: {
+          _id: 0,
+          category: "$_id",
+          totalGold: 1,
+          totalValue: 1,
         },
-        // Filter out "other" category
-        {
-          $match: {
-            category: { $ne: "other" },
-          },
+      });
+
+      // Filter out "other" category
+      pipeline.push({
+        $match: {
+          category: { $ne: "other" },
         },
-      ];
+      });
 
       const result = await Registry.aggregate(pipeline);
       return result;
@@ -3852,18 +4177,24 @@ export class ReportService {
   }
 
   // Get Purchase Fix / Sale Fix from TransactionFixing
+  // IMPORTANT: This method is Registry-based - only includes TransactionFixing records that have matching Registry entries
+  // Filters Registry by type "purchase-fixing" or "sales-fixing" with valid fixingTransactionId
+  // Then matches to TransactionFixing collection to validate the transaction exists
   async getOwnStockFixingTransactions(filters) {
     try {
       const matchConditions = {
         isActive: true,
-        transactionDate: {},
       };
 
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
       }
 
       // Apply voucher filter if provided
@@ -3881,6 +4212,7 @@ export class ReportService {
             ...matchConditions,
             ...voucherMatch,
             type: { $in: ["purchase-fixing", "sales-fixing"] },
+            fixingTransactionId: { $exists: true, $ne: null }, // Only include Registry entries with valid fixingTransactionId
           },
         },
         {
@@ -3894,7 +4226,7 @@ export class ReportService {
         {
           $unwind: {
             path: "$transactionFixing",
-            preserveNullAndEmptyArrays: true,
+            preserveNullAndEmptyArrays: false, // Only include Registry entries that have matching TransactionFixing
           },
         },
         {
@@ -3944,20 +4276,367 @@ export class ReportService {
     }
   }
 
+
+  // Get Purchase Fix / Sale Fix from TransactionFixing
+  // IMPORTANT: This method is Registry-based - only includes TransactionFixing records that have matching Registry entries
+  // Filters Registry by type "purchase-fixing" or "sales-fixing" with valid fixingTransactionId
+  // Then matches to TransactionFixing collection to validate the transaction exists
+  async getOwnStockFixingTransactions(filters) {
+    try {
+      const matchConditions = {
+        isActive: true,
+      };
+
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
+      }
+
+      // Apply voucher filter if provided
+      let voucherMatch = {};
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        voucherMatch = { $or: regexFilters };
+      }
+
+      const pipeline = [
+        {
+          $match: {
+            ...matchConditions,
+            ...voucherMatch,
+            type: { $in: ["purchase-fixing", "sales-fixing"] },
+            fixingTransactionId: { $exists: true, $ne: null }, // Only include Registry entries with valid fixingTransactionId
+          },
+        },
+        {
+          $lookup: {
+            from: "transactionfixings",
+            localField: "fixingTransactionId",
+            foreignField: "_id",
+            as: "transactionFixing",
+          },
+        },
+        {
+          $unwind: {
+            path: "$transactionFixing",
+            preserveNullAndEmptyArrays: false, // Only include Registry entries that have matching TransactionFixing
+          },
+        },
+        {
+          $group: {
+            _id: "$type",
+            totalGold: {
+              $sum: {
+                // Calculate: goldCredit - goldDebit
+                $subtract: [
+                  { $ifNull: ["$goldCredit", 0] },
+                  { $ifNull: ["$goldDebit", 0] }
+                ]
+              },
+            },
+            totalValue: {
+              $sum: {
+                // Calculate: cashDebit - cashCredit
+                $subtract: [
+                  { $ifNull: ["$cashDebit", 0] },
+                  { $ifNull: ["$cashCredit", 0] }
+                ]
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            category: {
+              $cond: [
+                { $eq: ["$_id", "purchase-fixing"] },
+                "purchaseFix",
+                "saleFix",
+              ],
+            },
+            totalGold: 1,
+            totalValue: 1,
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      return result;
+    } catch (error) {
+      console.error("Error getting fixing transactions:", error);
+      return [];
+    }
+  }
+
+  // Get Hedge Entries as Fixing Transactions
+  // IMPORTANT: This method handles Registry entries with type "HEDGE_ENTRY"
+  // Only processes when excludeHedging === false
+  // Treats hedge entries as fixing entries (purchaseFix or saleFix) based on MetalTransaction.transactionType
+  // Does NOT affect metal transaction totals, inventory, opening balance, purity, or adjustments
+  async getOwnStockHedgeFixingTransactions(filters) {
+    try {
+      // Only process hedge entries when excludeHedging === false
+      const excludeHedging = filters.excludeHedging === true || filters.excludeHedging === "true";
+      if (excludeHedging) {
+        return []; // Completely ignore hedge entries when excludeHedging === true
+      }
+
+      const matchConditions = {
+        isActive: true,
+        type: "HEDGE_ENTRY",
+        metalTransactionId: { $exists: true, $ne: null }, // Must have metalTransactionId
+      };
+
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
+      }
+
+      // Apply voucher filter if provided
+      let voucherMatch = {};
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        voucherMatch = { $or: regexFilters };
+      }
+
+      const pipeline = [
+        {
+          $match: {
+            ...matchConditions,
+            ...voucherMatch,
+          },
+        },
+        {
+          $lookup: {
+            from: "metaltransactions",
+            localField: "metalTransactionId",
+            foreignField: "_id",
+            as: "metalTransaction",
+          },
+        },
+        {
+          $unwind: {
+            path: "$metalTransaction",
+            preserveNullAndEmptyArrays: false, // Only include Registry entries that have matching MetalTransaction
+          },
+        },
+        {
+          $match: {
+            "metalTransaction.hedge": true, // Only include entries where MetalTransaction.hedge === true
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $switch: {
+                branches: [
+                  // PurchaseFix: sale-side transactions
+                  {
+                    case: {
+                      $in: [
+                        "$metalTransaction.transactionType",
+                        ["sale", "exportSale", "purchaseReturn", "importPurchaseReturn", "hedgeMetalPayment"],
+                      ],
+                    },
+                    then: "purchaseFix",
+                  },
+                  // SaleFix: purchase-side transactions
+                  {
+                    case: {
+                      $in: [
+                        "$metalTransaction.transactionType",
+                        [
+                          "purchase",
+                          "importPurchase",
+                          "saleReturn",
+                          "exportSaleReturn",
+                          "hedgeMetalReceipt",
+                          "hedgeMetalReciept", // Note: typo in original requirement
+                        ],
+                      ],
+                    },
+                    then: "saleFix",
+                  },
+                ],
+                default: "other", // Should not happen, but handle gracefully
+              },
+            },
+            totalGold: {
+              $sum: {
+                // Calculate: goldCredit - goldDebit (same as fixing)
+                $subtract: [
+                  { $ifNull: ["$goldCredit", 0] },
+                  { $ifNull: ["$goldDebit", 0] },
+                ],
+              },
+            },
+            totalValue: {
+              $sum: {
+                // Calculate: cashDebit - cashCredit (same as fixing)
+                $subtract: [
+                  { $ifNull: ["$cashDebit", 0] },
+                  { $ifNull: ["$cashCredit", 0] },
+                ],
+              },
+            },
+          },
+        },
+        {
+          $match: {
+            _id: { $ne: "other" }, // Exclude any unclassified entries
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            category: "$_id",
+            totalGold: 1,
+            totalValue: 1,
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      return result;
+    } catch (error) {
+      console.error("Error getting hedge fixing transactions:", error);
+      return [];
+    }
+  }
+
+  // Get Open Account Fixing Transactions
+  // IMPORTANT: This method handles Registry entries with type "OPEN-ACCOUNT-FIXING"
+  // These entries do NOT have metalTransactionId and rely ONLY on Registry fields
+  // Treats OPEN-ACCOUNT-FIXING entries as fixing entries (purchaseFix or saleFix) based on Registry.transactionType
+  // Does NOT affect metal transaction totals, inventory, opening balance, purity, or adjustments
+  async getOwnStockOpenAccountFixingTransactions(filters) {
+    try {
+      const matchConditions = {
+        isActive: true,
+        type: "OPEN-ACCOUNT-FIXING",
+        transactionType: { $in: ["opening-purchaseFix", "opening-saleFix"] },
+        ...(filters.startDate || filters.endDate ? {
+          transactionDate: {
+            ...(filters.startDate ? { $gte: filters.startDate } : {}),
+            ...(filters.endDate ? { $lte: filters.endDate } : {}),
+          }
+        } : {}),
+      };
+
+      // Apply voucher filter if provided
+      let voucherMatch = {};
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        voucherMatch = { $or: regexFilters };
+      }
+
+      const pipeline = [
+        {
+          $match: {
+            ...matchConditions,
+            ...voucherMatch,
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $switch: {
+                branches: [
+                  // PurchaseFix: opening-purchaseFix
+                  {
+                    case: { $eq: ["$transactionType", "opening-purchaseFix"] },
+                    then: "purchaseFix",
+                  },
+                  // SaleFix: opening-saleFix
+                  {
+                    case: { $eq: ["$transactionType", "opening-saleFix"] },
+                    then: "saleFix",
+                  },
+                ],
+                default: "other", // Should not happen, but handle gracefully
+              },
+            },
+            totalGold: {
+              $sum: {
+                // Calculate: goldCredit - goldDebit (same as fixing)
+                $subtract: [
+                  { $ifNull: ["$goldCredit", 0] },
+                  { $ifNull: ["$goldDebit", 0] },
+                ],
+              },
+            },
+            totalValue: {
+              $sum: {
+                // Calculate: cashDebit - cashCredit (same as fixing)
+                $subtract: [
+                  { $ifNull: ["$cashDebit", 0] },
+                  { $ifNull: ["$cashCredit", 0] },
+                ],
+              },
+            },
+          },
+        },
+        {
+          $match: {
+            _id: { $ne: "other" }, // Exclude any unclassified entries
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            category: "$_id",
+            totalGold: 1,
+            totalValue: 1,
+          },
+        },
+      ];
+
+      const result = await Registry.aggregate(pipeline);
+      return result;
+    } catch (error) {
+      console.error("Error getting open account fixing transactions:", error);
+      return [];
+    }
+  }
+
   // Get Adjustments (MSA)
+  // IMPORTANT: This method is Registry-based - only includes adjustments that have matching Registry entries
+  // Filters Registry by type "STOCK_ADJUSTMENT" - all adjustments must be recorded in Registry
   async getOwnStockAdjustments(filters) {
     try {
       const matchConditions = {
         isActive: true,
         type: "STOCK_ADJUSTMENT",
-        transactionDate: {},
       };
 
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = filters.startDate;
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = filters.endDate;
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.transactionDate = {};
+        if (filters.startDate) {
+          matchConditions.transactionDate.$gte = filters.startDate;
+        }
+        if (filters.endDate) {
+          matchConditions.transactionDate.$lte = filters.endDate;
+        }
       }
 
       const pipeline = [
@@ -3999,27 +4678,73 @@ export class ReportService {
   }
 
   // Get Purity Gain/Loss
+  // IMPORTANT: This method first fetches MetalTransaction records, then matches them in Registry
+  // Step 1: Query MetalTransaction with filters (date range only - excludeHedging is NOT applied to purity difference)
+  // Step 2: Get the ObjectIds from MetalTransaction
+  // Step 3: Match those IDs in Registry where type is PURITY_DIFFERENCE
+  // NOTE: Purity difference always shows regardless of excludeHedging filter
   async getOwnStockPurityDifference(filters) {
     try {
-      const matchConditions = {
+      // Step 1: Build MetalTransaction query conditions
+      const metalTransactionQuery = {
         isActive: true,
-        type: "PURITY_DIFFERENCE",
       };
 
       // Only add date filter if dates are provided
+      // NOTE: We do NOT apply excludeHedging filter here - purity difference always shows
       if (filters.startDate || filters.endDate) {
-        matchConditions.transactionDate = {};
+        metalTransactionQuery.voucherDate = {};
         if (filters.startDate) {
-          matchConditions.transactionDate.$gte = filters.startDate;
+          metalTransactionQuery.voucherDate.$gte = new Date(filters.startDate);
         }
         if (filters.endDate) {
-          matchConditions.transactionDate.$lte = filters.endDate;
+          metalTransactionQuery.voucherDate.$lte = new Date(filters.endDate);
         }
+      }
+
+      // Step 2: Get MetalTransaction ObjectIds that match the filters
+      // No excludeHedging filter applied - include all transactions for purity difference
+      const metalTransactions = await MetalTransaction.find(metalTransactionQuery).select("_id").lean();
+      const metalTransactionIds = metalTransactions.map((mt) => mt._id);
+
+      // If no metal transactions found, return default
+      if (metalTransactionIds.length === 0) {
+        return [{ category: "purityDifference", totalGold: 0, totalValue: 0 }];
+      }
+
+      // Step 3: Match those IDs in Registry where type is PURITY_DIFFERENCE
+      const registryMatchConditions = {
+        isActive: true,
+        type: "PURITY_DIFFERENCE",
+        metalTransactionId: { $in: metalTransactionIds },
+      };
+
+      // Apply date filter to Registry if provided (additional validation)
+      if (filters.startDate || filters.endDate) {
+        registryMatchConditions.transactionDate = {};
+        if (filters.startDate) {
+          registryMatchConditions.transactionDate.$gte = new Date(filters.startDate);
+        }
+        if (filters.endDate) {
+          registryMatchConditions.transactionDate.$lte = new Date(filters.endDate);
+        }
+      }
+
+      // Apply voucher filter if provided
+      let voucherMatch = {};
+      if (filters.voucher?.length > 0) {
+        const regexFilters = filters.voucher.map((v) => ({
+          reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
+        }));
+        voucherMatch = { $or: regexFilters };
       }
 
       const pipeline = [
         {
-          $match: matchConditions,
+          $match: {
+            ...registryMatchConditions,
+            ...voucherMatch,
+          },
         },
         {
           $group: {
@@ -4057,13 +4782,10 @@ export class ReportService {
       const result = await Registry.aggregate(pipeline);
       
       // Debug logging
-      console.log("PURITY_DIFFERENCE query result:", JSON.stringify(result, null, 2));
-      console.log("Match conditions:", JSON.stringify(matchConditions, null, 2));
+      console.log("PURITY_DIFFERENCE - MetalTransaction IDs count:", metalTransactionIds.length);
+      console.log("PURITY_DIFFERENCE - Registry query result:", JSON.stringify(result, null, 2));
       
       if (result.length > 0) {
-        // Check if totals are actually 0 or if there's data
-        const data = result[0];
-        console.log("Purity difference data:", data);
         return result;
       } else {
         // Return default structure
@@ -4075,18 +4797,73 @@ export class ReportService {
     }
   }
 
-  // Get Receivables and Payables from Account
+  // Get Receivables, Payables, Balance, and General from Account
   async getOwnStockReceivablesPayables() {
     try {
-      // First, get RECEIVABLE and PAYABLE account mode IDs
-      const receivableMode = await AccountMode.findOne({ name: { $regex: /RECEIVABLE/i } }).select("_id").lean();
-      const payableMode = await AccountMode.findOne({ name: { $regex: /PAYABLE/i } }).select("_id").lean();
+      // DEBUG: List all AccountMode names to help identify the correct names
+      const allAccountModes = await AccountMode.find({}).select("_id name").lean();
+      console.log("\n=== ALL ACCOUNT MODES IN DATABASE ===");
+      allAccountModes.forEach(mode => {
+        console.log(`  - ID: ${mode._id.toString()}, Name: ${mode.name}`);
+      });
+
+      // Get account mode IDs for RECEIVABLE, PAYABLE, and BALANCE & GENERAL (single mode)
+      const receivableMode = await AccountMode.findOne({ name: { $regex: /RECEIVABLE/i } }).select("_id name").lean();
+      const payableMode = await AccountMode.findOne({ name: { $regex: /PAYABLE/i } }).select("_id name").lean();
+      // Look for a single AccountMode that contains both BALANCE and GENERAL
+      const balanceGeneralMode = await AccountMode.findOne({ 
+        name: { $regex: /BALANCE.*GENERAL|GENERAL.*BALANCE/i } 
+      }).select("_id name").lean();
 
       const receivableModeId = receivableMode?._id;
       const payableModeId = payableMode?._id;
+      const balanceGeneralModeId = balanceGeneralMode?._id;
 
+      // DEBUG: Check AccountMode findings
+      console.log("=== ACCOUNT MODE DEBUG ===");
+      console.log("Receivable Mode Found:", receivableMode ? { id: receivableMode._id.toString(), name: receivableMode.name } : "NOT FOUND");
+      console.log("Payable Mode Found:", payableMode ? { id: payableMode._id.toString(), name: payableMode.name } : "NOT FOUND");
+      console.log("Balance General Mode Found:", balanceGeneralMode ? { id: balanceGeneralMode._id.toString(), name: balanceGeneralMode.name } : "NOT FOUND");
+
+      // Build match conditions
       const matchReceivables = receivableModeId ? { accountType: receivableModeId } : {};
       const matchPayables = payableModeId ? { accountType: payableModeId } : {};
+      const matchBalanceGeneral = balanceGeneralModeId ? { accountType: balanceGeneralModeId } : {};
+
+      // DEBUG: Check accounts matching conditions (fetch all, no limit)
+      const allReceivableAccounts = await Account.find({
+        isActive: true,
+        ...matchReceivables,
+      }).select("accountCode customerName accountType balances.goldBalance.totalGrams").lean();
+
+      const allPayableAccounts = await Account.find({
+        isActive: true,
+        ...matchPayables,
+      }).select("accountCode customerName accountType balances.goldBalance.totalGrams").lean();
+
+      const allBankAccounts = await Account.find({
+        isActive: true,
+        accountCode: { $regex: /BANK/i },
+      }).select("accountCode customerName accountType balances.goldBalance.totalGrams").lean();
+
+      console.log("\n=== ACCOUNTS DEBUG ===");
+      console.log(`Total Receivable Accounts (all): ${allReceivableAccounts.length}`);
+      allReceivableAccounts.forEach(acc => {
+        const balance = acc.balances?.goldBalance?.totalGrams || 0;
+        console.log(`  - ${acc.accountCode} | ${acc.customerName}: Balance = ${balance}, AccountType = ${acc.accountType}`);
+      });
+
+      console.log(`\nTotal Payable Accounts (all): ${allPayableAccounts.length}`);
+      allPayableAccounts.forEach(acc => {
+        const balance = acc.balances?.goldBalance?.totalGrams || 0;
+        console.log(`  - ${acc.accountCode} | ${acc.customerName}: Balance = ${balance}, AccountType = ${acc.accountType}`);
+      });
+
+      console.log(`\nTotal Bank Accounts (all): ${allBankAccounts.length}`);
+      allBankAccounts.forEach(acc => {
+        const balance = acc.balances?.goldBalance?.totalGrams || 0;
+        console.log(`  - ${acc.accountCode} | ${acc.customerName}: Balance = ${balance}, AccountType = ${acc.accountType}`);
+      });
 
       const pipeline = [
         {
@@ -4102,7 +4879,7 @@ export class ReportService {
                 $group: {
                   _id: null,
                   totalGold: {
-                    $sum: { $ifNull: ["$balances.goldBalance.totalGrams", 0] },
+                    $sum: { $multiply: ["$balances.goldBalance.totalGrams", -1] },
                   },
                 },
               },
@@ -4112,6 +4889,38 @@ export class ReportService {
                 $match: {
                   isActive: true,
                   ...matchPayables,
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalGold: {
+                    $sum: { $multiply: ["$balances.goldBalance.totalGrams", -1] },
+                  },
+                },
+              },
+            ],
+            balanceGeneral: [
+              {
+                $match: {
+                  isActive: true,
+                  ...matchBalanceGeneral,
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalGold: {
+                    $sum: { $ifNull: ["$balances.goldBalance.totalGrams", 0] },
+                  },
+                },
+              },
+            ],
+            bank: [
+              {
+                $match: {
+                  isActive: true,
+                  accountCode: { $regex: /BANK/i },
                 },
               },
               {
@@ -4133,22 +4942,50 @@ export class ReportService {
             payables: {
               $ifNull: [{ $arrayElemAt: ["$payables.totalGold", 0] }, 0],
             },
+            balanceGeneral: {
+              $ifNull: [{ $arrayElemAt: ["$balanceGeneral.totalGold", 0] }, 0],
+            },
+            bank: {
+              $ifNull: [{ $arrayElemAt: ["$bank.totalGold", 0] }, 0],
+            },
           },
         },
       ];
 
       const result = await Account.aggregate(pipeline);
-      const data = result[0] || { receivables: 0, payables: 0 };
+      const data = result[0] || { receivables: 0, payables: 0, balanceGeneral: 0, bank: 0 };
 
-      // RECEIVABLE: positive stays positive, negative stays negative
-      // PAYABLE: positive becomes negative, negative becomes positive
-      return {
-        receivables: data.receivables || 0,
-        payables: data.payables ? -Math.abs(data.payables) : 0,
+      // RECEIVABLE: Sum all balances (positive and negative), then negate (multiply by -1)
+      // PAYABLE: Sum all balances (positive and negative), then negate (multiply by -1)
+      // BALANCE & GENERAL: single value that can be split or used as is
+      // BANK: accounts with accountCode containing "BANK"
+      const balanceGeneralValue = data.balanceGeneral || 0;
+      const bankValue = data.bank || 0;
+      
+      const returnData = {
+        receivables: data.receivables || 0, // Already negated from aggregation (multiplied by -1)
+        payables: data.payables || 0, // Already negated from aggregation (multiplied by -1)
+        balance: balanceGeneralValue, // Use the same value for balance
+        general: balanceGeneralValue, // Use the same value for general (or split if needed)
+        bank: bankValue,
       };
+
+      // Console logs to check receivables and payables
+      console.log("=== RECEIVABLES & PAYABLES ===");
+      console.log("RECEIVABLES:", returnData.receivables);
+      console.log("PAYABLES:", returnData.payables);
+      console.log("Raw aggregation data:", {
+        receivables: data.receivables,
+        payables: data.payables,
+        balanceGeneral: data.balanceGeneral,
+        bank: data.bank,
+      });
+      console.log("=================================");
+      
+      return returnData;
     } catch (error) {
       console.error("Error getting receivables and payables:", error);
-      return { receivables: 0, payables: 0 };
+      return { receivables: 0, payables: 0, balance: 0, general: 0, bank: 0 };
     }
   }
 
@@ -4208,6 +5045,142 @@ export class ReportService {
     } catch (error) {
       console.error("Error getting inventory logs:", error);
       return { totalGrossWeight: 0, totalPureWeight: 0 };
+    }
+  }
+
+  // Get Pure Weight Gold Jewelry from InventoryLog
+  // Groups by stockCode, calculates pure weight (grossWeight * purity / 100), and sums all
+  async getOwnStockPureWtGoldJew(filters) {
+    try {
+      const matchConditions = {
+        isDraft: false, // Exclude draft entries
+      };
+
+      // Only add date filter if dates are provided
+      if (filters.startDate || filters.endDate) {
+        matchConditions.voucherDate = {};
+        if (filters.startDate) {
+          matchConditions.voucherDate.$gte = new Date(filters.startDate);
+        }
+        if (filters.endDate) {
+          matchConditions.voucherDate.$lte = new Date(filters.endDate);
+        }
+      }
+
+      const pipeline = [
+        {
+          $match: matchConditions,
+        },
+        {
+          $group: {
+            _id: "$stockCode",
+            // Sum gross weight for each stockCode based on action field
+            // action="add" → positive (add to inventory)
+            // action="remove" → negative (remove from inventory)
+            sumGrossWeight: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $ifNull: ["$grossWeight", 0] }, // action="add" → positive
+                  {
+                    $cond: [
+                      { $eq: ["$action", "remove"] },
+                      { $multiply: [{ $ifNull: ["$grossWeight", 0] }, -1] }, // action="remove" → negative
+                      0, // Other actions (update, delete) → 0
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+        // Lookup MetalStock to get purity (standardPurity)
+        {
+          $lookup: {
+            from: "metalstocks",
+            localField: "_id",
+            foreignField: "_id",
+            as: "stockInfo",
+          },
+        },
+        {
+          $unwind: {
+            path: "$stockInfo",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            stockCode: "$_id",
+            sumGrossWeight: 1,
+            // Get purity from MetalStock (standardPurity is stored as decimal 0-1, e.g., 0.999 = 99.9%)
+            purity: {
+              $ifNull: ["$stockInfo.standardPurity", 0],
+            },
+          },
+        },
+        {
+          $project: {
+            stockCode: 1,
+            sumGrossWeight: 1,
+            purity: 1,
+            // Calculate pure weight for each stock: sumGrossWeight * purity (purity is already decimal)
+            pureWeight: {
+              $multiply: [
+                "$sumGrossWeight",
+                { $ifNull: ["$purity", 0] },
+              ],
+            },
+          },
+        },
+        // Sum all pure weights from all stocks
+        {
+          $group: {
+            _id: null,
+            totalPureWeight: {
+              $sum: "$pureWeight",
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            totalPureWeight: 1,
+          },
+        },
+      ];
+
+      // DEBUG: Log pipeline stages
+      console.log("=== INVENTORY PURE WEIGHT DEBUG ===");
+      console.log("Match Conditions:", JSON.stringify(matchConditions, null, 2));
+
+      // Execute pipeline and log intermediate results
+      const result = await InventoryLog.aggregate(pipeline);
+      
+      // Get intermediate results for debugging
+      const debugPipeline = [
+        ...pipeline.slice(0, -2), // Get all stages except the final $group and $project
+      ];
+      
+      const intermediateResults = await InventoryLog.aggregate(debugPipeline);
+      console.log("Intermediate Results (by stockCode):", JSON.stringify(intermediateResults.slice(0, 10), null, 2)); // Show first 10
+      console.log("Total StockCodes:", intermediateResults.length);
+      
+      // Calculate sum manually for verification
+      const manualSum = intermediateResults.reduce((sum, item) => {
+        return sum + (item.pureWeight || 0);
+      }, 0);
+      console.log("Manual Sum of Pure Weights:", manualSum);
+      
+      const finalResult = result[0]?.totalPureWeight || 0;
+      console.log("Final Result (from aggregation):", finalResult);
+      console.log("===================================");
+      
+      return finalResult;
+    } catch (error) {
+      console.error("Error getting pure weight gold jewelry:", error);
+      return 0;
     }
   }
   formatedOwnStock(reportData, receivablesAndPayables, openingBalance) {
@@ -4296,7 +5269,16 @@ export class ReportService {
       purityData,
       receivablesPayables,
       inventoryData,
+      pureWtGoldJew = 0,
+      filters,
     } = data;
+
+    // Handle excludeOpening filter
+    // excludeOpening: true → don't show opening balance (set to 0)
+    // excludeOpening: false → show opening balance
+    const excludeOpening = filters?.excludeOpening === true || filters?.excludeOpening === "true";
+    const openingGold = excludeOpening ? 0 : (openingBalance.opening || 0);
+    const openingValue = excludeOpening ? 0 : (openingBalance.openingValue || 0);
 
     // Helper function to find category data
     const findCategory = (categoryName) => {
@@ -4314,36 +5296,97 @@ export class ReportService {
     const saleReturnData = findCategory("saleReturn");
     const saleFixData = findCategory("saleFix");
 
-    // Calculate net purchase
+    // Calculate net purchase = purchase + purchaseReturn + purchaseFix
     const netPurchaseGold = 
-      purchaseData.totalGold +
-      purchaseReturnData.totalGold +
-      purchaseFixData.totalGold -
-      saleData.totalGold -
-      saleReturnData.totalGold -
-      saleFixData.totalGold;
+      (purchaseData.totalGold || 0) +
+      (purchaseReturnData.totalGold || 0) +
+      (purchaseFixData.totalGold || 0);
 
     const netPurchaseValue = 
-      purchaseData.totalValue +
-      purchaseReturnData.totalValue +
-      purchaseFixData.totalValue -
-      saleData.totalValue -
-      saleReturnData.totalValue -
-      saleFixData.totalValue;
+      (purchaseData.totalValue || 0) +
+      (purchaseReturnData.totalValue || 0) +
+      (purchaseFixData.totalValue || 0);
+
+    // Calculate net sale = sale + saleReturn + saleFix
+    const netSaleGold = 
+      (saleData.totalGold || 0) +
+      (saleReturnData.totalGold || 0) +
+      (saleFixData.totalGold || 0);
+
+    const netSaleValue = 
+      (saleData.totalValue || 0) +
+      (saleReturnData.totalValue || 0) +
+      (saleFixData.totalValue || 0);
 
     // Get adjustments and purity
     const adjustment = adjustmentData[0] || { totalGold: 0, totalValue: 0 };
     const purityDiff = purityData[0] || { totalGold: 0, totalValue: 0 };
 
-    // Calculate long position
-    const longGold = openingBalance.opening + netPurchaseGold + adjustment.totalGold + purityDiff.totalGold;
-    const longValue = openingBalance.openingValue + netPurchaseValue + adjustment.totalValue + purityDiff.totalValue;
+    // DEBUG: Log all input values
+    console.log("=== OWN STOCK CALCULATION DEBUG ===");
+    console.log("excludeOpening:", filters?.excludeOpening);
+    console.log("Opening Balance:", {
+      openingGold,
+      openingValue,
+      rawOpening: openingBalance,
+    });
+    console.log("Purchase Data:", {
+      purchase: purchaseData,
+      purchaseReturn: purchaseReturnData,
+      purchaseFix: purchaseFixData,
+    });
+    console.log("Sale Data:", {
+      sale: saleData,
+      saleReturn: saleReturnData,
+      saleFix: saleFixData,
+    });
+    console.log("Net Purchase:", {
+      gold: netPurchaseGold,
+      value: netPurchaseValue,
+    });
+    console.log("Net Sale:", {
+      gold: netSaleGold,
+      value: netSaleValue,
+    });
+    console.log("Adjustment:", adjustment);
+    console.log("Purity Difference:", purityDiff);
+
+    // Calculate subtotal = opening + netPurchase - netSale
+    // Note: netSale is already negative, so we subtract it (which adds it)
+    // Formula: opening + netPurchase - netSale
+    // Since netSale is negative, this becomes: opening + netPurchase + |netSale|
+    // But we want: opening + netPurchase - |netSale|
+    // So we need to subtract the absolute value of netSale
+    const subtotalGold = openingGold + netPurchaseGold - Math.abs(netSaleGold);
+    const subtotalValue = openingValue + netPurchaseValue - Math.abs(netSaleValue);
+    console.log("Subtotal:", {
+      gold: subtotalGold,
+      value: subtotalValue,
+      calculation: `${openingGold} + ${netPurchaseGold} - ${Math.abs(netSaleGold)} = ${subtotalGold}`,
+      note: "netSale is already negative, so we subtract its absolute value",
+    });
+
+    // Calculate final = subtotal + adjustment + purity gain/loss
+    const finalGold = subtotalGold + (adjustment.totalGold || 0) + (purityDiff.totalGold || 0);
+    const finalValue = subtotalValue ;
+    console.log("Final (Long/Short):", {
+      gold: finalGold,
+      value: finalValue,
+      calculation: `${subtotalGold} + ${adjustment.totalGold || 0} + ${purityDiff.totalGold || 0} = ${finalGold}`,
+    });
+
+    // Calculate long/short: if positive then "long", if negative then "short"
+    const longShortGold = finalGold;
+    const longShortValue = finalValue;
+    const positionType = longShortGold >= 0 ? "long" : "short";
+    console.log("Position Type:", positionType, "(gold:", longShortGold, ")");
+    console.log("===================================");
 
     // Structure response similar to image
     const response = {
       openingBalance: {
-        gold: openingBalance.opening || 0,
-        value: openingBalance.openingValue || 0,
+        gold: openingGold,
+        value: openingValue,
       },
       purchases: {
         Purchases: {
@@ -4409,8 +5452,8 @@ export class ReportService {
           value: 0,
         },
         netSales: {
-          gold: -(saleData.totalGold + saleReturnData.totalGold + saleFixData.totalGold),
-          value: -(saleData.totalValue + saleReturnData.totalValue + saleFixData.totalValue),
+          gold: netSaleGold,
+          value: netSaleValue,
         },
       },
       otherDetails: {
@@ -4419,8 +5462,8 @@ export class ReportService {
           value: 0,
         },
         subTotal: {
-          gold: openingBalance.opening + netPurchaseGold,
-          value: openingBalance.openingValue + netPurchaseValue,
+          gold: subtotalGold,
+          value: subtotalValue,
         },
         adjustments: {
           gold: adjustment.totalGold || 0,
@@ -4447,8 +5490,9 @@ export class ReportService {
           value: 0,
         },
         long: {
-          gold: longGold,
-          value: longValue,
+          gold: longShortGold,
+          value: longShortValue,
+          positionType: positionType, // "long" if positive, "short" if negative
         },
         currentRate: {
           gold: 0,
@@ -4469,15 +5513,15 @@ export class ReportService {
           value: 0, // Would need rate calculation
         },
         general: {
-          gold: 0, // Not specified
-          value: 0,
+          gold: receivablesPayables.general || 0,
+          value: 0, // Would need rate calculation
         },
         bank: {
-          gold: 0,
-          value: 0,
+          gold: receivablesPayables.bank || 0,
+          value: 0, // Would need rate calculation
         },
         subTotal: {
-          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0),
+          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0),
           value: 0,
         },
         pureWtDiaJew: {
@@ -4489,12 +5533,12 @@ export class ReportService {
           value: 0,
         },
         pureWtGoldJew: {
-          gold: inventoryData.totalPureWeight || 0,
+          gold: pureWtGoldJew || 0,
           value: 0, // Would need rate calculation
         },
         netPosition: {
-          gold: longGold + (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (inventoryData.totalPureWeight || 0),
-          value: longValue,
+          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0) + (pureWtGoldJew || 0),
+          value: 0, // Would need rate calculation
         },
       },
     };
@@ -4727,98 +5771,675 @@ export class ReportService {
   }
 
   metalFxingPipeLine(filters) {
-
     const pipeline = [];
-    const matchConditions = {};
+    
+    // Step 1: Start from Registry - match purchase-fixing, sales-fixing, HEDGE_ENTRY, and OPEN-ACCOUNT-FIXING entries
+    // Include HEDGE_ENTRY when excludeHedging is false
+    const excludeHedgingValue = filters.excludeHedging;
+    const shouldExcludeHedge = excludeHedgingValue === true || excludeHedgingValue === "true";
+    
+    const registryTypes = ["purchase-fixing", "sales-fixing", "OPEN-ACCOUNT-FIXING"];
+    if (!shouldExcludeHedge) {
+      registryTypes.push("HEDGE_ENTRY");
+    }
+    
+    const registryMatch = {
+      isActive: true,
+      type: { $in: registryTypes },
+      $or: [
+        { metalTransactionId: { $exists: true, $ne: null } },
+        { fixingTransactionId: { $exists: true, $ne: null } },
+        { type: "OPEN-ACCOUNT-FIXING" } // OPEN-ACCOUNT-FIXING may not have metalTransactionId or fixingTransactionId
+      ],
+    };
 
-    // Step 1: Filter for specific transaction types
-    matchConditions.$or = [
-      { type: { $in: ["purchase-fixing", "sales-fixing"] } },
-      { costCenter: "INVENTORY" }
-    ];
+    // Step 2: Apply date filter on Registry
+    if (filters.startDate || filters.endDate) {
+      registryMatch.transactionDate = {};
+      if (filters.startDate) {
+        registryMatch.transactionDate.$gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        registryMatch.transactionDate.$lte = new Date(filters.endDate);
+      }
+    }
 
-    if (filters.voucher && filters.voucher.length > 0) {
-      const regexFilters = filters.voucher.map((prefix) => ({
-        reference: { $regex: `^${prefix}\\d+$`, $options: "i" }
+    // Step 3: Apply voucher filter if provided
+    if (filters.voucher?.length > 0) {
+      const regexFilters = filters.voucher.map((v) => ({
+        reference: { $regex: `^${v.prefix}\\d+$`, $options: "i" },
       }));
+      registryMatch.$and = [{ $or: regexFilters }];
+    }
 
+    pipeline.push({ $match: registryMatch });
+
+    // Step 4: Lookup MetalTransaction and filter by date
+    pipeline.push({
+      $lookup: {
+        from: "metaltransactions",
+        let: { metalTxnId: "$metalTransactionId" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$_id", "$$metalTxnId"] },
+              isActive: true,
+              // Filter by date in MetalTransaction
+              ...(filters.startDate || filters.endDate ? {
+                voucherDate: {
+                  ...(filters.startDate ? { $gte: new Date(filters.startDate) } : {}),
+                  ...(filters.endDate ? { $lte: new Date(filters.endDate) } : {})
+                }
+              } : {})
+            }
+          }
+        ],
+        as: "metalTransaction",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$metalTransaction",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 5: Lookup TransactionFixing and filter by date
+    pipeline.push({
+      $lookup: {
+        from: "transactionfixings",
+        let: { fixingTxnId: "$fixingTransactionId" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$_id", "$$fixingTxnId"] },
+              isActive: true,
+              status: "active",
+              // Filter by date in TransactionFixing
+              ...(filters.startDate || filters.endDate ? {
+                transactionDate: {
+                  ...(filters.startDate ? { $gte: new Date(filters.startDate) } : {}),
+                  ...(filters.endDate ? { $lte: new Date(filters.endDate) } : {})
+                }
+              } : {})
+            }
+          }
+        ],
+        as: "transactionFixing",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$transactionFixing",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6: Filter out entries where MetalTransaction or TransactionFixing don't match date filter
+    // OPEN-ACCOUNT-FIXING entries don't require MetalTransaction or TransactionFixing
+    pipeline.push({
+      $match: {
+        $and: [
+          // Must have at least one of MetalTransaction, TransactionFixing, or be OPEN-ACCOUNT-FIXING
+          {
+            $or: [
+              { "metalTransaction._id": { $exists: true } },
+              { "transactionFixing._id": { $exists: true } },
+              { type: "OPEN-ACCOUNT-FIXING" }
+            ]
+          }
+        ]
+      }
+    });
+
+    // Step 7: Handle excludeHedging filter and HEDGE_ENTRY type mapping
+    // excludeHedging: false → show hedge entries (hedge=true)
+    // excludeHedging: true → only show purchase-fixing and sales-fixing where MetalTransaction.fixed = true
+    
+    // Debug: Log match conditions
+    console.log("=== METAL FIXING PIPELINE DEBUG ===");
+    console.log("Starting from Registry, filtering by date in MetalTransaction and TransactionFixing");
+    console.log("excludeHedging:", filters.excludeHedging, "shouldExcludeHedge:", shouldExcludeHedge);
+    console.log("Registry types included:", registryTypes);
+
+    // Filter based on excludeHedging
+    if (shouldExcludeHedge) {
+      console.log("✓ Filtering: excludeHedging=true - only showing where MetalTransaction.fixed=true");
+      // When excludeHedging is true, only show entries where MetalTransaction.fixed = true
+      // OPEN-ACCOUNT-FIXING entries are always included (they don't have MetalTransaction)
       pipeline.push({
         $match: {
-          $or: regexFilters
-        }
+          $or: [
+            { type: "OPEN-ACCOUNT-FIXING" }, // OPEN-ACCOUNT-FIXING always included
+            { "metalTransaction._id": { $exists: false } }, // No MetalTransaction
+            { "metalTransaction.fixed": true } // MetalTransaction exists and is fixed
+          ]
+        },
+      });
+    } else {
+      console.log("✓ Filtering: excludeHedging=false - including all entries, HEDGE_ENTRY, and OPEN-ACCOUNT-FIXING");
+      // When excludeHedging is false, show all entries including HEDGE_ENTRY and OPEN-ACCOUNT-FIXING
+      // For HEDGE_ENTRY, filter to only include entries where MetalTransaction.hedge = true
+      // OPEN-ACCOUNT-FIXING entries are always included
+      pipeline.push({
+        $match: {
+          $or: [
+            { type: "OPEN-ACCOUNT-FIXING" }, // OPEN-ACCOUNT-FIXING always included
+            { type: { $nin: ["HEDGE_ENTRY", "OPEN-ACCOUNT-FIXING"] } }, // Not HEDGE_ENTRY or OPEN-ACCOUNT-FIXING, include it
+            { 
+              // Is HEDGE_ENTRY, must have MetalTransaction with hedge = true
+              $and: [
+                { type: "HEDGE_ENTRY" },
+                { "metalTransaction.hedge": true }
+              ]
+            }
+          ]
+        },
       });
     }
 
-    // Step 2: Date filtering (optional, based on filters)
-    if (filters.startDate || filters.endDate) {
-      matchConditions.transactionDate = {};
-      if (filters.startDate) {
-        matchConditions.transactionDate.$gte = new Date(filters.startDate);
-      }
-      if (filters.endDate) {
-        matchConditions.transactionDate.$lte = new Date(filters.endDate);
-      }
-    }
-
-    // Add match stage to pipeline
-    pipeline.push({ $match: matchConditions });
-
-    // Step 3: Lookup parties from accounts collection
+    // Step 8: Lookup FixingPrice matching EITHER fixingTransactionId OR metalTransactionId
+    // Match FixingPrice using ONE of the following:
+    // 1) If fixingTransactionId exists: FixingPrice.transactionFix === Registry.fixingTransactionId
+    // 2) Else if metalTransactionId exists: FixingPrice.transaction === Registry.metalTransactionId
     pipeline.push({
       $lookup: {
-        from: "accounts", // Collection name for parties
-        localField: "party", // Field in the current collection
-        foreignField: "_id", // Field in the accounts collection
-        as: "parties" // Output array field
-      }
+        from: "fixingprices",
+        let: {
+          metalTxnId: "$metalTransactionId",
+          fixingTxnId: "$fixingTransactionId"
+        },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$status", "active"] },
+                  {
+                    $or: [
+                      // Match by TransactionFixing ID if it exists
+                      {
+                        $and: [
+                          { $ne: ["$$fixingTxnId", null] },
+                          { $eq: ["$transactionFix", "$$fixingTxnId"] }
+                        ]
+                      },
+                      // Match by MetalTransaction ID if it exists
+                      {
+                        $and: [
+                          { $ne: ["$$metalTxnId", null] },
+                          { $eq: ["$transaction", "$$metalTxnId"] }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          { $sort: { fixedAt: -1 } }, // Get the most recent fixing price
+          { $limit: 1 }
+        ],
+        as: "fixingPrice",
+      },
     });
 
-    // Step 4: Unwind parties if you expect a single party per document
+    pipeline.push({
+      $unwind: {
+        path: "$fixingPrice",
+        preserveNullAndEmptyArrays: true, // Allow entries without FixingPrice (will use default rate)
+      },
+    });
+
+    // Step 9: Lookup parties from accounts collection
+    pipeline.push({
+      $lookup: {
+        from: "accounts",
+        localField: "party",
+        foreignField: "_id",
+        as: "parties",
+      },
+    });
+
     pipeline.push({
       $unwind: {
         path: "$parties",
-        preserveNullAndEmptyArrays: true // Keep documents even if no party is found
-      }
+        preserveNullAndEmptyArrays: true,
+      },
     });
 
-    // Step 5: Sort by transactionDate in descending order (LIFO)
+    // Step 10: Sort by transactionDate and createdAt for consistent ordering
     pipeline.push({
       $sort: {
-        transactionDate: -1 // -1 for descending order (latest first)
-      }
+        transactionDate: 1,
+        createdAt: 1,
+      },
     });
 
-    // Step 6: Project to match the UI structure
+    // Step 11: Project fields - Use FixingPrice values if matched, otherwise default rate 2500
+    // Each voucher shows rate, bidValue, currentBidValue from FixingPrice (or default 2500)
     pipeline.push({
       $project: {
-        voucher: "$reference", // Maps to the voucher number (e.g., "PUR-2026")
-        date: {
-          $dateToString: {
-            format: "%d/%m/%Y",
-            date: "$transactionDate" // Maps to the transaction date (e.g., "31/07/2025")
+        _id: 1,
+        voucher: "$reference",
+        date: "$transactionDate",
+        narration: "$parties.customerName",
+        // Map HEDGE_ENTRY and OPEN-ACCOUNT-FIXING to purchase-fixing or sales-fixing
+        type: {
+          $cond: {
+            if: { $eq: ["$type", "HEDGE_ENTRY"] },
+            then: {
+              $switch: {
+                branches: [
+                  // PurchaseFix: sale-side transactions
+                  {
+                    case: {
+                      $in: [
+                        "$metalTransaction.transactionType",
+                        ["sale", "exportSale", "purchaseReturn", "importPurchaseReturn", "hedgeMetalPayment"],
+                      ],
+                    },
+                    then: "purchase-fixing",
+                  },
+                  // SaleFix: purchase-side transactions
+                  {
+                    case: {
+                      $in: [
+                        "$metalTransaction.transactionType",
+                        [
+                          "purchase",
+                          "importPurchase",
+                          "saleReturn",
+                          "exportSaleReturn",
+                          "hedgeMetalReceipt",
+                          "hedgeMetalReciept",
+                        ],
+                      ],
+                    },
+                    then: "sales-fixing",
+                  },
+                ],
+                default: "$type", // Fallback to original type if no match
+              },
+            },
+            else: {
+              // Handle OPEN-ACCOUNT-FIXING based on Registry.transactionType
+              $cond: {
+                if: { $eq: ["$type", "OPEN-ACCOUNT-FIXING"] },
+                then: {
+                  $switch: {
+                    branches: [
+                      {
+                        case: { $eq: ["$transactionType", "opening-purchaseFix"] },
+                        then: "purchase-fixing",
+                      },
+                      {
+                        case: { $eq: ["$transactionType", "opening-saleFix"] },
+                        then: "sales-fixing",
+                      },
+                    ],
+                    default: "$type",
+                  },
+                },
+                else: "$type", // Keep original type for purchase-fixing and sales-fixing
+              },
+            },
+          },
+        },
+        pureWeightIn: { $ifNull: ["$goldCredit", 0] },
+        pureWeightOut: { $ifNull: ["$goldDebit", 0] },
+        // Calculate netGold and netCash for fallback calculation
+        netGold: {
+          $abs: {
+            $subtract: [
+              { $ifNull: ["$goldCredit", 0] },
+              { $ifNull: ["$goldDebit", 0] }
+            ]
           }
         },
-        partyName: "$parties.customerName", // Maps to the party name (e.g., "Amal Test New")
-        stockIn: "$goldCredit", // Maps to stock in (e.g., 0)
-        stockOut: "$goldDebit", // Maps to stock out (e.g., 2000)
-        balance: {
-          $subtract: [
-            "$runningBalance", // Adjust based on how balance is calculated
-            { $add: ["$goldDebit", { $ifNull: ["$goldCredit", 0] }] }
+        netCash: {
+          $abs: {
+            $subtract: [
+              { $ifNull: ["$cashDebit", 0] },
+              { $ifNull: ["$cashCredit", 0] }
+            ]
+          }
+        },
+        // Rate resolution: FixingPrice.bidValue → Registry.goldBidValue → calculated from cash/gold
+        // MUST follow same logic as bidValue to ensure consistency
+        // Per-voucher resolution - each voucher resolves independently
+        rate: {
+          $cond: {
+            // 1) If FixingPrice exists and has bidValue > 0: use FixingPrice.bidValue
+            if: {
+              $and: [
+                { $ne: ["$fixingPrice", null] },
+                { $ne: ["$fixingPrice.bidValue", null] },
+                { $gt: ["$fixingPrice.bidValue", 0] }
+              ]
+            },
+            then: "$fixingPrice.bidValue",
+            else: {
+              // 2) Else if Registry.goldBidValue > 0: use goldBidValue
+              $cond: {
+                if: { $gt: [{ $ifNull: ["$goldBidValue", 0] }, 0] },
+                then: "$goldBidValue",
+                else: {
+                  // 3) FINAL FALLBACK: Calculate from cash and gold
+                  // netGold = ABS(goldCredit - goldDebit)
+                  // netCash = ABS(cashDebit - cashCredit)
+                  // gramRate = netCash / netGold
+                  // ozRate = (gramRate / 3.674) * 31.1035
+                  // Requires BOTH netGold > 0 AND netCash > 0
+                  $cond: {
+                    if: {
+                      $and: [
+                        { $gt: ["$netGold", 0] },
+                        { $gt: ["$netCash", 0] }
+                      ]
+                    },
+                    then: {
+                      $multiply: [
+                        { $divide: ["$netCash", "$netGold"] },
+                        { $divide: [31.1035, 3.674] }
+                      ]
+                    },
+                    else: 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        // bidValue: Use FixingPrice.bidValue, fallback to Registry.goldBidValue, then calculate from cash/gold
+        // Per-voucher resolution - each voucher resolves independently
+        bidValue: {
+          $cond: {
+            // 1) If FixingPrice exists and has bidValue > 0: use FixingPrice.bidValue
+            if: {
+              $and: [
+                { $ne: ["$fixingPrice", null] },
+                { $ne: ["$fixingPrice.bidValue", null] },
+                { $gt: ["$fixingPrice.bidValue", 0] }
+              ]
+            },
+            then: "$fixingPrice.bidValue",
+            else: {
+              $cond: {
+                if: { $gt: [{ $ifNull: ["$goldBidValue", 0] }, 0] },
+                then: "$goldBidValue",
+                else: {
+                  // FINAL FALLBACK: Calculate from cash and gold
+                  // gramRate = netCash / netGold, ozRate = (gramRate / 3.674) * 31.1035
+                  // Requires BOTH netGold > 0 AND netCash > 0
+                  $cond: {
+                    if: {
+                      $and: [
+                        { $gt: ["$netGold", 0] },
+                        { $gt: ["$netCash", 0] }
+                      ]
+                    },
+                    then: {
+                      $multiply: [
+                        { $divide: ["$netCash", "$netGold"] },
+                        { $divide: [31.1035, 3.674] }
+                      ]
+                    },
+                    else: 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        // currentBidValue: Use FixingPrice.currentBidValue, fallback to Registry.goldBidValue, then calculate from cash/gold
+        // Per-voucher resolution - each voucher resolves independently
+        currentBidValue: {
+          $cond: {
+            // 1) If FixingPrice exists and has currentBidValue > 0: use FixingPrice.currentBidValue
+            if: {
+              $and: [
+                { $ne: ["$fixingPrice", null] },
+                { $ne: ["$fixingPrice.currentBidValue", null] },
+                { $gt: ["$fixingPrice.currentBidValue", 0] }
+              ]
+            },
+            then: "$fixingPrice.currentBidValue",
+            else: {
+              $cond: {
+                if: { $gt: [{ $ifNull: ["$goldBidValue", 0] }, 0] },
+                then: "$goldBidValue",
+                else: {
+                  // FINAL FALLBACK: Calculate from cash and gold
+                  // gramRate = netCash / netGold, ozRate = (gramRate / 3.674) * 31.1035
+                  // Requires BOTH netGold > 0 AND netCash > 0
+                  $cond: {
+                    if: {
+                      $and: [
+                        { $gt: ["$netGold", 0] },
+                        { $gt: ["$netCash", 0] }
+                      ]
+                    },
+                    then: {
+                      $multiply: [
+                        { $divide: ["$netCash", "$netGold"] },
+                        { $divide: [31.1035, 3.674] }
+                      ]
+                    },
+                    else: 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        rateInGram: { 
+          $ifNull: [
+            "$fixingPrice.rateInGram",      // FixingPrice.rateInGram
+            "$goldBidValue",               // Registry.goldBidValue (if FixingPrice doesn't exist yet)
+            2500                            // Default: 2500 if no FixingPrice and no goldBidValue
           ]
-        }, // Maps to balance (e.g., -1000), adjust logic if needed
-        rate: "$goldBidValue", // Maps to rate (e.g., 377.98538), corrected from goldBidValue
+        },
+        // CRITICAL: Include cashDebit and cashCredit for value calculation in Step 13
+        // These fields are required to calculate value = cashDebit - cashCredit
+        cashDebit: { $ifNull: ["$cashDebit", 0] },
+        cashCredit: { $ifNull: ["$cashCredit", 0] },
+        createdAt: 1,
+        metalTransactionId: 1,
+        fixingTransactionId: 1,
+      },
+    });
+
+    // Step 13: Calculate value using ONLY Registry fields (cashDebit - cashCredit)
+    // NEVER use rate × netGold - value MUST come from Registry fields
+    // Pass through bidValue and currentBidValue (already resolved per voucher in Step 11)
+    pipeline.push({
+      $project: {
+        _id: 1,
+        voucher: 1,
+        date: 1,
+        type: 1, // Include type field
+        narration: { $ifNull: ["$narration", "--"] },
+        pureWeightIn: { $round: ["$pureWeightIn", 2] },
+        pureWeightOut: { $round: ["$pureWeightOut", 2] },
+        rate: { $round: ["$rate", 2] }, // Rate from FixingPrice or TransactionFixing.orders.bidValue (for display only)
+        // VALUE CALCULATION: Use ONLY Registry fields - cashDebit - cashCredit
+        // CRITICAL: Value may be NEGATIVE for sales-fixing (cashDebit < cashCredit)
+        // Do NOT clamp, abs, or zero negative values
+        // This applies to: purchase-fixing, sales-fixing, HEDGE_ENTRY, OPEN-ACCOUNT-FIXING
         value: {
-          $multiply: [
-            "$goldBidValue",
-            { $subtract: ["$goldCredit", "$goldDebit"] }
+          $round: [
+            {
+              $subtract: [
+                { $ifNull: ["$cashDebit", 0] },
+                { $ifNull: ["$cashCredit", 0] }
+              ]
+            },
+            2
           ]
-        }, // Maps to value (e.g., -755970.76), adjust if weight is involved
-        average: 307.12 // Placeholder; calculate based on context (e.g., weighted average of rates)
-      }
+        },
+        // bidValue and currentBidValue already resolved per voucher in Step 11 (from FixingPrice with fallback)
+        bidValue: { $round: ["$bidValue", 2] },
+        currentBidValue: { $round: ["$currentBidValue", 2] },
+        createdAt: 1,
+        metalTransactionType: "$metalTransaction.transactionType", // Include transactionType for calculation
+        metalTransactionId: 1,
+      },
+    });
+
+    // Step 14: Sort by date
+    pipeline.push({
+      $sort: {
+        date: 1,
+        createdAt: 1,
+      },
     });
 
     return pipeline;
+  }
+
+  formatFixingReportData(reportData, openingBalance, filters, additionalData = {}) {
+    const openingGold = openingBalance.opening || 0;
+    const openingValue = openingBalance.openingValue || 0;
+    const openingAverage = openingGold !== 0 ? openingValue / openingGold : 0;
+
+    // Extract additional data with defaults
+    const netPurchase = additionalData.netPurchase || { gold: 0, value: 0 };
+    const netSales = additionalData.netSales || { gold: 0, value: 0 };
+    const adjustmentData = additionalData.adjustmentData || { gold: 0, value: 0 };
+    const purityGain = additionalData.purityGain || { gold: 0, value: 0 };
+    const purityLoss = additionalData.purityLoss || { gold: 0, value: 0 };
+
+    if (!reportData || reportData.length === 0) {
+      return {
+        transactions: [],
+        openingBalance: {
+          gold: openingGold,
+          value: openingValue,
+          average: openingAverage,
+        },
+        summary: {
+          totalPureWeightIn: 0,
+          totalPureWeightOut: 0,
+          totalPureWeightBalance: openingGold,
+          totalValue: openingValue,
+          average: openingAverage,
+        },
+        netPurchase: {
+          gold: Number(netPurchase.gold.toFixed(2)),
+          value: Number(netPurchase.value.toFixed(2)),
+        },
+        netSales: {
+          gold: Number(netSales.gold.toFixed(2)),
+          value: Number(netSales.value.toFixed(2)),
+        },
+        adjustmentData: {
+          gold: Number(adjustmentData.gold.toFixed(2)),
+          value: Number(adjustmentData.value.toFixed(2)),
+        },
+        purityGain: {
+          gold: Number(purityGain.gold.toFixed(2)),
+          value: Number(purityGain.value.toFixed(2)),
+        },
+        purityLoss: {
+          gold: Number(purityLoss.gold.toFixed(2)),
+          value: Number(purityLoss.value.toFixed(2)),
+        },
+      };
+    }
+
+    // Calculate running balances starting from opening balance
+    let runningPureWeightBalance = openingGold;
+    let runningValueBalance = openingValue;
+
+    const transactions = reportData.map((item) => {
+      const pureWeightIn = Number(item.pureWeightIn || 0);
+      const pureWeightOut = Number(item.pureWeightOut || 0);
+      const rate = Number(item.rate || 0);
+      // CRITICAL: Value comes from pipeline (cashDebit - cashCredit)
+      // Value may be NEGATIVE for sales-fixing - do NOT clamp or zero
+      // Use nullish coalescing to preserve 0 but handle null/undefined
+      const value = item.value != null ? Number(item.value) : 0;
+
+      // Update running balances
+      // Gold balance: pureWeightIn - pureWeightOut (may be negative)
+      runningPureWeightBalance += pureWeightIn - pureWeightOut;
+      // Value balance: add value (may be negative for sales-fixing)
+      runningValueBalance += value;
+
+      // Calculate average: runningValueBalance / runningGoldBalance
+      // Only calculate when runningGoldBalance ≠ 0
+      const average = runningPureWeightBalance !== 0 
+        ? runningValueBalance / runningPureWeightBalance 
+        : 0;
+
+      return {
+        voucher: item.voucher || "--",
+        date: typeof item.date === 'string' ? item.date : (item.date ? moment(item.date).format("DD/MM/YYYY") : "--"),
+        narration: item.narration || "--",
+        type: item.type || "--", // Include type: purchase-fixing, sales-fixing, HEDGE_ENTRY, OPEN-ACCOUNT-FIXING
+        pureWeight: {
+          in: Number(pureWeightIn.toFixed(2)),
+          out: Number(pureWeightOut.toFixed(2)),
+          balance: Number(runningPureWeightBalance.toFixed(2)),
+        },
+        amount: {
+          rate: Number(rate.toFixed(2)), // Rate from FixingPrice or TransactionFixing.orders.bidValue
+          value: Number(value.toFixed(2)),
+          balance: Number(runningValueBalance.toFixed(2)),
+        },
+        average: Number(average.toFixed(2)),
+        bidValue: Number((item.bidValue || 0).toFixed(2)),
+        currentBidValue: Number((item.currentBidValue || 0).toFixed(2)),
+      };
+    });
+
+    // Calculate summary
+    const totalPureWeightIn = reportData.reduce((sum, item) => sum + Number(item.pureWeightIn || 0), 0);
+    const totalPureWeightOut = reportData.reduce((sum, item) => sum + Number(item.pureWeightOut || 0), 0);
+    const totalValue = reportData.reduce((sum, item) => sum + Number(item.value || 0), 0);
+
+    const summary = {
+      totalPureWeightIn: Number(totalPureWeightIn.toFixed(2)),
+      totalPureWeightOut: Number(totalPureWeightOut.toFixed(2)),
+      totalPureWeightBalance: Number(runningPureWeightBalance.toFixed(2)),
+      totalValue: Number(runningValueBalance.toFixed(2)),
+      average: runningPureWeightBalance !== 0 
+        ? Number((runningValueBalance / runningPureWeightBalance).toFixed(2))
+        : 0,
+    };
+
+    return {
+      transactions,
+      openingBalance: {
+        gold: Number(openingGold.toFixed(2)),
+        value: Number(openingValue.toFixed(2)),
+        average: Number(openingAverage.toFixed(2)),
+      },
+      summary,
+      netPurchase: {
+        gold: Number(netPurchase.gold.toFixed(2)),
+        value: Number(netPurchase.value.toFixed(2)),
+      },
+      netSales: {
+        gold: Number(netSales.gold.toFixed(2)),
+        value: Number(netSales.value.toFixed(2)),
+      },
+      adjustmentData: {
+        gold: Number(adjustmentData.gold.toFixed(2)),
+        value: Number(adjustmentData.value.toFixed(2)),
+      },
+      purityGain: {
+        gold: Number(purityGain.gold.toFixed(2)),
+        value: Number(purityGain.value.toFixed(2)),
+      },
+      purityLoss: {
+        gold: Number(purityLoss.gold.toFixed(2)),
+        value: Number(purityLoss.value.toFixed(2)),
+      },
+    };
   }
 
   formatReportData(reportData, filters) {

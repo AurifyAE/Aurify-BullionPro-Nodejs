@@ -3,6 +3,8 @@ import OpeningFixingService from "../../services/modules/OpeningFixingService.js
 export const createOpeningFixing = async (req, res, next) => {
     try {
         const adminId = req.admin.id;
+        console.log(req.body)
+        console.log('---------------------------------------')
         const result = await OpeningFixingService.createOpeningFixing(
             req.body,
             adminId
@@ -56,6 +58,8 @@ export const getOpeningFixingById = async (req, res, next) => {
 
 export const updateOpeningFixing = async (req, res, next) => {
     try {
+        console.log(req.body)
+        console.log('---------------------------------------')
         const { id } = req.params;
         const adminId = req.admin.id;
 
