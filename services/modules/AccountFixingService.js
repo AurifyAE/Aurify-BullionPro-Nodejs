@@ -197,8 +197,6 @@ class AccountFixingService {
                 metalRateValue,    // ✅ TRUST FE
                 metalValue,        // ✅ TRUST FE
                 bidvalue,
-                metalValue,
-                metalRateValue
             } = body;
 
             // 1️⃣ Validate metal rate exists (do NOT recalc)

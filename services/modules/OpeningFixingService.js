@@ -219,8 +219,6 @@ class OpeningFixingService {
                 metalValue,
                 bidvalue,
                 metalRateValue,
-                metalValue
-                metalRateValue,
             } = body;
 
             // 1️⃣ Fetch authoritative metal rate
