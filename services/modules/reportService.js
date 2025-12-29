@@ -433,6 +433,7 @@ export class ReportService {
         partyEmail: "$primaryAddress.email",
         partyTelephone: "$primaryAddress.telephone",
         partyWebsite: "$primaryAddress.website",
+        partyVatNumber: "$partyDetails.vatGstDetails.vatNumber",
         // Remove temporary field
         primaryAddress: "$$REMOVE"
       }
@@ -506,7 +507,8 @@ export class ReportService {
             partyPhoneNumber3: "$partyPhoneNumber3",
             partyEmail: "$partyEmail",
             partyTelephone: "$partyTelephone",
-            partyWebsite: "$partyWebsite"
+            partyWebsite: "$partyWebsite",
+            partyVatNumber: "$partyVatNumber"
           }
         },
         transactions: {
@@ -607,6 +609,7 @@ export class ReportService {
         partyEmail: "$partyDetails.partyEmail",
         partyTelephone: "$partyDetails.partyTelephone",
         partyWebsite: "$partyDetails.partyWebsite",
+        partyVatNumber: "$partyDetails.partyVatNumber",
         transactions: {
           $map: {
             input: "$transactions",
