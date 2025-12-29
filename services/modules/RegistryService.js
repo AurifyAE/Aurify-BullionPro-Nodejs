@@ -2099,7 +2099,7 @@ class RegistryService {
   static async generateOpeningAuditTrail(reference) {
     const getLedgerDescription = (r) => {
       // GOLD
-      if (r.type === "GOLD" || r.type === "GOLD_STOCK") {
+      if (r.type === "GOLD" || r.type === "GOLD_STOCK" || r.type === "PARTY_GOLD_BALANCE") {
         return "GOLD";
       }
 
@@ -2130,7 +2130,7 @@ class RegistryService {
     // 2️⃣ Build ledger entries (ACCOUNTING-CORRECT)
     const entries = registries.map((r) => {
       const isGold =
-        r.type === "GOLD" || r.type === "GOLD_STOCK";
+        r.type === "GOLD" || r.type === "GOLD_STOCK" || r.type === "PARTY_GOLD_BALANCE";
 
       const isCash =
         r.type === "PARTY_CASH_BALANCE" ||
@@ -2138,7 +2138,7 @@ class RegistryService {
 
       return {
         description: getLedgerDescription(r),
-        accCode: r.costCenter || "PARTY",
+        accCode: r.costCenter ||  `PARTY 0001 $- ${r.party?.name || "Inventory"}`,
 
         // 💰 CASH
         currencyDebit: isCash ? (r.cashDebit || 0) : 0,
@@ -2154,7 +2154,7 @@ class RegistryService {
     const totals = registries.reduce(
       (acc, r) => {
         const isGold =
-          r.type === "GOLD" || r.type === "GOLD_STOCK";
+          r.type === "GOLD" || r.type === "GOLD_STOCK" || r.type === "PARTY_GOLD_BALANCE";
 
         const isCash =
           r.type === "PARTY_CASH_BALANCE" ||
@@ -2187,7 +2187,7 @@ class RegistryService {
       reference,
 
       party: {
-        name: "PARTY",
+        name: `PARTY 001 - ${registries[0].party?.name || "Inventory"}`,
       },
 
       entries,
