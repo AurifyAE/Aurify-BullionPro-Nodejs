@@ -40,7 +40,7 @@ class AccountFixingService {
             }
 
             // 2️⃣ Calculate value (BACKEND AUTHORITY)
-     
+
             console.log(position)
 
             let accountingImpact;
@@ -190,16 +190,16 @@ class AccountFixingService {
                 voucherDate,
                 divisionId,
                 salesmanId,
-                position,        // PURCHASE | SALE
+                position,          // PURCHASE | SALE
                 pureWeight,
                 weightOz,
                 metalRateId,
+                metalRateValue,    // ✅ TRUST FE
+                metalValue,        // ✅ TRUST FE
                 bidvalue,
-                metalValue,
-                metalRateValue
             } = body;
 
-            // 1️⃣ Fetch authoritative metal rate
+            // 1️⃣ Validate metal rate exists (do NOT recalc)
             const metalRate = await MetalRate.findById(metalRateId).session(session);
             if (!metalRate) {
                 throw createAppError("Invalid metal rate", 400);
@@ -222,13 +222,13 @@ class AccountFixingService {
                 throw createAppError("Invalid position type", 400);
             }
 
-            // 3️⃣ Reverse old registry entries
+            // 3️⃣ Remove old registry
             await Registry.deleteMany(
                 { reference: existing.voucherNumber },
                 { session }
             );
 
-            // 4️⃣ Update fixing
+            // 4️⃣ Update fixing (NO RECALC)
             const updatedFixing = await AccountFixing.findByIdAndUpdate(
                 id,
                 {
@@ -248,7 +248,7 @@ class AccountFixingService {
                 { new: true, session }
             );
 
-            // 5️⃣ Recreate registry entry
+            // 5️⃣ Recreate registry
             const isPurchase = position === "PURCHASE";
 
                // PURCHASE: cashDebit and goldCredit
@@ -308,6 +308,7 @@ class AccountFixingService {
             throw err;
         }
     }
+
 
     static async deleteAccountFixing(id) {
         const session = await mongoose.startSession();

@@ -259,6 +259,7 @@ class OpeningFixingService {
                     weightOz,
                     metalRate: metalRateId,
                     metalRateValue,
+                    metalRateValue,
                     metalValue,
                     bidvalue,
                     accountingImpact,

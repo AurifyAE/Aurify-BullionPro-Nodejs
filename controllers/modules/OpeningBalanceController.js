@@ -3,55 +3,39 @@ import openingBalanceService from "../../services/modules/OpeningBalanceService.
 export const createPartyOpeningBalance = async (req, res, next) => {
     try {
         const {
-            partyId,
-            value,
-            transactionType,
-            assetType,
-            assetCode,
-            voucher,
+            voucherCode,
+            voucherType,
             voucherDate,
             description,
+            entries,
         } = req.body;
 
         const adminId = req.admin.id;
 
-        if (!["credit", "debit"].includes(transactionType)) {
-            return res.status(400).json({ message: "Invalid transaction type" });
-        }
-
-        if (!partyId || value === undefined || !assetType || !assetCode) {
+        if (!voucherCode || !voucherDate || !Array.isArray(entries) || !entries.length) {
             return res.status(400).json({
-                message: "partyId, value, assetType, assetCode are required",
+                message: "voucherCode, voucherDate and entries[] are required",
             });
         }
 
-        await openingBalanceService.createPartyOpeningBalance({
-            partyId,
-            value,
-            transactionType,
-            adminId,
-            assetType,
-            assetCode,
-            voucher,
+        await openingBalanceService.createOpeningBalanceBatch({
+            voucherCode,
+            voucherType,
             voucherDate,
             description,
+            entries,
+            adminId,
         });
 
         res.status(201).json({
             success: true,
-            message: "Party opening balance created successfully",
+            message: "Opening balance batch created successfully",
         });
     } catch (error) {
-        if (error.code === "OPENING_EXISTS") {
-            return res.status(409).json({
-                success: false,
-                message: error.message,
-                alreadyExists: true,
-            });
-        }
         next(error);
     }
 };
+
 
 export const getAllPartyOpeningBalances = async (req, res, next) => {
     try {
@@ -70,14 +54,17 @@ export const getAllPartyOpeningBalances = async (req, res, next) => {
 export const updateOpeningBalance = async (req, res, next) => {
     try {
         const { VoucherID } = req.params;
-        const { voucher, voucherDate, entries } = req.body;
-        console.log(req.body , req.params)
+        const { voucherType, voucherDate, description, entries } = req.body;
+
+        console.log(req.body, req.params);
+
         const adminId = req.admin.id;
 
         const updated = await openingBalanceService.updateOpeningBalanceVoucher({
-            VoucherID,
-            voucher,
+            voucherCode: VoucherID,
+            voucherType,
             voucherDate,
+            description,
             entries,
             adminId,
         });

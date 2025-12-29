@@ -242,6 +242,225 @@ export class StockAdjustmentService {
         }
     }
 
+    static async addStockAdjustmentBatch(payload, adminId) {
+        const session = await mongoose.startSession();
+        session.startTransaction();
+
+        try {
+            const { voucher, adjustments } = payload;
+
+            if (!voucher) {
+                throw createAppError("Voucher data missing", 400);
+            }
+
+            if (!adjustments || !adjustments.length) {
+                throw createAppError("No stock adjustments provided", 400);
+            }
+
+            // 1️⃣ Build items array (LINES)
+            const items = adjustments.map((item, index) => {
+                const { from, to } = item;
+
+                if (!from || !to) {
+                    throw createAppError("From / To stock data missing", 400);
+                }
+
+                if (!from.stockCode || !to.stockCode) {
+                    throw createAppError("Stock code missing in adjustment line", 400);
+                }
+
+                return {
+                    lineNo: index + 1,
+                    from: {
+                        stockId: from.stockId,
+                        stockCode: from.stockCode, // ✅ REQUIRED
+                        grossWeight: from.grossWeight,
+                        purity: from.purity,
+                        pureWeight: from.pureWeight,
+                        avgMakingRate: from.avgMakingRate ?? 0,
+                        avgMakingAmount: from.avgMakingAmount ?? 0,
+                    },
+                    to: {
+                        stockId: to.stockId,
+                        stockCode: to.stockCode, // ✅ REQUIRED
+                        grossWeight: to.grossWeight,
+                        purity: to.purity,
+                        pureWeight: to.pureWeight,
+                        avgMakingRate: to.avgMakingRate ?? 0,
+                        avgMakingAmount: to.avgMakingAmount ?? 0,
+                    },
+                    status: "Completed",
+                };
+            });
+
+            // 2️⃣ Create ONE voucher document
+            const stockAdjustment = await StockAdjustment.create(
+                [{
+                    voucherNumber: voucher.voucherNo,
+                    voucherType: voucher.voucherType,
+                    voucherDate: voucher.voucherDate,
+                    division: voucher.division,
+                    enteredBy: voucher.enteredBy || adminId,
+                    status: "Completed",
+                    items,
+                }],
+                { session }
+            );
+
+            const voucherDate = new Date(voucher.voucherDate);
+
+            // 3️⃣ Inventory + Registry (PER LINE)
+            for (const line of items) {
+                const { from, to } = line;
+                console.log("Processing line:", line);
+                console.log(from, to)
+
+                const stockDifference = to.pureWeight - from.pureWeight;
+                const makingAmountDifference = to.avgMakingAmount - from.avgMakingAmount;
+
+                // Inventory Logs
+                await InventoryLog.insertMany(
+                    [
+                        {
+                            stockCode: from.stockId,
+                            code: from.stockCode, // ✅ NOW PRESENT
+                            voucherCode: voucher.voucherNo,
+                            voucherDate,
+                            voucherType: voucher.voucherType,
+                            grossWeight: from.grossWeight,
+                            purity: from.purity,
+                            action: "remove",
+                            transactionType: "adjustment",
+                            avgMakingAmount: from.avgMakingAmount,
+                            avgMakingRate: from.avgMakingRate,
+                            createdBy: adminId,
+                            note: "Stock reduced due to stock adjustment",
+                        },
+                        {
+                            stockCode: to.stockId,
+                            code: to.stockCode, // ✅ NOW PRESENT
+                            voucherCode: voucher.voucherNo,
+                            voucherDate,
+                            voucherType: voucher.voucherType,
+                            grossWeight: to.grossWeight,
+                            purity: to.purity,
+                            action: "add",
+                            transactionType: "adjustment",
+                            avgMakingAmount: to.avgMakingAmount,
+                            avgMakingRate: to.avgMakingRate,
+                            createdBy: adminId,
+                            note: "Stock increased due to stock adjustment",
+                        },
+                    ],
+                    { session }
+                );
+
+
+                // GOLD Registry
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "XAU",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "GOLD_STOCK",
+                    credit: from.pureWeight,
+                    goldCredit: from.pureWeight,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "XAU",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "GOLD_STOCK",
+                    debit: to.pureWeight,
+                    goldDebit: to.pureWeight,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+
+                // MAKING CHARGES
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "AED",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "MAKING_CHARGES",
+                    credit: from.avgMakingAmount,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "AED",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "MAKING_CHARGES",
+                    debit: to.avgMakingAmount,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+
+                if (stockDifference) {
+                    // STOCK ADJUSTMENT CASH/INVENTORY
+                    await this.createRegistryEntry({
+                        transactionType: "adjustment",
+                        assetType: "AED",
+                        transactionId: stockAdjustment[0]._id,
+                        reference: voucher.voucherNo,
+                        type: "STOCK_ADJUSTMENT",
+                        debit: stockDifference < 0 ? Math.abs(stockDifference) : 0,
+                        credit: stockDifference > 0 ? Math.abs(stockDifference) : 0,
+                        goldDebit: stockDifference < 0 ? Math.abs(stockDifference) : 0,
+                        goldCredit: stockDifference > 0 ? Math.abs(stockDifference) : 0,
+                        costCenter: "INVENTORY",
+                        createdBy: adminId,
+                        description: "Stock Adjustment",
+                    });
+                }
+
+                if (makingAmountDifference) {
+                    // STOCK ADJUSTMENT CASH/INVENTORY
+                    await this.createRegistryEntry({
+                        transactionType: "adjustment",
+                        assetType: "AED",
+                        transactionId: stockAdjustment[0]._id,
+                        reference: voucher.voucherNo,
+                        type: "STOCK_ADJUSTMENT",
+                        debit: makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0,
+                        credit: makingAmountDifference > 0 ? Math.abs(makingAmountDifference) : 0,
+                        costCenter: "INVENTORY",
+                        createdBy: adminId,
+                        description: "Stock Adjustment",
+                    });
+                }
+            }
+
+            await session.commitTransaction();
+            session.endSession();
+
+            return {
+                voucherNumber: voucher.voucherNo,
+                lines: items.length,
+                _id: stockAdjustment[0]._id,
+            };
+
+        } catch (error) {
+            await session.abortTransaction();
+            session.endSession();
+            throw error;
+        }
+    }
+
+
+
     static async getAllStockAdjustments(query) {
         const {
             page = 1,
@@ -259,17 +478,13 @@ export class StockAdjustmentService {
         if (!query.includeCancelled) {
             filter.status = { $ne: "Cancelled" };
         }
-        // Status filter
-        if (status) {
-            filter.status = status;
-        }
 
-        // Division filter
+        if (status) filter.status = status;
+
         if (division && mongoose.Types.ObjectId.isValid(division)) {
             filter.division = division;
         }
 
-        // Date range filter
         if (fromDate || toDate) {
             filter.createdAt = {};
             if (fromDate) filter.createdAt.$gte = new Date(fromDate);
@@ -282,8 +497,8 @@ export class StockAdjustmentService {
             StockAdjustment.find(filter)
                 .populate("division", "code")
                 .populate("enteredBy", "name email")
-                .populate("from.stockId", "code")
-                .populate("to.stockId", "code")
+                .populate("items.from.stockId", "code")
+                .populate("items.to.stockId", "code")
                 .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
                 .skip(skip)
                 .limit(Number(limit))
@@ -303,6 +518,7 @@ export class StockAdjustmentService {
         };
     }
 
+
     static async getStockAdjustmentById(id) {
         if (!mongoose.Types.ObjectId.isValid(id)) {
             throw createAppError("Invalid stock adjustment ID", 400);
@@ -311,8 +527,8 @@ export class StockAdjustmentService {
         const adjustment = await StockAdjustment.findById(id)
             .populate("division", "code")
             .populate("enteredBy", "name email")
-            .populate("from.stockId", "code standardPurity")
-            .populate("to.stockId", "code standardPurity")
+            .populate("items.from.stockId", "code standardPurity")
+            .populate("items.to.stockId", "code standardPurity")
             .lean();
 
         if (!adjustment) {
@@ -322,22 +538,40 @@ export class StockAdjustmentService {
         return adjustment;
     }
 
-    static async updateStockAdjustment(id, data, adminId) {
+    static async getStockAdjustmentByVoucher(voucherNo) {
+        if (!voucherNo) {
+            throw createAppError("Voucher number is required", 400);
+        }
+
+        const adjustment = await StockAdjustment.findOne({
+            voucherNumber: voucherNo,
+        })
+            .populate("division", "code")
+            .populate("enteredBy", "name email")
+            .populate("items.from.stockId", "code")
+            .populate("items.to.stockId", "code")
+            .lean();
+
+        if (!adjustment) {
+            throw createAppError("Stock adjustment not found", 404);
+        }
+
+        return adjustment;
+    }
+
+
+
+    static async updateStockAdjustment(id, payload, adminId) {
         const session = await mongoose.startSession();
         session.startTransaction();
 
         try {
-            // --------------------------------------------------
-            // 1️ Validate ID
-            // --------------------------------------------------
             if (!mongoose.Types.ObjectId.isValid(id)) {
                 throw createAppError("Invalid stock adjustment ID", 400);
             }
 
-            // --------------------------------------------------
-            // 2️ Fetch existing adjustment
-            // --------------------------------------------------
             const existing = await StockAdjustment.findById(id).session(session);
+
             if (!existing) {
                 throw createAppError("Stock adjustment not found", 404);
             }
@@ -346,289 +580,225 @@ export class StockAdjustmentService {
                 throw createAppError("Cancelled adjustment cannot be edited", 400);
             }
 
+            const { voucher, adjustments } = payload;
+
+            if (!adjustments || !adjustments.length) {
+                throw createAppError("No adjustment lines provided", 400);
+            }
+
             const voucherNumber = existing.voucherNumber;
-            const voucherDate = new Date();
+            const voucherDate = new Date(voucher?.voucherDate || existing.voucherDate);
 
-            // --------------------------------------------------
-            // 3️ Fetch OLD stock masters (for reversal)
-            // --------------------------------------------------
-            const existingFromStock = await MetalStock
-                .findById(existing.from.stockId)
-                .lean();
+            /* =====================================================
+               1️⃣ REVERSE OLD INVENTORY (SAFE — FROM MASTER)
+            ===================================================== */
+            for (const line of existing.items) {
+                const { from, to } = line;
 
-            const existingToStock = await MetalStock
-                .findById(existing.to.stockId)
-                .lean();
+                const fromStock = await MetalStock.findById(from.stockId)
+                    .select("code")
+                    .lean();
 
-            if (!existingFromStock || !existingToStock) {
-                throw createAppError("Existing stock reference invalid", 400);
+                const toStock = await MetalStock.findById(to.stockId)
+                    .select("code")
+                    .lean();
+
+                if (!fromStock || !toStock) {
+                    throw createAppError("Stock master missing during reversal", 400);
+                }
+
+                await InventoryLog.insertMany(
+                    [
+                        {
+                            stockCode: from.stockId,
+                            code: fromStock.code,
+                            voucherCode: voucherNumber,
+                            voucherDate,
+                            voucherType: "STOCK-ADJ-REV",
+                            grossWeight: from.grossWeight,
+                            purity: from.purity,
+                            action: "add",
+                            transactionType: "adjustment",
+                            createdBy: adminId,
+                            note: "Reversal before stock adjustment edit",
+                        },
+                        {
+                            stockCode: to.stockId,
+                            code: toStock.code,
+                            voucherCode: voucherNumber,
+                            voucherDate,
+                            voucherType: "STOCK-ADJ-REV",
+                            grossWeight: to.grossWeight,
+                            purity: to.purity,
+                            action: "remove",
+                            transactionType: "adjustment",
+                            createdBy: adminId,
+                            note: "Reversal before stock adjustment edit",
+                        },
+                    ],
+                    { session }
+                );
             }
 
-            // --------------------------------------------------
-            // 4️ REVERSE OLD INVENTORY
-            // --------------------------------------------------
-            await InventoryLog.create(
-                [
-                    {
-                        stockCode: existing.from.stockId,
-                        code: existingFromStock.code,
-                        voucherCode: voucherNumber,
-                        purity: existing.from.purity,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ-REV",
-                        grossWeight: existing.from.grossWeight,
-                        pcs: 0,
-                        action: "add",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Reversal of previous stock adjustment (FROM)",
-                    },
-                    {
-                        stockCode: existing.to.stockId,
-                        code: existingToStock.code,
-                        voucherCode: voucherNumber,
-                        purity: existing.to.purity,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ-REV",
-                        grossWeight: existing.to.grossWeight,
-                        pcs: 0,
-                        action: "remove",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Reversal of previous stock adjustment (TO)",
-                    },
-                ],
-                { session, ordered: true }
-            );
-
-            // --------------------------------------------------
-            // 5️ Fetch NEW stock masters (for apply)
-            // --------------------------------------------------
-            const newFromStock = await MetalStock
-                .findById(data.fromData.stockId)
-                .lean();
-
-            const newToStock = await MetalStock
-                .findById(data.toData.stockId)
-                .lean();
-
-            if (!newFromStock || !newToStock) {
-                throw createAppError("Invalid new stock reference", 400);
-            }
-
-            // --------------------------------------------------
-            // 6️ APPLY NEW INVENTORY
-            // --------------------------------------------------
-            await InventoryLog.create(
-                [
-                    {
-                        stockCode: data.fromData.stockId,
-                        code: newFromStock.code,
-                        voucherCode: voucherNumber,
-                        purity: data.fromData.purity,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ",
-                        grossWeight: data.fromData.grossWeight,
-                        pcs: 0,
-                        action: "remove",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Stock reduced due to updated adjustment",
-                    },
-                    {
-                        stockCode: data.toData.stockId,
-                        code: newToStock.code,
-                        voucherCode: voucherNumber,
-                        purity: data.toData.purity,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ",
-                        grossWeight: data.toData.grossWeight,
-                        pcs: 0,
-                        action: "add",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Stock increased due to updated adjustment",
-                    },
-                ],
-                { session, ordered: true }
-            );
-
-            // --------------------------------------------------
-            // 7️ UPDATE STOCK ADJUSTMENT SNAPSHOT
-            // --------------------------------------------------
-            const updated = await StockAdjustment.findByIdAndUpdate(
-                id,
+            /* =====================================================
+               2️⃣ DELETE OLD REGISTRY ENTRIES
+            ===================================================== */
+            await Registry.deleteMany(
                 {
-                    voucherType: data.voucherType || existing.voucherType,
-                    from: {
-                        stockId: data.fromData.stockId,
-                        grossWeight: data.fromData.grossWeight,
-                        purity: data.fromData.purity,
-                        pureWeight: data.fromData.pureWeight,
-                        avgMakingRate: data.fromData.avgRate ?? 0,
-                        avgMakingAmount: data.fromData.avgAmount ?? 0,
-                    },
-                    to: {
-                        stockId: data.toData.stockId,
-                        grossWeight: data.toData.grossWeight,
-                        purity: data.toData.purity,
-                        pureWeight: data.toData.pureWeight,
-                        avgMakingRate: data.toData.avgRate ?? 0,
-                        avgMakingAmount: data.toData.avgAmount ?? 0,
-                    },
+                    transactionType: "adjustment",
+                    transactionId: existing._id,
                 },
-                { new: true, session }
+                { session }
             );
 
+            /* =====================================================
+               3️⃣ BUILD NEW ITEMS (SNAPSHOT)
+            ===================================================== */
+            const newItems = adjustments.map((item, idx) => ({
+                lineNo: idx + 1,
+                from: {
+                    stockId: item.from.stockId,
+                    stockCode: item.from.stockCode,
+                    grossWeight: item.from.grossWeight,
+                    purity: item.from.purity,
+                    pureWeight: item.from.pureWeight,
+                    avgMakingRate: item.from.avgMakingRate ?? 0,
+                    avgMakingAmount: item.from.avgMakingAmount ?? 0,
+                },
+                to: {
+                    stockId: item.to.stockId,
+                    stockCode: item.to.stockCode,
+                    grossWeight: item.to.grossWeight,
+                    purity: item.to.purity,
+                    pureWeight: item.to.pureWeight,
+                    avgMakingRate: item.to.avgMakingRate ?? 0,
+                    avgMakingAmount: item.to.avgMakingAmount ?? 0,
+                },
+                status: "Completed",
+            }));
 
+            /* =====================================================
+               4️⃣ UPDATE VOUCHER HEADER
+            ===================================================== */
+            existing.items = newItems;
+            existing.voucherType = voucher?.voucherType || existing.voucherType;
+            existing.division = voucher?.division || existing.division;
+            existing.enteredBy = adminId;
 
+            await existing.save({ session });
 
-            // delete old registry entries
-            await Registry.deleteMany({
-                transactionType: "adjustment",
-                transactionId: existing._id,
-            }).session(session);
+            /* =====================================================
+               5️⃣ APPLY NEW INVENTORY + REGISTRY (MASTER SAFE)
+            ===================================================== */
+            for (const line of newItems) {
+                const { from, to } = line;
 
-            console.log("Adjustment updated:", updated);
-            console.log("Hyyyyyyyyyyyyyyyyyy", data)
-            // 5. registry entry - stock adjustment credit gold - means deducting gold from inventory  
-            await this.createRegistryEntry({
-                transactionType: "adjustment",
-                assetType: "XAU",
-                transactionId: updated._id,
-                metalId: data.fromData.stockId,
-                reference: data.voucherCode,
-                type: "GOLD_STOCK",
-                goldBidValue: 0,
-                description: "Stock Adjustment credit",
-                value: data.fromData.pureWeight ?? 0,
-                grossWeight: data.fromData.grossWeight ?? 0,
-                pureWeight: data.fromData.pureWeight ?? 0,
-                purity: data.fromData.purity ?? 0,
-                debit: 0,
-                credit: data.fromData.pureWeight ?? 0,
-                goldDebit: 0,
-                goldCredit: data.fromData.pureWeight ?? 0,
-                costCenter: "INVENTORY",
-                createdBy: adminId,
-            })
+                const fromStock = await MetalStock.findById(from.stockId)
+                    .select("code")
+                    .lean();
 
-            // 5. registry entry - stock adjustment debit gold 
-            await this.createRegistryEntry({
-                transactionType: "adjustment",
-                assetType: "XAU",
-                transactionId: updated._id,
-                metalId: data.toData.stockId,
-                reference: data.voucherCode,
-                type: "GOLD_STOCK",
-                goldBidValue: 0,
-                description: "Stock Adjustment Debit",
-                value: data.toData.pureWeight ?? 0,
-                grossWeight: data.toData.grossWeight ?? 0,
-                pureWeight: data.toData.pureWeight ?? 0,
-                purity: data.toData.purity ?? 0,
-                debit: data.toData.pureWeight ?? 0,
-                credit: 0,
-                goldDebit: data.toData.pureWeight ?? 0,
-                goldCredit: 0,
-                costCenter: "INVENTORY",
-                createdBy: adminId,
-            })
+                const toStock = await MetalStock.findById(to.stockId)
+                    .select("code")
+                    .lean();
 
-            const stockDifference =
-                (data.toData.pureWeight ?? 0) -
-                (data.fromData.pureWeight ?? 0);
+                if (!fromStock || !toStock) {
+                    throw createAppError("Stock master missing during apply", 400);
+                }
 
-            const makingAmountDifference =
-                (data.toData.avgAmount ?? 0) -
-                (data.fromData.avgAmount ?? 0);
+                // Inventory
+                await InventoryLog.insertMany(
+                    [
+                        {
+                            stockCode: from.stockId,
+                            code: fromStock.code,
+                            voucherCode: voucherNumber,
+                            voucherDate,
+                            voucherType: existing.voucherType,
+                            grossWeight: from.grossWeight,
+                            purity: from.purity,
+                            action: "remove",
+                            transactionType: "adjustment",
+                            avgMakingAmount: from.avgMakingAmount,
+                            avgMakingRate: from.avgMakingRate,
+                            createdBy: adminId,
+                            note: "Stock reduced due to stock adjustment edit",
+                        },
+                        {
+                            stockCode: to.stockId,
+                            code: toStock.code,
+                            voucherCode: voucherNumber,
+                            voucherDate,
+                            voucherType: existing.voucherType,
+                            grossWeight: to.grossWeight,
+                            purity: to.purity,
+                            action: "add",
+                            transactionType: "adjustment",
+                            avgMakingAmount: to.avgMakingAmount,
+                            avgMakingRate: to.avgMakingRate,
+                            createdBy: adminId,
+                            note: "Stock increased due to stock adjustment edit",
+                        },
+                    ],
+                    { session }
+                );
 
-            // Normalize values (ABS only)
-            const cashCredit =
-                makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0;
+                // GOLD
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "XAU",
+                    transactionId: existing._id,
+                    reference: voucherNumber,
+                    type: "GOLD_STOCK",
+                    credit: from.pureWeight,
+                    goldCredit: from.pureWeight,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
 
-            const cashDebit =
-                makingAmountDifference > 0 ? makingAmountDifference : 0;
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "XAU",
+                    transactionId: existing._id,
+                    reference: voucherNumber,
+                    type: "GOLD_STOCK",
+                    debit: to.pureWeight,
+                    goldDebit: to.pureWeight,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
 
-            const goldCredit =
-                stockDifference > 0 ? stockDifference : 0;
+                // MAKING
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "AED",
+                    transactionId: existing._id,
+                    reference: voucherNumber,
+                    type: "MAKING_CHARGES",
+                    credit: from.avgMakingAmount,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Making Charges Adjustment",
+                });
 
-            const goldDebit =
-                stockDifference < 0 ? Math.abs(stockDifference) : 0;
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "AED",
+                    transactionId: existing._id,
+                    reference: voucherNumber,
+                    type: "MAKING_CHARGES",
+                    debit: to.avgMakingAmount,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Making Charges Adjustment",
+                });
+            }
 
-            await this.createRegistryEntry({
-                transactionType: "adjustment",
-                assetType: "stock",
-                transactionId: updated._id,
-                metalId: data.fromData.stockId,
-                reference: data.voucherCode,
-                type: "STOCK_ADJUSTMENT",
-                description: "Stock Adjustment Difference",
-                grossWeight: data.fromData.grossWeight ?? 0,
-                pureWeight: data.fromData.pureWeight ?? 0,
-                value: 0,
-                purity: data.fromData.purity ?? 0,
-
-                debit: cashDebit,       // ALWAYS >= 0
-                credit: cashCredit,     // ALWAYS >= 0
-                goldDebit: goldDebit,   // ALWAYS >= 0
-                goldCredit: goldCredit, // ALWAYS >= 0
-
-                costCenter: "INVENTORY",
-                createdBy: adminId,
-            });
-
-
-            // 5. registry entry - stock adjustment making credit -- from the from stock
-            await this.createRegistryEntry({
-                transactionType: "adjustment",
-                assetType: "AED",
-                transactionId: updated._id,
-                metalId: data.fromData.stockId,
-                reference: data.voucherCode,
-                type: "MAKING_CHARGES",
-                goldBidValue: 0,
-                description: "Making Charges Adjustment",
-                grossWeight: data.fromData.grossWeight ?? 0,
-                pureWeight: data.fromData.pureWeight ?? 0,
-                purity: data.fromData.purity ?? 0,
-                value: 0,
-                debit: 0,
-                credit: data.fromData.avgAmount ?? 0,
-                goldDebit: 0,
-                goldCredit: 0,
-                costCenter: "INVENTORY",
-                createdBy: adminId,
-            })
-
-            // 5. registry entry - stock adjustment making debit 
-            await this.createRegistryEntry({
-                transactionType: "adjustment",
-                assetType: "AED",
-                transactionId: updated._id,
-                metalId: data.fromData.stockId,
-                reference: data.voucherCode,
-                type: "MAKING_CHARGES",
-                goldBidValue: 0,
-                description: "Making Charges Adjustment",
-                value: 0,
-                grossWeight: data.toData.grossWeight ?? 0,
-                pureWeight: data.toData.pureWeight ?? 0,
-                purity: data.toData.purity ?? 0,
-                debit: data.toData.avgAmount ?? 0,
-                credit: 0,
-                costCenter: "INVENTORY",
-                createdBy: adminId,
-            })
-
-
-            // --------------------------------------------------
-            // 8️ COMMIT
-            // --------------------------------------------------
             await session.commitTransaction();
             session.endSession();
 
-            return updated;
+            return existing;
 
         } catch (error) {
             await session.abortTransaction();
@@ -636,6 +806,8 @@ export class StockAdjustmentService {
             throw error;
         }
     }
+
+
 
 
 
@@ -648,7 +820,10 @@ export class StockAdjustmentService {
                 throw createAppError("Invalid stock adjustment ID", 400);
             }
 
-            const adjustment = await StockAdjustment.findById(id).session(session);
+            const adjustment = await StockAdjustment
+                .findById(id)
+                .session(session);
+
             if (!adjustment) {
                 throw createAppError("Stock adjustment not found", 404);
             }
@@ -657,55 +832,70 @@ export class StockAdjustmentService {
                 throw createAppError("Already cancelled", 400);
             }
 
+            if (!adjustment.items || !adjustment.items.length) {
+                throw createAppError("No adjustment lines found to cancel", 400);
+            }
+
             const voucherNumber = adjustment.voucherNumber;
             const voucherDate = new Date();
 
-            console.log("adjustment to be cancelled:", adjustment)
-            const stockFrom = await MetalStock.findById(adjustment.from.stockId).lean();
-            const stockTo = await MetalStock.findById(adjustment.to.stockId).lean();
+            // 🔁 Reverse inventory PER LINE
+            for (const line of adjustment.items) {
+                const { from, to } = line;
 
-
-            /* -----------------------------
-               REVERSE INVENTORY
-            ----------------------------- */
-            await InventoryLog.create(
-                [
-                    {
-                        stockCode: adjustment.from.stockId,
-                        voucherCode: voucherNumber,
-                        code: stockFrom.code,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ-CANCEL",
-                        grossWeight: adjustment.from.grossWeight,
-                        purity: adjustment.from.purity,
-                        pcs: 0,
-                        action: "add",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Stock reversal due to adjustment cancellation (FROM)",
-                    },
-                    {
-                        stockCode: adjustment.to.stockId,
-                        voucherCode: voucherNumber,
-                        code: stockTo.code,
-                        voucherDate,
-                        voucherType: "STOCK-ADJ-CANCEL",
-                        grossWeight: adjustment.to.grossWeight,
-                        purity: adjustment.to.purity,
-                        pcs: 0,
-                        action: "remove",
-                        transactionType: "adjustment",
-                        createdBy: adminId,
-                        note: "Stock reversal due to adjustment cancellation (TO)",
-                    },
-                ],
-                {
-                    session,
-                    ordered: true,
+                if (!from?.stockId || !to?.stockId) {
+                    throw createAppError("Invalid stock data in adjustment line", 400);
                 }
-            );
 
+                const fromStock = await MetalStock.findById(from.stockId).lean();
+                const toStock = await MetalStock.findById(to.stockId).lean();
 
+                if (!fromStock || !toStock) {
+                    throw createAppError("Stock master not found during cancellation", 400);
+                }
+
+                await InventoryLog.insertMany(
+                    [
+                        {
+                            stockCode: from.stockId,
+                            code: fromStock.code,
+                            voucherCode: voucherNumber,
+                            voucherDate,
+                            voucherType: "STOCK-ADJ-CANCEL",
+                            grossWeight: from.grossWeight,
+                            purity: from.purity,
+                            pcs: 0,
+                            action: "add", // 🔁 reversal
+                            transactionType: "adjustment",
+                            createdBy: adminId,
+                            note: "Stock reversal (FROM) due to adjustment cancellation",
+                        },
+                        {
+                            stockCode: to.stockId,
+                            code: toStock.code,
+                            voucherCode: voucherNumber,
+                            voucherDate,
+                            voucherType: "STOCK-ADJ-CANCEL",
+                            grossWeight: to.grossWeight,
+                            purity: to.purity,
+                            pcs: 0,
+                            action: "remove", // 🔁 reversal
+                            transactionType: "adjustment",
+                            createdBy: adminId,
+                            note: "Stock reversal (TO) due to adjustment cancellation",
+                        },
+                    ],
+                    { session, ordered: true }
+                );
+            }
+
+            // 🧹 Optional but recommended: mark registries inactive
+            await Registry.deleteMany({
+                transactionType: "adjustment",
+                transactionId: adjustment._id,
+            }).session(session);
+
+            // 🚫 Mark voucher cancelled
             adjustment.status = "Cancelled";
             adjustment.cancelledBy = adminId;
             adjustment.cancelledAt = new Date();
@@ -716,12 +906,14 @@ export class StockAdjustmentService {
             session.endSession();
 
             return adjustment;
+
         } catch (error) {
             await session.abortTransaction();
             session.endSession();
             throw error;
         }
     }
+
     static async createRegistryEntry({
         transactionType,
         assetType,

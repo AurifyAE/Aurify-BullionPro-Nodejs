@@ -21,6 +21,26 @@ export const createStockAdjustment = async (req, res, next) => {
     }
 };
 
+export const createStockAdjustmentBatch = async (req, res, next) => {
+    try {
+        const adminId = req.admin?.id;
+        if (!adminId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const result =
+            await StockAdjustmentService.addStockAdjustmentBatch(req.body, adminId);
+
+        res.status(201).json({
+            success: true,
+            data: result,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+
 
 export const getAllStockAdjustments = async (req, res, next) => {
     try {
@@ -54,6 +74,23 @@ export const getStockAdjustmentById = async (req, res, next) => {
         next(error);
     }
 };
+
+export const getStockAdjustmentByVoucher = async (req, res, next) => {
+  try {
+    const { voucherNo } = req.params;
+
+    const data =
+      await StockAdjustmentService.getStockAdjustmentByVoucher(voucherNo);
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
 
 export const updateStockAdjustment = async (req, res, next) => {
