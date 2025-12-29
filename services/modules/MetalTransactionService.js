@@ -238,18 +238,26 @@ class MetalTransactionService {
         await inventory.save();
         updated.push(inventory);
 
+        // Extract party - try party object first, then partyCode
+        const partyId = transaction.party?._id || transaction.party || transaction.partyCode || item.party?._id || item.party || item.partyCode || null;
+        
+        // Extract voucherType
+        const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
+
         // Inventory Log
         await InventoryLog.create({
           code: metal.code,
           stockCode: metal._id,
           voucherCode: transaction.voucherNumber || item.voucherNumber || "",
           voucherDate: transaction.voucherDate || new Date(),
+          voucherType: voucherType,
           grossWeight: item.grossWeight || 0,
+          party: partyId,
           action: isSale ? "remove" : "add",
           transactionType:
             transaction.transactionType || (isSale ? "sale" : "purchase"),
           createdBy: transaction.createdBy || admin || null,
-          pcs: !!item.pieces, // whether it's piece-based
+          pcs: item.pieces || 0,
           note: isSale
             ? "Inventory reduced due to sale transaction"
             : "Inventory increased due to purchase transaction",

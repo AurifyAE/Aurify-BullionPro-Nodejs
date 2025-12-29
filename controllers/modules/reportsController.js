@@ -7,9 +7,10 @@ const dashboardService = new DashboardService();
 const dashboardReportService = new DashboardReportService();
 
 
-export const getReports = async (req, res) => {
+export const getStockLedgerReports = async (req, res) => {
   try {
     const filters = req.body;
+    console.log(req.body,'req.body')
     // Call service to get report data
     const reportData = await reportService.getReportsData(filters);
     // Return success response (even if no data found)
@@ -19,6 +20,7 @@ export const getReports = async (req, res) => {
         ? `Metal stock ledger report generated successfully with ${reportData.totalRecords} records`
         : "No transactions found for the specified criteria",
       data: reportData.data,
+      summary: reportData.summary || null,
       totalRecords: reportData.totalRecords,
       filters: reportData.filters
     });
