@@ -158,3 +158,15 @@ export const createAdmin = async (req, res, next) => {
     next(err);
   }
 };
+
+export const getAdmins = async (req, res, next) => {
+  try {
+    const admins = await Admin.find().select('-passwordHash');
+    res.status(200).json({
+      success: true,
+      data: admins,
+    });
+  } catch (err) {
+    next(err);
+  }
+};

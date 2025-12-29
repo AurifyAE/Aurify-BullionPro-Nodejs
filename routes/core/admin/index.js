@@ -6,6 +6,7 @@ import {
   viewPassword,
   verifyToken,
   createAdmin,
+  getAdmins,
 } from "../../../controllers/core/authController.js";
 
 import { authenticateToken } from "../../../middleware/authMiddleware.js";
@@ -20,6 +21,7 @@ router.get("/view-password", authenticateToken, viewPassword);
 router.post("/verify-token", authenticateToken, verifyToken);
 
 router.post("/", createAdmin);
+router.get("/admins", getAdmins)
 
 
 
