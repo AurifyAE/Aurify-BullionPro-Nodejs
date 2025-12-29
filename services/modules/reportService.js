@@ -122,7 +122,19 @@ export class ReportService {
       pipeline.push({
         $addFields: {
           partyId: "$partyId",
-          partyName: "$partyDetails.customerName"
+          partyName: "$partyDetails.customerName",
+          partyType: "$partyDetails.type",
+          partyCode: "$partyDetails.code",
+          partyAddress: "$partyDetails.address",
+          partyPhone: "$partyDetails.phone",
+          partyEmail: "$partyDetails.email",
+          partyWebsite: "$partyDetails.website",
+          partyCity: "$partyDetails.city",
+          partyState: "$partyDetails.state",
+          partyCountry: "$partyDetails.country",
+          partyZipCode: "$partyDetails.zipCode",
+          partyCountryCode: "$partyDetails.countryCode",
+          partyCountryCode: "$partyDetails.countryCode",
         }
       });
       
@@ -308,7 +320,17 @@ export class ReportService {
         partyId: "$party",
         docDate: { $dateToString: { format: "%d/%m/%Y", date: "$transactionDate" } },
         docRef: "$reference",
-        branch: "HO"
+        branch: "HO",
+        partyType: "$partyDetails.type",
+        partyCode: "$partyDetails.code",
+        partyAddress: "$partyDetails.address",
+        partyCity: "$partyDetails.city",
+        partyState: "$partyDetails.state",
+        partyCountry: "$partyDetails.country",
+        partyZipCode: "$partyDetails.zipCode",
+        partyCountryCode: "$partyDetails.countryCode",
+        partyCountryCode: "$partyDetails.countryCode",
+
       }
     });
 
