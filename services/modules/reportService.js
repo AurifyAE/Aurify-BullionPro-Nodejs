@@ -314,6 +314,7 @@ export class ReportService {
       });
     }
     // Add party name and ID to the document
+    // Extract primary address or first address from addresses array
     pipeline.push({
       $addFields: {
         partyName: "$partyDetails.customerName",
@@ -322,15 +323,50 @@ export class ReportService {
         docRef: "$reference",
         branch: "HO",
         partyType: "$partyDetails.type",
-        partyCode: "$partyDetails.code",
-        partyAddress: "$partyDetails.address",
-        partyCity: "$partyDetails.city",
-        partyState: "$partyDetails.state",
-        partyCountry: "$partyDetails.country",
-        partyZipCode: "$partyDetails.zipCode",
-        partyCountryCode: "$partyDetails.countryCode",
-        partyCountryCode: "$partyDetails.countryCode",
+        partyCode: "$partyDetails.accountCode",
+        // Extract primary address (isPrimary: true) or first address from addresses array
+        primaryAddress: {
+          $let: {
+            vars: {
+              primaryAddr: {
+                $arrayElemAt: [
+                  {
+                    $filter: {
+                      input: { $ifNull: ["$partyDetails.addresses", []] },
+                      as: "addr",
+                      cond: { $eq: ["$$addr.isPrimary", true] }
+                    }
+                  },
+                  0
+                ]
+              }
+            },
+            in: {
+              $ifNull: [
+                "$$primaryAddr",
+                { $arrayElemAt: [{ $ifNull: ["$partyDetails.addresses", []] }, 0] }
+              ]
+            }
+          }
+        }
+      }
+    });
 
+    // Add extracted address fields and contact details
+    pipeline.push({
+      $addFields: {
+        partyAddress: "$primaryAddress.streetAddress",
+        partyCity: "$primaryAddress.city",
+        partyCountry: "$primaryAddress.country",
+        partyZipCode: "$primaryAddress.zipCode",
+        partyPhoneNumber1: "$primaryAddress.phoneNumber1",
+        partyPhoneNumber2: "$primaryAddress.phoneNumber2",
+        partyPhoneNumber3: "$primaryAddress.phoneNumber3",
+        partyEmail: "$primaryAddress.email",
+        partyTelephone: "$primaryAddress.telephone",
+        partyWebsite: "$primaryAddress.website",
+        // Remove temporary field
+        primaryAddress: "$$REMOVE"
       }
     });
 
@@ -387,6 +423,23 @@ export class ReportService {
         _id: {
           partyId: "$partyId",
           partyName: "$partyName"
+        },
+        // Capture party details (same for all transactions of a party, so use $first)
+        partyDetails: {
+          $first: {
+            partyType: "$partyType",
+            partyCode: "$partyCode",
+            partyAddress: "$partyAddress",
+            partyCity: "$partyCity",
+            partyCountry: "$partyCountry",
+            partyZipCode: "$partyZipCode",
+            partyPhoneNumber1: "$partyPhoneNumber1",
+            partyPhoneNumber2: "$partyPhoneNumber2",
+            partyPhoneNumber3: "$partyPhoneNumber3",
+            partyEmail: "$partyEmail",
+            partyTelephone: "$partyTelephone",
+            partyWebsite: "$partyWebsite"
+          }
         },
         transactions: {
           $push: {
@@ -473,6 +526,19 @@ export class ReportService {
         _id: 0,
         partyId: "$_id.partyId",
         partyName: "$_id.partyName",
+        // Include party details
+        partyType: "$partyDetails.partyType",
+        partyCode: "$partyDetails.partyCode",
+        partyAddress: "$partyDetails.partyAddress",
+        partyCity: "$partyDetails.partyCity",
+        partyCountry: "$partyDetails.partyCountry",
+        partyZipCode: "$partyDetails.partyZipCode",
+        partyPhoneNumber1: "$partyDetails.partyPhoneNumber1",
+        partyPhoneNumber2: "$partyDetails.partyPhoneNumber2",
+        partyPhoneNumber3: "$partyDetails.partyPhoneNumber3",
+        partyEmail: "$partyDetails.partyEmail",
+        partyTelephone: "$partyDetails.partyTelephone",
+        partyWebsite: "$partyDetails.partyWebsite",
         transactions: {
           $map: {
             input: "$transactions",
