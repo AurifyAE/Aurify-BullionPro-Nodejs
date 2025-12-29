@@ -242,6 +242,188 @@ export class StockAdjustmentService {
         }
     }
 
+    static async addStockAdjustmentBatch(payload, adminId) {
+        const session = await mongoose.startSession();
+        session.startTransaction();
+
+        try {
+            const { voucher, adjustments } = payload;
+
+            if (!voucher) {
+                throw createAppError("Voucher data missing", 400);
+            }
+
+            if (!adjustments || !adjustments.length) {
+                throw createAppError("No stock adjustments provided", 400);
+            }
+
+            // 1️⃣ Build items array (LINES)
+            const items = adjustments.map((item, index) => {
+                const { from, to } = item;
+
+                if (!from || !to) {
+                    throw createAppError("From / To stock data missing", 400);
+                }
+
+                if (!from.stockCode || !to.stockCode) {
+                    throw createAppError("Stock code missing in adjustment line", 400);
+                }
+
+                return {
+                    lineNo: index + 1,
+                    from: {
+                        stockId: from.stockId,
+                        stockCode: from.stockCode, // ✅ REQUIRED
+                        grossWeight: from.grossWeight,
+                        purity: from.purity,
+                        pureWeight: from.pureWeight,
+                        avgMakingRate: from.avgMakingRate ?? 0,
+                        avgMakingAmount: from.avgMakingAmount ?? 0,
+                    },
+                    to: {
+                        stockId: to.stockId,
+                        stockCode: to.stockCode, // ✅ REQUIRED
+                        grossWeight: to.grossWeight,
+                        purity: to.purity,
+                        pureWeight: to.pureWeight,
+                        avgMakingRate: to.avgMakingRate ?? 0,
+                        avgMakingAmount: to.avgMakingAmount ?? 0,
+                    },
+                    status: "Completed",
+                };
+            });
+
+            // 2️⃣ Create ONE voucher document
+            const stockAdjustment = await StockAdjustment.create(
+                [{
+                    voucherNumber: voucher.voucherNo,
+                    voucherType: voucher.voucherType,
+                    voucherDate: voucher.voucherDate,
+                    division: voucher.division,
+                    enteredBy: voucher.enteredBy || adminId,
+                    status: "Completed",
+                    items,
+                }],
+                { session }
+            );
+
+            const voucherDate = new Date(voucher.voucherDate);
+
+            // 3️⃣ Inventory + Registry (PER LINE)
+            for (const line of items) {
+                const { from, to } = line;
+                console.log("Processing line:", line);
+                console.log(from, to)
+
+                // Inventory Logs
+                await InventoryLog.insertMany(
+                    [
+                        {
+                            stockCode: from.stockId,
+                            code: from.stockCode, // ✅ NOW PRESENT
+                            voucherCode: voucher.voucherNo,
+                            voucherDate,
+                            voucherType: voucher.voucherType,
+                            grossWeight: from.grossWeight,
+                            purity: from.purity,
+                            action: "remove",
+                            transactionType: "adjustment",
+                            avgMakingAmount: from.avgMakingAmount,
+                            avgMakingRate: from.avgMakingRate,
+                            createdBy: adminId,
+                            note: "Stock reduced due to stock adjustment",
+                        },
+                        {
+                            stockCode: to.stockId,
+                            code: to.stockCode, // ✅ NOW PRESENT
+                            voucherCode: voucher.voucherNo,
+                            voucherDate,
+                            voucherType: voucher.voucherType,
+                            grossWeight: to.grossWeight,
+                            purity: to.purity,
+                            action: "add",
+                            transactionType: "adjustment",
+                            avgMakingAmount: to.avgMakingAmount,
+                            avgMakingRate: to.avgMakingRate,
+                            createdBy: adminId,
+                            note: "Stock increased due to stock adjustment",
+                        },
+                    ],
+                    { session }
+                );
+
+
+                // GOLD Registry
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "XAU",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "GOLD_STOCK",
+                    credit: from.pureWeight,
+                    goldCredit: from.pureWeight,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "XAU",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "GOLD_STOCK",
+                    debit: to.pureWeight,
+                    goldDebit: to.pureWeight,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+
+                // MAKING CHARGES
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "AED",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "MAKING_CHARGES",
+                    credit: from.avgMakingAmount,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+
+                await this.createRegistryEntry({
+                    transactionType: "adjustment",
+                    assetType: "AED",
+                    transactionId: stockAdjustment[0]._id,
+                    reference: voucher.voucherNo,
+                    type: "MAKING_CHARGES",
+                    debit: to.avgMakingAmount,
+                    costCenter: "INVENTORY",
+                    createdBy: adminId,
+                    description: "Stock Adjustment",
+                });
+            }
+
+            await session.commitTransaction();
+            session.endSession();
+
+            return {
+                voucherNumber: voucher.voucherNo,
+                lines: items.length,
+                _id: stockAdjustment[0]._id,
+            };
+
+        } catch (error) {
+            await session.abortTransaction();
+            session.endSession();
+            throw error;
+        }
+    }
+
+
+
     static async getAllStockAdjustments(query) {
         const {
             page = 1,
@@ -259,17 +441,13 @@ export class StockAdjustmentService {
         if (!query.includeCancelled) {
             filter.status = { $ne: "Cancelled" };
         }
-        // Status filter
-        if (status) {
-            filter.status = status;
-        }
 
-        // Division filter
+        if (status) filter.status = status;
+
         if (division && mongoose.Types.ObjectId.isValid(division)) {
             filter.division = division;
         }
 
-        // Date range filter
         if (fromDate || toDate) {
             filter.createdAt = {};
             if (fromDate) filter.createdAt.$gte = new Date(fromDate);
@@ -282,8 +460,8 @@ export class StockAdjustmentService {
             StockAdjustment.find(filter)
                 .populate("division", "code")
                 .populate("enteredBy", "name email")
-                .populate("from.stockId", "code")
-                .populate("to.stockId", "code")
+                .populate("items.from.stockId", "code")
+                .populate("items.to.stockId", "code")
                 .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
                 .skip(skip)
                 .limit(Number(limit))
@@ -303,6 +481,7 @@ export class StockAdjustmentService {
         };
     }
 
+
     static async getStockAdjustmentById(id) {
         if (!mongoose.Types.ObjectId.isValid(id)) {
             throw createAppError("Invalid stock adjustment ID", 400);
@@ -311,8 +490,8 @@ export class StockAdjustmentService {
         const adjustment = await StockAdjustment.findById(id)
             .populate("division", "code")
             .populate("enteredBy", "name email")
-            .populate("from.stockId", "code standardPurity")
-            .populate("to.stockId", "code standardPurity")
+            .populate("items.from.stockId", "code standardPurity")
+            .populate("items.to.stockId", "code standardPurity")
             .lean();
 
         if (!adjustment) {
@@ -321,6 +500,29 @@ export class StockAdjustmentService {
 
         return adjustment;
     }
+
+    static async getStockAdjustmentByVoucher(voucherNo) {
+        if (!voucherNo) {
+            throw createAppError("Voucher number is required", 400);
+        }
+
+        const adjustment = await StockAdjustment.findOne({
+            voucherNumber: voucherNo,
+        })
+            .populate("division", "code")
+            .populate("enteredBy", "name email")
+            .populate("items.from.stockId", "code")
+            .populate("items.to.stockId", "code")
+            .lean();
+
+        if (!adjustment) {
+            throw createAppError("Stock adjustment not found", 404);
+        }
+
+        return adjustment;
+    }
+
+
 
     static async updateStockAdjustment(id, data, adminId) {
         const session = await mongoose.startSession();
