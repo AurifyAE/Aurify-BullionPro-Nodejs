@@ -84,11 +84,13 @@ class AccountFixingService {
             // 4️⃣ Ledger logic
             const isPurchase = position === "PURCHASE";
 
-            const goldDebit = isPurchase ? pureWeight : 0;
-            const goldCredit = isPurchase ? 0 : pureWeight;
+            // PURCHASE: cashDebit and goldCredit
+            // SALE: cashCredit and goldDebit
+            const goldDebit = isPurchase ? 0 : pureWeight; // SALE: goldDebit
+            const goldCredit = isPurchase ? pureWeight : 0; // PURCHASE: goldCredit
 
-            const cashDebit = isPurchase ? 0 : metalValue;
-            const cashCredit = isPurchase ? metalValue : 0;
+            const cashDebit = isPurchase ? metalValue : 0; // PURCHASE: cashDebit
+            const cashCredit = isPurchase ? 0 : metalValue; // SALE: cashCredit
 
             // 5️⃣ Registry entry
             await Registry.create(
@@ -251,11 +253,13 @@ class AccountFixingService {
             // 5️⃣ Recreate registry
             const isPurchase = position === "PURCHASE";
 
-            const goldDebit = isPurchase ? pureWeight : 0;
-            const goldCredit = isPurchase ? 0 : pureWeight;
+               // PURCHASE: cashDebit and goldCredit
+            // SALE: cashCredit and goldDebit
+            const goldDebit = isPurchase ? 0 : pureWeight; // SALE: goldDebit
+            const goldCredit = isPurchase ? pureWeight : 0; // PURCHASE: goldCredit
 
-            const cashDebit = isPurchase ? 0 : metalValue;
-            const cashCredit = isPurchase ? metalValue : 0;
+            const cashDebit = isPurchase ? metalValue : 0; // PURCHASE: cashDebit
+            const cashCredit = isPurchase ? 0 : metalValue; // SALE: cashCredit
 
             await Registry.create(
                 [
