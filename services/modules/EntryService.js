@@ -182,6 +182,12 @@ class EntryService {
 
       await InventoryService.updateInventory(
         {
+          partyCode: entry.party,
+          voucherType: entry.type,
+          voucherNumber: entry.voucherCode,
+          voucherDate: entry.voucherDate || new Date(),
+          transactionType: "metalReceipt",
+          createdBy: entry.enteredBy,
           stockItems: [
             {
               stockCode: { _id: item.stock },
@@ -189,6 +195,7 @@ class EntryService {
               purity: item.purity,
               pieces: item.pieces || 0,
               voucherNumber: entry.voucherCode,
+              voucherType: entry.type,
               transactionType: "metalReceipt",
             },
           ],
@@ -284,6 +291,12 @@ class EntryService {
 
       await InventoryService.updateInventory(
         {
+          partyCode: entry.party,
+          voucherType: entry.type,
+          voucherNumber: entry.voucherCode,
+          voucherDate: entry.voucherDate || new Date(),
+          transactionType: "metalPayment",
+          createdBy: entry.enteredBy,
           stockItems: [
             {
               stockCode: { _id: item.stock },
@@ -291,6 +304,7 @@ class EntryService {
               purity: item.purity,
               pieces: item.pieces || 0,
               voucherNumber: entry.voucherCode,
+              voucherType: entry.type,
               transactionType: "metalPayment",
             },
           ],
@@ -796,6 +810,12 @@ class EntryService {
 
       await InventoryService.updateInventory(
         {
+          partyCode: entry.party,
+          voucherType: entry.type,
+          voucherNumber: entry.voucherCode,
+          voucherDate: entry.voucherDate || new Date(),
+          transactionType: isReceipt ? "metalPayment" : "metalReceipt",
+          createdBy: entry.enteredBy,
           stockItems: [
             {
               stockCode: { _id: item.stock },
@@ -803,6 +823,7 @@ class EntryService {
               purity: item.purity,
               pieces: item.pieces || 0,
               voucherNumber: entry.voucherCode,
+              voucherType: entry.type,
               transactionType: isReceipt ? "metalPayment" : "metalReceipt",
             },
           ],

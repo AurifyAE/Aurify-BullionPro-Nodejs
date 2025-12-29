@@ -203,6 +203,13 @@ class InventoryService {
         inventory.grossWeight += weightDelta;
         inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
         await inventory.save({ session });
+        
+        // Extract party - try party object first, then partyCode
+        const partyId = transaction.party?._id || transaction.party || transaction.partyCode || item.party?._id || item.party || item.partyCode || null;
+        
+        // Extract voucherType
+        const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
+        
         // Inventory Log
         await InventoryLog.create(
           [
@@ -211,12 +218,15 @@ class InventoryService {
               stockCode: metal._id,
               voucherCode:
                 transaction.voucherNumber || item.voucherNumber || "",
-              voucherDate: transaction.voucherDate || item.voucherDate || "",
+              voucherDate: transaction.voucherDate || item.voucherDate || new Date(),
+              voucherType: voucherType,
               transactionType: transaction.transactionType,
               pcs: item.pieces || 0,
               grossWeight: item.grossWeight || 0,
               pureWeight: (item.grossWeight * item.purity) / 100,
+              party: partyId,
               action: isSale ? "remove" : "add",
+              createdBy: transaction.createdBy || null,
               createdAt: new Date(),
             },
           ],
@@ -1155,6 +1165,12 @@ class InventoryService {
         updated.push(inventory);
         console.log(JSON.stringify(transaction));
 
+        // Extract party - try party object first, then partyCode
+        const partyId = transaction.party?._id || transaction.party || transaction.partyCode || item.party?._id || item.party || item.partyCode || null;
+        
+        // Extract voucherType
+        const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
+
         // Log entry
         await InventoryLog.create(
           [
@@ -1163,9 +1179,9 @@ class InventoryService {
               stockCode: metal._id,
               voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
               voucherDate: transaction.voucherDate || new Date(),
-              voucherType: transaction.voucherType || item.voucherType || "N/A",
+              voucherType: voucherType,
               grossWeight: item.grossWeight || 0,
-              party: transaction.party || item.party || null,
+              party: partyId,
               avgMakingAmount: item.makingUnit?.makingAmount || 0,
               avgMakingRate: item.makingUnit?.makingRate || 0,
               action: isSale ? "remove" : "add",

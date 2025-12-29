@@ -3,6 +3,7 @@ import Registry from "../../models/modules/Registry.js";
 import MetalTransaction from "../../models/modules/MetalTransaction.js";
 import FixingPrice from "../../models/modules/FixingPrice.js";
 import TransactionFixing from "../../models/modules/TransactionFixing.js";
+import Branch from "../../models/modules/BranchMaster.js";
 
 import moment from "moment";
 import { log } from "console";
@@ -12,6 +13,7 @@ import Account from "../../models/modules/AccountType.js";
 import InventoryLog from "../../models/modules/InventoryLog.js";
 import AccountMode from "../../models/modules/AccountMode.js";
 import OpeningBalance from "../../models/modules/OpeningBalance.js";
+import MetalStock from "../../models/modules/MetalStock.js";
 import { uaeDateToUTC, getPreviousDayEndInUTC, utcToUAEDate } from "../../utils/dateUtils.js";
 const { ObjectId } = mongoose.Types;
 // ReportService class to handle stock ledger and movement reports
@@ -22,18 +24,19 @@ export class ReportService {
       // Validate and format input filters
       const validatedFilters = this.validateFilters(filters);
 
-      // Construct MongoDB aggregation pipeline
-      const pipeline = this.buildStockLedgerPipeline(validatedFilters);
+      // Construct MongoDB aggregation pipeline for InventoryLog
+      const pipeline = this.buildInventoryLogStockLedgerPipeline(validatedFilters);
 
-      // Execute aggregation query
-      const reportData = await Registry.aggregate(pipeline);
+      // Execute aggregation query on InventoryLog
+      const reportData = await InventoryLog.aggregate(pipeline);
 
       // Format the retrieved data for response
-      const formattedData = this.formatReportData(reportData, validatedFilters);
+      const formattedData = this.formatInventoryLogReportData(reportData, validatedFilters);
 
       return {
         success: true,
-        data: reportData,
+        data: formattedData.transactions,
+        summary: formattedData.summary,
         filters: validatedFilters,
         totalRecords: reportData.length,
       };
@@ -64,6 +67,71 @@ export class ReportService {
         "PARTY_HEDGE_ENTRY",
       ]
     };
+  }
+
+  /**
+   * Fetch branch master settings
+   * Uses branchId from filters or default from environment variable
+   * @param {Object} filters - Filter object that may contain branchId
+   * @returns {Object} Branch settings with metalDecimal, amountDecimal, goldOzConversion
+   */
+  async getBranchSettings(filters = {}) {
+    try {
+      let branchId = filters.branchId;
+      
+      // If no branchId in filters, use default from environment
+      if (!branchId) {
+        branchId = process.env.DEFAULT_BRANCH_ID || "690224d4dbda6f93e986e0ca";
+      }
+
+      // Validate ObjectId
+      if (!mongoose.Types.ObjectId.isValid(branchId)) {
+        throw new Error(`Invalid branch ID: ${branchId}`);
+      }
+
+      const branch = await Branch.findById(branchId).lean();
+      
+      if (!branch) {
+        throw new Error(`Branch not found with ID: ${branchId}`);
+      }
+
+      // Return branch settings with defaults if not set
+      return {
+        metalDecimal: branch.metalDecimal ?? 3,
+        amountDecimal: branch.amountDecimal ?? 2,
+        goldOzConversion: branch.goldOzConversion ?? 31.1035,
+      };
+    } catch (error) {
+      console.error("Error fetching branch settings:", error);
+      // Return default values if branch fetch fails
+      return {
+        metalDecimal: 3,
+        amountDecimal: 2,
+        goldOzConversion: 31.1035,
+      };
+    }
+  }
+
+  /**
+   * Round metal value based on branch settings
+   * @param {Number} value - Metal value to round
+   * @param {Number} metalDecimal - Decimal places for metal (from branch settings)
+   * @returns {Number} Rounded metal value
+   */
+  roundMetal(value, metalDecimal) {
+    if (value == null || isNaN(value)) return 0;
+    return Number(value.toFixed(metalDecimal));
+  }
+
+  /**
+   * Round amount value based on branch settings
+   * @param {Number} value - Amount value to round
+   * @param {Number} amountDecimal - Decimal places for amount (from branch settings)
+   * @returns {Number} Rounded amount value
+   */
+  roundAmount(value, amountDecimal) {
+    if (value == null || isNaN(value)) return 0;
+    return Number(value.toFixed(amountDecimal));
   }
 
   async getAccountStatementOpeningBalance(toDate, filters = {}) {
@@ -932,6 +1000,9 @@ export class ReportService {
       // 9. Get Pure Weight Gold Jewelry from InventoryLog
       const pureWtGoldJew = await this.getOwnStockPureWtGoldJew(validatedFilters);
 
+      // 9.5. Fetch branch settings for decimal rounding
+      const branchSettings = await this.getBranchSettings(validatedFilters);
+
       // 10. Format the output
       const formatted = this.formatOwnStockData({
         openingBalance,
@@ -945,7 +1016,8 @@ export class ReportService {
         filters: {
           ...validatedFilters,
           excludeOpening: filters.excludeOpening, // Pass excludeOpening from original filters
-        }
+        },
+        branchSettings
       });
 
       // 10. Return structured response
@@ -1200,6 +1272,9 @@ export class ReportService {
       const purityGain = purityDiff.totalGold > 0 ? { gold: purityDiff.totalGold, value: purityDiff.totalValue } : { gold: 0, value: 0 };
       const purityLoss = purityDiff.totalGold < 0 ? { gold: Math.abs(purityDiff.totalGold), value: Math.abs(purityDiff.totalValue) } : { gold: 0, value: 0 };
 
+      // 7.5. Fetch branch settings for decimal rounding
+      const branchSettings = await this.getBranchSettings(validatedFilters);
+
       // 8. Format the retrieved data for response
       const formattedData = this.formatFixingReportData(
         reportData, 
@@ -1211,7 +1286,8 @@ export class ReportService {
           adjustmentData: { gold: adjustment.totalGold, value: adjustment.totalValue },
           purityGain,
           purityLoss,
-        }
+        },
+        branchSettings
       );
       console.log("Formatted Data:", JSON.stringify(formattedData, null, 2));
 
@@ -1700,6 +1776,403 @@ export class ReportService {
 
     return pipeline;
 
+  }
+
+  /**
+   * Build aggregation pipeline for InventoryLog-based stock ledger report
+   * Shows FIFO (First In First Out) ordering by date
+   * Includes pureWt in/out and making amount in/out
+   */
+  buildInventoryLogStockLedgerPipeline(filters) {
+    const pipeline = [];
+
+    // Step 1: Base match conditions
+    const matchConditions = {
+      isDraft: false, // Exclude draft entries
+      transactionType: { $ne: "initial" }, // Exclude INITIAL transaction type
+    };
+
+    // Date filter - use voucherDate from InventoryLog
+    // Dates are already converted to UTC Date objects by validateFilters
+    if (filters.startDate || filters.endDate) {
+      matchConditions.voucherDate = {};
+      if (filters.startDate) {
+        matchConditions.voucherDate.$gte = filters.startDate instanceof Date 
+          ? filters.startDate 
+          : new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        matchConditions.voucherDate.$lte = filters.endDate instanceof Date 
+          ? filters.endDate 
+          : new Date(filters.endDate);
+      }
+    }
+
+    // Stock filter - filter by stockCode
+    if (filters.stock?.length > 0) {
+      matchConditions.stockCode = { $in: filters.stock.map(id => new ObjectId(id)) };
+    }
+
+    // Voucher filter
+    if (filters.voucher?.length > 0) {
+      const voucherTypes = filters.voucher.map(v => v.type);
+      const voucherPrefixes = filters.voucher.map(v => v.prefix);
+      
+      const voucherMatch = [];
+      if (voucherTypes.length > 0) {
+        voucherMatch.push({ voucherType: { $in: voucherTypes } });
+      }
+      if (voucherPrefixes.length > 0) {
+        const regexFilters = voucherPrefixes.map(prefix => ({
+          voucherCode: { $regex: `^${prefix}\\d+$`, $options: "i" }
+        }));
+        voucherMatch.push({ $or: regexFilters });
+      }
+      
+      if (voucherMatch.length > 0) {
+        matchConditions.$or = voucherMatch;
+      }
+    }
+
+    pipeline.push({ $match: matchConditions });
+
+    // Step 2: Lookup MetalStock to get stock details and karat
+    pipeline.push({
+      $lookup: {
+        from: "metalstocks",
+        localField: "stockCode",
+        foreignField: "_id",
+        as: "stockDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$stockDetails",
+        preserveNullAndEmptyArrays: false, // Only include logs with valid stock
+      },
+    });
+
+    // Step 3: Filter by karat (after stock lookup)
+    if (filters.karat?.length > 0) {
+      pipeline.push({
+        $match: {
+          "stockDetails.karat": { $in: filters.karat.map(id => new ObjectId(id)) },
+        },
+      });
+    }
+
+    // Step 4: Filter by division (metalType)
+    if (filters.division?.length > 0) {
+      pipeline.push({
+        $match: {
+          "stockDetails.metalType": { $in: filters.division.map(id => new ObjectId(id)) },
+        },
+      });
+    }
+
+    // Step 5: Filter by party (account)
+    if (filters.accountType?.length > 0) {
+      pipeline.push({
+        $match: {
+          party: { $in: filters.accountType.map(id => new ObjectId(id)) },
+        },
+      });
+    }
+
+    // Step 6: Lookup KaratMaster for karat details
+    pipeline.push({
+      $lookup: {
+        from: "karatmasters",
+        localField: "stockDetails.karat",
+        foreignField: "_id",
+        as: "karatDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$karatDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 7: Lookup Party (Account) details
+    pipeline.push({
+      $lookup: {
+        from: "accounts",
+        localField: "party",
+        foreignField: "_id",
+        as: "partyDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$partyDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 8: Calculate pure weight and determine in/out based on action
+    pipeline.push({
+      $addFields: {
+        // Calculate effective purity (prefer log purity, then stock standardPurity, then karat standardPurity)
+        effectivePurity: {
+          $cond: [
+            { $gt: [{ $ifNull: ["$purity", 0] }, 0] },
+            { $divide: [{ $toDouble: { $ifNull: ["$purity", 0] } }, 100] }, // Log purity is in percentage, convert to decimal
+            {
+              $cond: [
+                { $gt: [{ $ifNull: ["$stockDetails.standardPurity", 0] }, 0] },
+                { $toDouble: { $ifNull: ["$stockDetails.standardPurity", 0] } }, // Stock standardPurity is already in decimal (0-1)
+                {
+                  $cond: [
+                    { $gt: [{ $ifNull: ["$karatDetails.standardPurity", 0] }, 0] },
+                    { $divide: [{ $toDouble: { $ifNull: ["$karatDetails.standardPurity", 0] } }, 100] }, // Karat purity is in percentage, convert to decimal
+                    0
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+      },
+    });
+
+    // Step 9: Calculate pure weight and separate in/out
+    pipeline.push({
+      $addFields: {
+        pureWeight: {
+          $multiply: [
+            { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+            { $ifNull: ["$effectivePurity", 0] }
+          ]
+        },
+        // Pure weight in (when action is "add")
+        pureWtIn: {
+          $cond: [
+            { $eq: ["$action", "add"] },
+            {
+              $multiply: [
+                { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                { $ifNull: ["$effectivePurity", 0] }
+              ]
+            },
+            0
+          ]
+        },
+        // Pure weight out (when action is "remove")
+        pureWtOut: {
+          $cond: [
+            { $eq: ["$action", "remove"] },
+            {
+              $multiply: [
+                { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                { $ifNull: ["$effectivePurity", 0] }
+              ]
+            },
+            0
+          ]
+        },
+        // Making amount in (when action is "add")
+        // Use avgMakingAmount if available, otherwise calculate from grossWeight * avgMakingRate
+        makingAmountIn: {
+          $cond: [
+            { $eq: ["$action", "add"] },
+            {
+              $ifNull: [
+                { $toDouble: "$avgMakingAmount" },
+                {
+                  $multiply: [
+                    { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                    { $toDouble: { $ifNull: ["$avgMakingRate", 0] } }
+                  ]
+                }
+              ]
+            },
+            0
+          ]
+        },
+        // Making amount out (when action is "remove")
+        // Use avgMakingAmount if available, otherwise calculate from grossWeight * avgMakingRate
+        makingAmountOut: {
+          $cond: [
+            { $eq: ["$action", "remove"] },
+            {
+              $ifNull: [
+                { $toDouble: "$avgMakingAmount" },
+                {
+                  $multiply: [
+                    { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+                    { $toDouble: { $ifNull: ["$avgMakingRate", 0] } }
+                  ]
+                }
+              ]
+            },
+            0
+          ]
+        },
+        // Gross weight in/out
+        grossWeightIn: {
+          $cond: [
+            { $eq: ["$action", "add"] },
+            { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+            0
+          ]
+        },
+        grossWeightOut: {
+          $cond: [
+            { $eq: ["$action", "remove"] },
+            { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+            0
+          ]
+        },
+      },
+    });
+
+    // Step 10: Project final fields
+    pipeline.push({
+      $project: {
+        _id: 1,
+        code: 1,
+        voucherCode: 1,
+        voucherType: 1,
+        voucherDate: 1,
+        transactionType: 1,
+        action: 1,
+        partyId: "$party",
+        partyName: { 
+          $ifNull: [
+            "$partyDetails.customerName", 
+            "N/A"
+          ] 
+        },
+        stockCode: { $ifNull: ["$stockDetails.code", "N/A"] },
+        stockId: "$stockCode",
+        karatId: "$stockDetails.karat",
+        karatCode: { $ifNull: ["$karatDetails.karatCode", "N/A"] },
+        karatDescription: { $ifNull: ["$karatDetails.description", "N/A"] },
+        grossWeight: { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+        grossWeightIn: 1,
+        grossWeightOut: 1,
+        purity: { $toDouble: { $ifNull: ["$purity", 0] } },
+        effectivePurity: 1,
+        pureWeight: 1,
+        pureWtIn: 1,
+        pureWtOut: 1,
+        avgMakingRate: { $toDouble: { $ifNull: ["$avgMakingRate", 0] } },
+        avgMakingAmount: { $toDouble: { $ifNull: ["$avgMakingAmount", 0] } },
+        makingAmountIn: 1,
+        makingAmountOut: 1,
+        pcs: { $ifNull: ["$pcs", 0] },
+        note: 1,
+        timestamp: 1,
+      },
+    });
+
+    // Step 11: Sort by date (FIFO - First In First Out) - ascending order
+    pipeline.push({
+      $sort: { 
+        voucherDate: 1,  // Ascending for FIFO
+        timestamp: 1      // Secondary sort by timestamp for same date
+      }
+    });
+
+    return pipeline;
+  }
+
+  /**
+   * Format InventoryLog report data with summary
+   */
+  formatInventoryLogReportData(reportData, filters) {
+    if (!reportData || reportData.length === 0) {
+      return {
+        transactions: [],
+        summary: {
+          totalTransactions: 0,
+          totalGrossWeightIn: 0,
+          totalGrossWeightOut: 0,
+          totalPureWtIn: 0,
+          totalPureWtOut: 0,
+          totalMakingAmountIn: 0,
+          totalMakingAmountOut: 0,
+          netGrossWeight: 0,
+          netPureWeight: 0,
+          netMakingAmount: 0,
+        },
+        appliedFilters: this.getAppliedFiltersInfo(filters),
+      };
+    }
+
+    // Calculate summary statistics
+    const summary = reportData.reduce(
+      (acc, item) => {
+        acc.totalTransactions += 1;
+        acc.totalGrossWeightIn += item.grossWeightIn || 0;
+        acc.totalGrossWeightOut += item.grossWeightOut || 0;
+        acc.totalPureWtIn += item.pureWtIn || 0;
+        acc.totalPureWtOut += item.pureWtOut || 0;
+        acc.totalMakingAmountIn += item.makingAmountIn || 0;
+        acc.totalMakingAmountOut += item.makingAmountOut || 0;
+        return acc;
+      },
+      {
+        totalTransactions: 0,
+        totalGrossWeightIn: 0,
+        totalGrossWeightOut: 0,
+        totalPureWtIn: 0,
+        totalPureWtOut: 0,
+        totalMakingAmountIn: 0,
+        totalMakingAmountOut: 0,
+      }
+    );
+
+    // Calculate net values
+    summary.netGrossWeight = summary.totalGrossWeightIn - summary.totalGrossWeightOut;
+    summary.netPureWeight = summary.totalPureWtIn - summary.totalPureWtOut;
+    summary.netMakingAmount = summary.totalMakingAmountIn - summary.totalMakingAmountOut;
+
+    // Format individual transactions
+    const transactions = reportData.map((item) => {
+      return {
+        id: item._id,
+        code: item.code,
+        voucherCode: item.voucherCode || "N/A",
+        voucherType: item.voucherType || "N/A",
+        voucherDate: item.voucherDate ? moment(item.voucherDate).format("DD/MM/YYYY") : "N/A",
+        transactionType: item.transactionType,
+        action: item.action,
+        partyId: item.partyId,
+        partyName: item.partyName,
+        stockCode: item.stockCode,
+        stockId: item.stockId,
+        karatId: item.karatId,
+        karatCode: item.karatCode,
+        karatDescription: item.karatDescription,
+        grossWeight: item.grossWeight,
+        grossWeightIn: item.grossWeightIn,
+        grossWeightOut: item.grossWeightOut,
+        purity: item.purity,
+        effectivePurity: item.effectivePurity,
+        pureWeight: item.pureWeight,
+        pureWtIn: item.pureWtIn,
+        pureWtOut: item.pureWtOut,
+        avgMakingRate: item.avgMakingRate,
+        avgMakingAmount: item.avgMakingAmount,
+        makingAmountIn: item.makingAmountIn,
+        makingAmountOut: item.makingAmountOut,
+        pcs: item.pcs,
+        note: item.note || "",
+        timestamp: item.timestamp ? moment(item.timestamp).format("DD/MM/YYYY HH:mm:ss") : "N/A",
+      };
+    });
+
+    return {
+      transactions,
+      summary,
+      appliedFilters: this.getAppliedFiltersInfo(filters),
+    };
   }
 
 
@@ -5274,7 +5747,13 @@ export class ReportService {
       return 0;
     }
   }
-  formatedOwnStock(reportData, receivablesAndPayables, openingBalance) {
+  formatedOwnStock(reportData, receivablesAndPayables, openingBalance, branchSettings = null) {
+    // Get branch settings if not provided
+    const settings = branchSettings || {
+      metalDecimal: 3,
+      amountDecimal: 2,
+      goldOzConversion: 31.1035,
+    };
 
     const summary = {
       totalGrossWeight: 0,
@@ -5284,7 +5763,7 @@ export class ReportService {
       totalPayableGrams: 0,
       avgGrossWeight: 0,
       avgBidValue: 0,
-      openingBalance: openingBalance?.opening || 0, // Use resolved opening balance
+      openingBalance: this.roundMetal(openingBalance?.opening || 0, settings.metalDecimal), // Use resolved opening balance
       netPurchase: 0,
       purityDifference: 0, // Use resolved or default
       shortLongPosition: 0
@@ -5292,8 +5771,8 @@ export class ReportService {
 
     // Extract receivable/payable safely
     if (receivablesAndPayables?.length) {
-      summary.totalReceivableGrams = Number(receivablesAndPayables[0].totalReceivableGrams?.toFixed(2)) || 0;
-      summary.totalPayableGrams = Number(receivablesAndPayables[0].totalPayableGrams?.toFixed(2)) || 0;
+      summary.totalReceivableGrams = this.roundMetal(receivablesAndPayables[0].totalReceivableGrams || 0, settings.metalDecimal);
+      summary.totalPayableGrams = this.roundMetal(receivablesAndPayables[0].totalPayableGrams || 0, settings.metalDecimal);
     }
 
     // Define purchase and sale categories
@@ -5333,14 +5812,25 @@ export class ReportService {
 
     // Calculate averages
     const totalCategories = reportData?.length || 0;
-    summary.avgGrossWeight = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgGrossWeight || 0), 0) / totalCategories : 0;
-    summary.avgBidValue = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgBidValue || 0), 0) / totalCategories : 0;
+    const rawAvgGrossWeight = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgGrossWeight || 0), 0) / totalCategories : 0;
+    const rawAvgBidValue = totalCategories > 0 ? reportData.reduce((sum, item) => sum + (item.avgBidValue || 0), 0) / totalCategories : 0;
+    summary.avgGrossWeight = this.roundMetal(rawAvgGrossWeight, settings.metalDecimal);
+    summary.avgBidValue = this.roundAmount(rawAvgBidValue, settings.amountDecimal);
 
     // Calculate summary fields
-    summary.netPurchase = totalPurchase - totalSale;
-    summary.purityDifference = purchasePurityDifference + salePurityDifference;
-    summary.netGrossWeight = totalPurchase - totalSale;
-    summary.shortLongPosition = summary.openingBalance + summary.netPurchase + summary.purityDifference;
+    const rawNetPurchase = totalPurchase - totalSale;
+    const rawPurityDifference = purchasePurityDifference + salePurityDifference;
+    const rawNetGrossWeight = totalPurchase - totalSale;
+    const rawShortLongPosition = summary.openingBalance + rawNetPurchase + rawPurityDifference;
+    
+    summary.netPurchase = this.roundMetal(rawNetPurchase, settings.metalDecimal);
+    summary.purityDifference = this.roundMetal(rawPurityDifference, settings.metalDecimal);
+    summary.netGrossWeight = this.roundMetal(rawNetGrossWeight, settings.metalDecimal);
+    summary.shortLongPosition = this.roundMetal(rawShortLongPosition, settings.metalDecimal);
+    
+    // Round other summary fields
+    summary.totalGrossWeight = this.roundMetal(summary.totalGrossWeight, settings.metalDecimal);
+    summary.totalValue = this.roundAmount(summary.totalValue, settings.amountDecimal);
 
     // log puriy difference
 
@@ -5362,7 +5852,15 @@ export class ReportService {
       inventoryData,
       pureWtGoldJew = 0,
       filters,
+      branchSettings = null,
     } = data;
+
+    // Get branch settings if not provided
+    const settings = branchSettings || {
+      metalDecimal: 3,
+      amountDecimal: 2,
+      goldOzConversion: 31.1035,
+    };
 
     // Handle excludeOpening filter
     // excludeOpening: true → don't show opening balance (set to 0)
@@ -5476,25 +5974,25 @@ export class ReportService {
     // Structure response similar to image
     const response = {
       openingBalance: {
-        gold: openingGold,
-        value: openingValue,
+        gold: this.roundMetal(openingGold, settings.metalDecimal),
+        value: this.roundAmount(openingValue, settings.amountDecimal),
       },
       purchases: {
         Purchases: {
-          gold: purchaseData.totalGold || 0,
-          value: purchaseData.totalValue || 0,
+          gold: this.roundMetal(purchaseData.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(purchaseData.totalValue || 0, settings.amountDecimal),
         },
         posPurchases: {
           gold: 0, // Not specified in requirements
           value: 0,
         },
         purchaseReturn: {
-          gold: purchaseReturnData.totalGold || 0,
-          value: purchaseReturnData.totalValue || 0,
+          gold: this.roundMetal(purchaseReturnData.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(purchaseReturnData.totalValue || 0, settings.amountDecimal),
         },
         purchaseFixing: {
-          gold: purchaseFixData.totalGold || 0,
-          value: purchaseFixData.totalValue || 0,
+          gold: this.roundMetal(purchaseFixData.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(purchaseFixData.totalValue || 0, settings.amountDecimal),
         },
         branchTransIn: {
           gold: 0,
@@ -5509,26 +6007,26 @@ export class ReportService {
           value: 0,
         },
         netPurchase: {
-          gold: netPurchaseGold,
-          value: netPurchaseValue,
+          gold: this.roundMetal(netPurchaseGold, settings.metalDecimal),
+          value: this.roundAmount(netPurchaseValue, settings.amountDecimal),
         },
       },
       sales: {
         Sales: {
-          gold: saleData.totalGold || 0,
-          value: saleData.totalValue || 0,
+          gold: this.roundMetal(saleData.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(saleData.totalValue || 0, settings.amountDecimal),
         },
         posSales: {
           gold: 0, // Not specified
           value: 0,
         },
         salesReturn: {
-          gold: saleReturnData.totalGold || 0,
-          value: saleReturnData.totalValue || 0,
+          gold: this.roundMetal(saleReturnData.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(saleReturnData.totalValue || 0, settings.amountDecimal),
         },
         salesFixing: {
-          gold: saleFixData.totalGold || 0,
-          value: saleFixData.totalValue || 0,
+          gold: this.roundMetal(saleFixData.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(saleFixData.totalValue || 0, settings.amountDecimal),
         },
         branchTransOut: {
           gold: 0,
@@ -5543,8 +6041,8 @@ export class ReportService {
           value: 0,
         },
         netSales: {
-          gold: netSaleGold,
-          value: netSaleValue,
+          gold: this.roundMetal(netSaleGold, settings.metalDecimal),
+          value: this.roundAmount(netSaleValue, settings.amountDecimal),
         },
       },
       otherDetails: {
@@ -5553,16 +6051,16 @@ export class ReportService {
           value: 0,
         },
         subTotal: {
-          gold: subtotalGold,
-          value: subtotalValue,
+          gold: this.roundMetal(subtotalGold, settings.metalDecimal),
+          value: this.roundAmount(subtotalValue, settings.amountDecimal),
         },
         adjustments: {
-          gold: adjustment.totalGold || 0,
-          value: adjustment.totalValue || 0,
+          gold: this.roundMetal(adjustment.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(adjustment.totalValue || 0, settings.amountDecimal),
         },
         purityLossGain: {
-          gold: purityDiff.totalGold || 0,
-          value: purityDiff.totalValue || 0,
+          gold: this.roundMetal(purityDiff.totalGold || 0, settings.metalDecimal),
+          value: this.roundAmount(purityDiff.totalValue || 0, settings.amountDecimal),
         },
         stoneLossGain: {
           gold: 0, // Not specified
@@ -5581,8 +6079,8 @@ export class ReportService {
           value: 0,
         },
         long: {
-          gold: longShortGold,
-          value: longShortValue,
+          gold: this.roundMetal(longShortGold, settings.metalDecimal),
+          value: this.roundAmount(longShortValue, settings.amountDecimal),
           positionType: positionType, // "long" if positive, "short" if negative
         },
         currentRate: {
@@ -5596,27 +6094,27 @@ export class ReportService {
       },
       positionSummary: {
         receivables: {
-          gold: receivablesPayables.receivables || 0,
+          gold: this.roundMetal(receivablesPayables.receivables || 0, settings.metalDecimal),
           value: 0, // Would need rate calculation
         },
         payables: {
-          gold: receivablesPayables.payables || 0,
+          gold: this.roundMetal(receivablesPayables.payables || 0, settings.metalDecimal),
           value: 0, // Would need rate calculation
         },
         general: {
-          gold: receivablesPayables.general || 0,
+          gold: this.roundMetal(receivablesPayables.general || 0, settings.metalDecimal),
           value: 0, // Would need rate calculation
         },
         bank: {
-          gold: receivablesPayables.bank || 0,
+          gold: this.roundMetal(receivablesPayables.bank || 0, settings.metalDecimal),
           value: 0, // Would need rate calculation
         },
         subTotal: {
-          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0),
+          gold: this.roundMetal((receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0), settings.metalDecimal),
           value: 0,
         },
         pureWtDiaJew: {
-          gold: inventoryData.totalPureWeight || 0,
+          gold: this.roundMetal(inventoryData.totalPureWeight || 0, settings.metalDecimal),
           value: 0, // Would need rate calculation
         },
         pureWtWIP: {
@@ -5624,11 +6122,11 @@ export class ReportService {
           value: 0,
         },
         pureWtGoldJew: {
-          gold: pureWtGoldJew || 0,
+          gold: this.roundMetal(pureWtGoldJew || 0, settings.metalDecimal),
           value: 0, // Would need rate calculation
         },
         netPosition: {
-          gold: (receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0) + (pureWtGoldJew || 0),
+          gold: this.roundMetal((receivablesPayables.receivables || 0) + (receivablesPayables.payables || 0) + (receivablesPayables.general || 0) + (receivablesPayables.bank || 0) + (pureWtGoldJew || 0), settings.metalDecimal),
           value: 0, // Would need rate calculation
         },
       },
@@ -6391,7 +6889,14 @@ export class ReportService {
     return pipeline;
   }
 
-  formatFixingReportData(reportData, openingBalance, filters, additionalData = {}) {
+  formatFixingReportData(reportData, openingBalance, filters, additionalData = {}, branchSettings = null) {
+    // Get branch settings if not provided
+    const settings = branchSettings || {
+      metalDecimal: 3,
+      amountDecimal: 2,
+      goldOzConversion: 31.1035,
+    };
+
     const openingGold = openingBalance.opening || 0;
     const openingValue = openingBalance.openingValue || 0;
     const openingAverage = openingGold !== 0 ? openingValue / openingGold : 0;
@@ -6407,36 +6912,36 @@ export class ReportService {
       return {
         transactions: [],
         openingBalance: {
-          gold: openingGold,
-          value: openingValue,
-          average: openingAverage,
+          gold: this.roundMetal(openingGold, settings.metalDecimal),
+          value: this.roundAmount(openingValue, settings.amountDecimal),
+          average: this.roundAmount(openingAverage, settings.amountDecimal),
         },
         summary: {
           totalPureWeightIn: 0,
           totalPureWeightOut: 0,
-          totalPureWeightBalance: openingGold,
-          totalValue: openingValue,
-          average: openingAverage,
+          totalPureWeightBalance: this.roundMetal(openingGold, settings.metalDecimal),
+          totalValue: this.roundAmount(openingValue, settings.amountDecimal),
+          average: this.roundAmount(openingAverage, settings.amountDecimal),
         },
         netPurchase: {
-          gold: Number(netPurchase.gold.toFixed(2)),
-          value: Number(netPurchase.value.toFixed(2)),
+          gold: this.roundMetal(netPurchase.gold, settings.metalDecimal),
+          value: this.roundAmount(netPurchase.value, settings.amountDecimal),
         },
         netSales: {
-          gold: Number(netSales.gold.toFixed(2)),
-          value: Number(netSales.value.toFixed(2)),
+          gold: this.roundMetal(netSales.gold, settings.metalDecimal),
+          value: this.roundAmount(netSales.value, settings.amountDecimal),
         },
         adjustmentData: {
-          gold: Number(adjustmentData.gold.toFixed(2)),
-          value: Number(adjustmentData.value.toFixed(2)),
+          gold: this.roundMetal(adjustmentData.gold, settings.metalDecimal),
+          value: this.roundAmount(adjustmentData.value, settings.amountDecimal),
         },
         purityGain: {
-          gold: Number(purityGain.gold.toFixed(2)),
-          value: Number(purityGain.value.toFixed(2)),
+          gold: this.roundMetal(purityGain.gold, settings.metalDecimal),
+          value: this.roundAmount(purityGain.value, settings.amountDecimal),
         },
         purityLoss: {
-          gold: Number(purityLoss.gold.toFixed(2)),
-          value: Number(purityLoss.value.toFixed(2)),
+          gold: this.roundMetal(purityLoss.gold, settings.metalDecimal),
+          value: this.roundAmount(purityLoss.value, settings.amountDecimal),
         },
       };
     }
@@ -6472,18 +6977,18 @@ export class ReportService {
         narration: item.narration || "--",
         type: item.type || "--", // Include type: purchase-fixing, sales-fixing, HEDGE_ENTRY, OPEN-ACCOUNT-FIXING
         pureWeight: {
-          in: Number(pureWeightIn.toFixed(2)),
-          out: Number(pureWeightOut.toFixed(2)),
-          balance: Number(runningPureWeightBalance.toFixed(2)),
+          in: this.roundMetal(pureWeightIn, settings.metalDecimal),
+          out: this.roundMetal(pureWeightOut, settings.metalDecimal),
+          balance: this.roundMetal(runningPureWeightBalance, settings.metalDecimal),
         },
         amount: {
-          rate: Number(rate.toFixed(2)), // Rate from FixingPrice or TransactionFixing.orders.bidValue
-          value: Number(value.toFixed(2)),
-          balance: Number(runningValueBalance.toFixed(2)),
+          rate: this.roundAmount(rate, settings.amountDecimal), // Rate from FixingPrice or TransactionFixing.orders.bidValue
+          value: this.roundAmount(value, settings.amountDecimal),
+          balance: this.roundAmount(runningValueBalance, settings.amountDecimal),
         },
-        average: Number(average.toFixed(2)),
-        bidValue: Number((item.bidValue || 0).toFixed(2)),
-        currentBidValue: Number((item.currentBidValue || 0).toFixed(2)),
+        average: this.roundAmount(average, settings.amountDecimal),
+        bidValue: this.roundAmount(item.bidValue || 0, settings.amountDecimal),
+        currentBidValue: this.roundAmount(item.currentBidValue || 0, settings.amountDecimal),
       };
     });
 
@@ -6493,42 +6998,42 @@ export class ReportService {
     const totalValue = reportData.reduce((sum, item) => sum + Number(item.value || 0), 0);
 
     const summary = {
-      totalPureWeightIn: Number(totalPureWeightIn.toFixed(2)),
-      totalPureWeightOut: Number(totalPureWeightOut.toFixed(2)),
-      totalPureWeightBalance: Number(runningPureWeightBalance.toFixed(2)),
-      totalValue: Number(runningValueBalance.toFixed(2)),
+      totalPureWeightIn: this.roundMetal(totalPureWeightIn, settings.metalDecimal),
+      totalPureWeightOut: this.roundMetal(totalPureWeightOut, settings.metalDecimal),
+      totalPureWeightBalance: this.roundMetal(runningPureWeightBalance, settings.metalDecimal),
+      totalValue: this.roundAmount(runningValueBalance, settings.amountDecimal),
       average: runningPureWeightBalance !== 0 
-        ? Number((runningValueBalance / runningPureWeightBalance).toFixed(2))
+        ? this.roundAmount(runningValueBalance / runningPureWeightBalance, settings.amountDecimal)
         : 0,
     };
 
     return {
       transactions,
       openingBalance: {
-        gold: Number(openingGold.toFixed(2)),
-        value: Number(openingValue.toFixed(2)),
-        average: Number(openingAverage.toFixed(2)),
+        gold: this.roundMetal(openingGold, settings.metalDecimal),
+        value: this.roundAmount(openingValue, settings.amountDecimal),
+        average: this.roundAmount(openingAverage, settings.amountDecimal),
       },
       summary,
       netPurchase: {
-        gold: Number(netPurchase.gold.toFixed(2)),
-        value: Number(netPurchase.value.toFixed(2)),
+        gold: this.roundMetal(netPurchase.gold, settings.metalDecimal),
+        value: this.roundAmount(netPurchase.value, settings.amountDecimal),
       },
       netSales: {
-        gold: Number(netSales.gold.toFixed(2)),
-        value: Number(netSales.value.toFixed(2)),
+        gold: this.roundMetal(netSales.gold, settings.metalDecimal),
+        value: this.roundAmount(netSales.value, settings.amountDecimal),
       },
       adjustmentData: {
-        gold: Number(adjustmentData.gold.toFixed(2)),
-        value: Number(adjustmentData.value.toFixed(2)),
+        gold: this.roundMetal(adjustmentData.gold, settings.metalDecimal),
+        value: this.roundAmount(adjustmentData.value, settings.amountDecimal),
       },
       purityGain: {
-        gold: Number(purityGain.gold.toFixed(2)),
-        value: Number(purityGain.value.toFixed(2)),
+        gold: this.roundMetal(purityGain.gold, settings.metalDecimal),
+        value: this.roundAmount(purityGain.value, settings.amountDecimal),
       },
       purityLoss: {
-        gold: Number(purityLoss.gold.toFixed(2)),
-        value: Number(purityLoss.value.toFixed(2)),
+        gold: this.roundMetal(purityLoss.gold, settings.metalDecimal),
+        value: this.roundAmount(purityLoss.value, settings.amountDecimal),
       },
     };
   }
