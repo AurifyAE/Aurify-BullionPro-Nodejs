@@ -2,106 +2,110 @@ import mongoose from "mongoose";
 import OpeningBalance from "../../models/modules/OpeningBalance.js";
 import Registry from "../../models/modules/Registry.js";
 import { updatePartyOpeningBalance } from "../../utils/updatePartyOpeningBalance.js";
+import { createAppError } from "../../utils/errorHandler.js";
 
 class openingBalanceService {
-    static async createPartyOpeningBalance({
-        partyId,
-        value,
-        transactionType,
-        adminId,
-        assetType,
-        assetCode,
-        voucher,
+    static async createOpeningBalanceBatch({
+        voucherCode,
+        voucherType,
         voucherDate,
         description,
+        entries,
+        adminId,
     }) {
-        // 🔒 Hard validation (before DB)
-        if (!partyId || !value || !transactionType || !assetType || !assetCode) {
-            throw new Error("Missing required fields for opening balance");
-        }
-
-        if (!["debit", "credit"].includes(transactionType)) {
-            throw new Error("Invalid transaction type");
-        }
-
         const session = await mongoose.startSession();
 
         try {
             session.startTransaction();
 
-            const finalDescription =
-                description ||
-                `Opening balance ${transactionType} of ${value} ${assetCode}`;
+            // 1️⃣ Create Opening Balance Voucher (ONE DOCUMENT)
+            const [openingBalance] = await OpeningBalance.create(
+                [{
+                    voucherCode,
+                    voucherType,
+                    voucherDate,
+                    description,
+                    adminId,
+                    entries,
+                }],
+                { session }
+            );
 
-            // 1️⃣ Opening Balance
-            const opening = await OpeningBalance.create([{
-                partyId,
-                value,
-                transactionType,
-                adminId,
-                assetType,
-                assetCode,
-                voucherDate,
-                voucherType: voucher.voucherType,
-                voucherCode: voucher.voucherCode,
-                description: finalDescription,
-            }], { session });
+            // 2️⃣ Process each entry
+            for (const entry of entries) {
+                const {
+                    partyId,
+                    assetType,
+                    assetCode,
+                    transactionType,
+                    value,
+                } = entry;
 
-            // 2️⃣ Party balance update
-            const signedValue =
-                transactionType === "debit"
-                    ? -Math.abs(value)
-                    : Math.abs(value);
+                if (!partyId || !assetType || !assetCode || !transactionType || !value) {
+                    throw new Error("Invalid entry in opening balance batch");
+                }
 
-            await updatePartyOpeningBalance({
-                partyId,
-                assetType,
-                assetCode,
-                value: signedValue,
-                reverse: false,
-            });
+                const signedValue =
+                    transactionType === "debit"
+                        ? -Math.abs(value)
+                        : Math.abs(value);
 
-            // 3️⃣ Registry entry
-            const isGold = assetType === "GOLD";
-            const isCash = assetType === "CASH";
-            const transactionId = await Registry.generateTransactionId();
+                // 🔁 Update party opening balance
+                await updatePartyOpeningBalance({
+                    partyId,
+                    assetType,
+                    assetCode,
+                    value: signedValue,
+                    reverse: false,
+                    session,
+                });
 
-            await Registry.create([{
-                transactionId: transactionId,
-                transactionType: "Opening",
-                assetType: assetCode,
-                costCenter: "PARTY",
-                type: isGold ? "PARTY_GOLD_BALANCE" : "PARTY_CASH_BALANCE",
-                description: finalDescription,
-                party: partyId,
-                isBullion: isGold,
-                value,
+                // 🧾 Registry entry
+                const isGold = assetType === "GOLD";
+                const isCash = assetType === "CASH";
+                const transactionId = await Registry.generateTransactionId();
 
-                cashDebit: isCash && transactionType === "debit" ? value : 0,
-                cashCredit: isCash && transactionType === "credit" ? value : 0,
-                goldDebit: isGold && transactionType === "debit" ? value : 0,
-                goldCredit: isGold && transactionType === "credit" ? value : 0,
+                await Registry.create(
+                    [{
+                        transactionId,
+                        transactionType: "Opening",
+                        assetType: assetCode,
+                        costCenter: "PARTY",
+                        type: isGold ? "PARTY_GOLD_BALANCE" : "PARTY_CASH_BALANCE",
+                        description:
+                            description ||
+                            `Opening balance ${transactionType} of ${value} ${assetCode}`,
+                        party: partyId,
+                        isBullion: isGold,
 
-                debit: transactionType === "debit" ? value : 0,
-                credit: transactionType === "credit" ? value : 0,
+                        cashDebit: isCash && transactionType === "debit" ? value : 0,
+                        cashCredit: isCash && transactionType === "credit" ? value : 0,
+                        goldDebit: isGold && transactionType === "debit" ? value : 0,
+                        goldCredit: isGold && transactionType === "credit" ? value : 0,
 
-                currencyRate: 1,
-                reference: voucher.voucherCode,
-                transactionDate: voucherDate,
-                status: "completed",
-                isActive: true,
-                createdBy: adminId,
-            }], { session });
+                        debit: transactionType === "debit" ? value : 0,
+                        credit: transactionType === "credit" ? value : 0,
+                        value: value,
+
+                        currencyRate: 1,
+                        reference: voucherCode,
+                        transactionDate: voucherDate,
+                        status: "completed",
+                        isActive: true,
+                        createdBy: adminId,
+                    }],
+                    { session }
+                );
+            }
 
             await session.commitTransaction();
-            return opening[0];
+            return openingBalance;
 
         } catch (err) {
             if (session.inTransaction()) {
                 await session.abortTransaction();
             }
             throw err;
-
         } finally {
             session.endSession();
         }
@@ -116,11 +120,19 @@ class openingBalanceService {
         // Fetch all opening balances
         // Populate partyId with customerName and accountCode
         const records = await OpeningBalance.find()
-            .populate("partyId", "customerName accountCode")
-            .populate("adminId", "name")
+            .populate({
+                path: "entries.partyId",
+                select: "customerName accountCode",
+            })
+            .populate({
+                path: "adminId",
+                select: "name",
+            })
             .sort({ voucherDate: -1 })
             .lean();
+
         return records;
+
     }
 
     // static async updatePartyOpeningBalance({
@@ -141,129 +153,112 @@ class openingBalanceService {
     // }
 
     static async updateOpeningBalanceVoucher({
-        voucher,
+        voucherCode,
+        voucherType,
         voucherDate,
+        description,
         entries,
         adminId,
-        VoucherID,
     }) {
         const session = await mongoose.startSession();
 
         try {
             session.startTransaction();
 
-            console.log("Updating opening balance for voucher:", VoucherID);
+            console.log("Updating opening balance for voucher:", voucherCode);
 
-            // 1️⃣ Fetch existing
+            /* 1️⃣ Fetch existing voucher */
             const existing = await OpeningBalance
-                .find({ voucherCode: VoucherID })
+                .findOne({ voucherCode })
                 .session(session);
 
-            if (!existing.length) {
-                throw new Error("Opening balance voucher not found");
+            console.log("Existing voucher:", existing);
+
+            if (!existing) {
+                throw createAppError("Opening balance voucher not found", 404);
             }
 
-            // 2️⃣ Reverse old balances
-            for (const ob of existing) {
+            /* 2️⃣ Reverse OLD balances */
+            for (const oldEntry of existing.entries) {
                 const signed =
-                    ob.transactionType === "debit"
-                        ? -Math.abs(ob.value)
-                        : Math.abs(ob.value);
+                    oldEntry.transactionType === "debit"
+                        ? -Math.abs(oldEntry.value)
+                        : Math.abs(oldEntry.value);
 
                 await updatePartyOpeningBalance({
-                    partyId: ob.partyId,
-                    assetType: ob.assetType,
-                    assetCode: ob.assetCode,
+                    partyId: oldEntry.partyId,
+                    assetType: oldEntry.assetType,
+                    assetCode: oldEntry.assetCode,
                     value: signed,
                     reverse: true,
-                    session
+                    session,
                 });
             }
 
-            // 3️⃣ Delete old records
-            await OpeningBalance.deleteMany({ voucherCode: VoucherID }).session(session);
-            await Registry.deleteMany({ reference: VoucherID }).session(session);
-            console.log(voucher.type)
-            const transactionId = await Registry.generateTransactionId();
+            /* 3️⃣ Remove OLD registry */
+            await Registry.deleteMany({ reference: voucherCode }).session(session);
 
-            // 4️⃣ Insert new
+            /* 4️⃣ Apply NEW balances + registry */
             for (const entry of entries) {
                 const signed =
                     entry.transactionType === "debit"
-                        ? -Math.abs(entry.amount)
-                        : Math.abs(entry.amount);
-
-                await OpeningBalance.create([{
-                    partyId: entry.partyId,
-                    value: entry.amount,
-                    transactionType: entry.transactionType,
-                    assetType: entry.balanceType === "gold" ? "GOLD" : "CASH",
-                    assetCode: entry.balanceType === "gold" ? "XAU" : entry.currencyCode,
-                    voucherCode: VoucherID,
-                    voucherType: voucher.type,
-                    voucherDate,
-                    description: entry.description,
-                    adminId
-                }], { session });
+                        ? -Math.abs(entry.value)
+                        : Math.abs(entry.value);
 
                 await updatePartyOpeningBalance({
                     partyId: entry.partyId,
-                    assetType: entry.balanceType === "gold" ? "GOLD" : "CASH",
-                    assetCode: entry.balanceType === "gold" ? "XAU" : entry.currencyCode,
+                    assetType: entry.assetType,
+                    assetCode: entry.assetCode,
                     value: signed,
                     reverse: false,
-                    session
+                    session,
                 });
 
+                const isGold = entry.assetType === "GOLD";
+                const isCash = entry.assetType === "CASH";
+                const transactionId = await Registry.generateTransactionId();
+
                 await Registry.create([{
-                    transactionId: transactionId,
+                    transactionId,
                     transactionType: "Opening",
-                    reference: VoucherID,
+                    reference: voucherCode,
                     transactionDate: voucherDate,
 
                     costCenter: "PARTY",
                     party: entry.partyId,
 
-                    assetType: entry.balanceType === "gold" ? "XAU" : entry.currencyCode,
-                    type: entry.balanceType === "gold"
+                    assetType: entry.assetCode,
+                    type: isGold
                         ? "PARTY_GOLD_BALANCE"
                         : "PARTY_CASH_BALANCE",
 
-                    description: entry.description || "Updated opening balance",
+                    description: description || "Updated opening balance",
 
-                    value: entry.amount,
+                    value: entry.value,
 
-                    cashDebit:
-                        entry.balanceType === "cash" && entry.transactionType === "debit"
-                            ? entry.amount
-                            : 0,
+                    cashDebit: isCash && entry.transactionType === "debit" ? entry.value : 0,
+                    cashCredit: isCash && entry.transactionType === "credit" ? entry.value : 0,
+                    goldDebit: isGold && entry.transactionType === "debit" ? entry.value : 0,
+                    goldCredit: isGold && entry.transactionType === "credit" ? entry.value : 0,
 
-                    cashCredit:
-                        entry.balanceType === "cash" && entry.transactionType === "credit"
-                            ? entry.amount
-                            : 0,
+                    debit: entry.transactionType === "debit" ? entry.value : 0,
+                    credit: entry.transactionType === "credit" ? entry.value : 0,
 
-                    goldDebit:
-                        entry.balanceType === "gold" && entry.transactionType === "debit"
-                            ? entry.amount
-                            : 0,
-
-                    goldCredit:
-                        entry.balanceType === "gold" && entry.transactionType === "credit"
-                            ? entry.amount
-                            : 0,
-
-                    debit: entry.transactionType === "debit" ? entry.amount : 0,
-                    credit: entry.transactionType === "credit" ? entry.amount : 0,
-
-                    isBullion: entry.balanceType === "gold",
-
+                    isBullion: isGold,
                     status: "completed",
                     isActive: true,
                     createdBy: adminId,
                 }], { session });
-
             }
+
+            /* 5️⃣ Update voucher document */
+            existing.entries = entries;
+            existing.voucherDate = voucherDate;
+            existing.voucherType = voucherType;
+            existing.description = description;
+            existing.adminId = adminId;
+
+            await existing.save({ session });
 
             await session.commitTransaction();
             return true;
@@ -275,7 +270,6 @@ class openingBalanceService {
             session.endSession();
         }
     }
-
 }
 
 export default openingBalanceService;
