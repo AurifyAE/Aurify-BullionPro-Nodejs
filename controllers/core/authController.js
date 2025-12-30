@@ -170,3 +170,16 @@ export const getAdmins = async (req, res, next) => {
     next(err);
   }
 };
+
+export const getAdminById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const admin = await Admin.findById(id).select('-passwordHash');
+    res.status(200).json({
+      success: true,
+      data: admin,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
