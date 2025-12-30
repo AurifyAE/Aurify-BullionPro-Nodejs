@@ -161,10 +161,10 @@ export class StockAdjustmentService {
                 makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0;
 
             const goldDebit =
-                stockDifference < 0 ? Math.abs(stockDifference) : 0;
+                stockDifference > 0 ? Math.abs(stockDifference) : 0;
 
             const goldCredit =
-                stockDifference > 0 ? stockDifference : 0;
+                stockDifference < 0 ? Math.abs(stockDifference) : 0;
 
 
             await this.createRegistryEntry({
