@@ -621,6 +621,12 @@ const MetalTransactionSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    division: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DivisionMaster",
+      default: null,
+      index: true,
+    },
 
     // MULTIPLE STOCK ITEMS
     stockItems: {
@@ -736,6 +742,7 @@ MetalTransactionSchema.index({ transactionType: 1, createdAt: -1 });
 MetalTransactionSchema.index({ "stockItems.stockCode": 1, transactionType: 1 });
 MetalTransactionSchema.index({ voucherDate: -1, isActive: 1 });
 MetalTransactionSchema.index({ partyCode: 1, isActive: 1, status: 1 });
+MetalTransactionSchema.index({ division: 1, isActive: 1 });
 
 // Virtual for formatted voucher date
 MetalTransactionSchema.virtual("formattedVoucherDate").get(function () {

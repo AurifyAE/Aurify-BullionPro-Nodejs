@@ -13042,6 +13042,7 @@ class MetalTransactionService {
       { field: "partyCurrency", value: transactionData.partyCurrency },
       { field: "itemCurrency", value: transactionData.itemCurrency },
       { field: "baseCurrency", value: transactionData.baseCurrency },
+      { field: "division", value: transactionData.division },
       { field: "adminId", value: adminId },
     ];
 
@@ -13197,6 +13198,7 @@ class MetalTransactionService {
     if (filters.partyCode) query.partyCode = filters.partyCode;
     if (filters.status) query.status = filters.status;
     if (filters.stockCode) query["stockItems.stockCode"] = filters.stockCode;
+    if (filters.division) query.division = filters.division;
     if (filters.startDate && filters.endDate) {
       query.voucherDate = {
         $gte: new Date(filters.startDate),
@@ -13209,6 +13211,7 @@ class MetalTransactionService {
       .populate("partyCurrency", "code symbol")
       .populate("itemCurrency", "code symbol")
       .populate("baseCurrency", "code symbol")
+      .populate("division", "code description")
       .populate("stockItems.stockCode", "code description specifications")
       .populate("stockItems.metalRate", "metalType rate effectiveDate")
       .populate("salesman", "name code")
@@ -13240,6 +13243,7 @@ class MetalTransactionService {
       .populate("partyCurrency", "currencyCode symbol description")
       .populate("itemCurrency", "currencyCode symbol description")
       .populate("baseCurrency", "currencyCode symbol description")
+      .populate("division", "code description")
       .populate("stockItems.stockCode", "code description specifications")
       .populate("stockItems.metalRate", "metalType rate effectiveDate")
       .populate("salesman", "name code")
@@ -13295,6 +13299,9 @@ class MetalTransactionService {
     }
     if (filters.status) {
       query.status = filters.status;
+    }
+    if (filters.division) {
+      query.division = filters.division;
     }
     if (filters.startDate && filters.endDate) {
       query.voucherDate = {
@@ -13392,6 +13399,9 @@ class MetalTransactionService {
     }
     if (filters.status) {
       matchStage.status = filters.status;
+    }
+    if (filters.division) {
+      matchStage.division = new mongoose.Types.ObjectId(filters.division);
     }
     if (filters.startDate && filters.endDate) {
       matchStage.voucherDate = {
@@ -13715,6 +13725,12 @@ class MetalTransactionService {
       throw createAppError("Invalid party code", 400, "INVALID_PARTY_CODE");
     }
     if (
+      updateData.division &&
+      !mongoose.isValidObjectId(updateData.division)
+    ) {
+      throw createAppError("Invalid division", 400, "INVALID_DIVISION");
+    }
+    if (
       updateData.stockItems &&
       (!Array.isArray(updateData.stockItems) ||
         updateData.stockItems.length === 0)
@@ -13785,6 +13801,7 @@ class MetalTransactionService {
       "remarks",
       "notes",
       "status",
+      "division",
     ];
 
     for (const [key, value] of Object.entries(updateData)) {
