@@ -7,6 +7,7 @@ import {
   verifyToken,
   createAdmin,
   getAdmins,
+  getAdminById,
 } from "../../../controllers/core/authController.js";
 
 import { authenticateToken } from "../../../middleware/authMiddleware.js";
@@ -22,6 +23,9 @@ router.post("/verify-token", authenticateToken, verifyToken);
 
 router.post("/", createAdmin);
 router.get("/admins", getAdmins)
+
+
+router.get("/by-id/:id", getAdminById)
 
 
 
