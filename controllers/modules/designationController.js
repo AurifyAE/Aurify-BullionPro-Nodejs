@@ -38,6 +38,7 @@ export const createDesignation = async (req, res) => {
 
 export const getAllDesignations = async (req, res, next) => {
   try {
+    console.log("on here")
     const designations = await Designation.find({ status: "active" })
       .select("name status permissions createdAt")
       .sort({ createdAt: -1 });
