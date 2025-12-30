@@ -408,25 +408,7 @@ export class StockAdjustmentService {
                     description: "Stock Adjustment",
                 });
 
-                if (stockDifference) {
-                    // STOCK ADJUSTMENT CASH/INVENTORY
-                    await this.createRegistryEntry({
-                        transactionType: "adjustment",
-                        assetType: "AED",
-                        transactionId: stockAdjustment[0]._id,
-                        reference: voucher.voucherNo,
-                        type: "STOCK_ADJUSTMENT",
-                        debit: stockDifference < 0 ? Math.abs(stockDifference) : 0,
-                        credit: stockDifference > 0 ? Math.abs(stockDifference) : 0,
-                        goldDebit: stockDifference < 0 ? Math.abs(stockDifference) : 0,
-                        goldCredit: stockDifference > 0 ? Math.abs(stockDifference) : 0,
-                        costCenter: "INVENTORY",
-                        createdBy: adminId,
-                        description: "Stock Adjustment",
-                    });
-                }
-
-                if (makingAmountDifference) {
+                if (stockDifference || makingAmountDifference) {
                     // STOCK ADJUSTMENT CASH/INVENTORY
                     await this.createRegistryEntry({
                         transactionType: "adjustment",
@@ -436,6 +418,10 @@ export class StockAdjustmentService {
                         type: "STOCK_ADJUSTMENT",
                         debit: makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0,
                         credit: makingAmountDifference > 0 ? Math.abs(makingAmountDifference) : 0,
+                        cashDebit: makingAmountDifference < 0 ? makingAmountDifference : 0,
+                        cashCredit: makingAmountDifference > 0 ? Math.abs(makingAmountDifference) : 0,
+                        goldDebit: stockDifference < 0 ? Math.abs(stockDifference) : 0,
+                        goldCredit: stockDifference > 0 ? Math.abs(stockDifference) : 0,
                         costCenter: "INVENTORY",
                         createdBy: adminId,
                         description: "Stock Adjustment",
