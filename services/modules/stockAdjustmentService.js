@@ -880,13 +880,17 @@ export class StockAdjustmentService {
                 transactionType: "adjustment",
                 transactionId: adjustment._id,
             }).session(session);
+            console.log("Deleted related registry entries");
+            console.log(id);
 
-            // 🚫 Mark voucher cancelled
-            adjustment.status = "Cancelled";
-            adjustment.cancelledBy = adminId;
-            adjustment.cancelledAt = new Date();
+            await StockAdjustment.deleteOne({ _id: id }).session(session);
 
-            await adjustment.save({ session });
+            // // 🚫 Mark voucher cancelled
+            // adjustment.status = "Cancelled";
+            // adjustment.cancelledBy = adminId;
+            // adjustment.cancelledAt = new Date();
+
+            // await adjustment.save({ session });
 
             await session.commitTransaction();
             session.endSession();
