@@ -44,6 +44,7 @@ export const createMetalTransaction = async (req, res, next) => {
       status = "draft",
       notes,
       dealOrderId,
+      division,
     } = req.body;
 
     console.log("CREATE METAL TRANSACTION BODY:", JSON.stringify(req.body, null, 2));
@@ -355,6 +356,7 @@ export const createMetalTransaction = async (req, res, next) => {
       status,
       notes: trim(notes),
       dealOrderId: dealOrderId ? trim(dealOrderId) : null,
+      division: division ? trim(division) : null,
     };
 
     // === CREATE IN SERVICE ===
@@ -422,6 +424,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       status = "draft",
       notes,
       dealOrderId,
+      division,
     } = req.body;
 
     // Required fields
@@ -682,7 +685,8 @@ export const updateMetalTransaction = async (req, res, next) => {
       salesman: salesman || null, // Store as ObjectId, not string
       status,
       notes: trim(notes),
-      dealOrderId: dealOrderId || null, // Pass dealOrderId to service
+      dealOrderId: dealOrderId ? trim(dealOrderId) : null,
+      division: division ? trim(division) : null,
     };
 
     const updated = await MetalTransactionService.updateMetalTransaction(
@@ -716,6 +720,7 @@ export const getAllMetalTransactions = async (req, res, next) => {
       endDate,
       stockCode,
       voucherType,
+      division,
     } = req.query;
 
     const filters = {};
@@ -724,10 +729,11 @@ export const getAllMetalTransactions = async (req, res, next) => {
     if (status) filters.status = status;
     if (voucherType) filters.voucherType = voucherType;
     if (stockCode) filters["stockItems.stockCode"] = stockCode;
+    if (division) filters.division = division;
     if (startDate || endDate) {
-      filters.voucherDate = {};
-      if (startDate) filters.voucherDate.$gte = new Date(startDate);
-      if (endDate) filters.voucherDate.$lte = new Date(endDate);
+      filters["voucherDate"] = {};
+      if (startDate) filters["voucherDate"].$gte = new Date(startDate);
+      if (endDate) filters["voucherDate"].$lte = new Date(endDate);
     }
 
     const result = await MetalTransactionService.getAllMetalTransactions(
@@ -936,9 +942,10 @@ export const getUnfixedTransactions = async (req, res, next) => {
       status,
       startDate,
       endDate,
+      division,
     } = req.query;
 
-    const filters = { transactionType, partyCode, status, startDate, endDate };
+    const filters = { transactionType, partyCode, status, startDate, endDate, division };
     Object.keys(filters).forEach((k) => !filters[k] && delete filters[k]);
 
     const result = await MetalTransactionService.getUnfixedTransactions(
@@ -980,9 +987,10 @@ export const getUnfixedTransactionsWithAccounts = async (req, res, next) => {
       status,
       startDate,
       endDate,
+      division,
     } = req.query;
 
-    const filters = { transactionType, partyCode, status, startDate, endDate };
+    const filters = { transactionType, partyCode, status, startDate, endDate, division };
     if (req.user?.id) filters.partyCode = req.user.id;
     Object.keys(filters).forEach((k) => !filters[k] && delete filters[k]);
 
