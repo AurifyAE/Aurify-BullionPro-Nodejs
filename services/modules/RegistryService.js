@@ -1979,7 +1979,7 @@ class RegistryService {
       },
     };
   }
-  
+
   static async generateOpeningFixingAuditTrail(purchaseFixingId) {
     if (!mongoose.Types.ObjectId.isValid(purchaseFixingId)) return null;
 
@@ -2027,7 +2027,7 @@ class RegistryService {
 
     // 1️⃣ Fetch ALL registry rows for this voucher
     const registries = await Registry.find({
-      reference,          // eg: MOP0001
+      reference, // eg: MOP0001
       isActive: true,
     })
       .sort({ createdAt: 1 })
@@ -2035,26 +2035,41 @@ class RegistryService {
 
     if (!registries.length) return null;
 
-    // 2️⃣ Build ledger entries (TYPE AWARE)
-    const entries = registries.map((r) => {
-      const isGoldStock = r.type === "GOLD_STOCK";
-      const isMakingCharges = r.type === "MAKING_CHARGES";
+    // 2️⃣ Aggregate registry rows (NO DUPLICATES)
+    const aggregatedMap = registries.reduce((acc, r) => {
+      const key = r.type; // GOLD_STOCK | MAKING_CHARGES
 
-      return {
-        description: r.type || "OPENING STOCK",
-        accCode: r.costCenter || "INVENTORY",
+      if (!acc[key]) {
+        acc[key] = {
+          description: r.type || "OPENING STOCK",
+          accCode: r.costCenter || "INVENTORY",
 
-        // 💰 CASH (Making Charges)
-        currencyDebit: isMakingCharges ? (r.debit || r.cashDebit || 0) : 0,
-        currencyCredit: isMakingCharges ? (r.credit || r.cashCredit || 0) : 0,
+          currencyDebit: 0,
+          currencyCredit: 0,
+          metalDebit: 0,
+          metalCredit: 0,
+        };
+      }
 
-        // 🪙 GOLD (Stock)
-        metalDebit: isGoldStock ? (r.goldDebit || r.debit || 0) : 0,
-        metalCredit: isGoldStock ? (r.goldCredit || r.credit || 0) : 0,
-      };
-    });
+      // 💰 CASH (Making Charges)
+      if (r.type === "MAKING_CHARGES") {
+        acc[key].currencyDebit += r.debit || r.cashDebit || 0;
+        acc[key].currencyCredit += r.credit || r.cashCredit || 0;
+      }
 
-    // 3️⃣ Calculate totals
+      // 🪙 GOLD (Stock)
+      if (r.type === "GOLD_STOCK") {
+        acc[key].metalDebit += r.goldDebit || r.debit || 0;
+        acc[key].metalCredit += r.goldCredit || r.credit || 0;
+      }
+
+      return acc;
+    }, {});
+
+    // 3️⃣ Build final audit entries (one row per type)
+    const entries = Object.values(aggregatedMap);
+
+    // 4️⃣ Calculate totals (from raw registry — accounting truth)
     const totals = registries.reduce(
       (acc, r) => {
         if (r.type === "MAKING_CHARGES") {
@@ -2077,11 +2092,12 @@ class RegistryService {
       }
     );
 
-    // 4️⃣ Final audit trail response
+    // 5️⃣ Final audit trail response
     return {
       transactionId: registries[0].transactionId,
       date: registries[0].transactionDate || registries[0].createdAt,
       reference,
+
       party: {
         name: "Inventory",
       },
@@ -2138,7 +2154,7 @@ class RegistryService {
 
       return {
         description: getLedgerDescription(r),
-        accCode: r.costCenter ||  `PARTY 0001 $- ${r.party?.name || "Inventory"}`,
+        accCode: r.costCenter || `PARTY 0001 $- ${r.party?.name || "Inventory"}`,
 
         // 💰 CASH
         currencyDebit: isCash ? (r.cashDebit || 0) : 0,
