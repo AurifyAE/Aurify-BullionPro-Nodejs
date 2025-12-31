@@ -151,20 +151,20 @@ export class StockAdjustmentService {
                 (data.toStock.avgAmount ?? 0) -
                 (data.fromData.avgAmount ?? 0);
 
-                console.log(makingAmountDifference)
+            console.log(makingAmountDifference)
 
             // Normalize values (ABS only)
             const cashDebit =
-                makingAmountDifference > 0 ? Math.abs(makingAmountDifference) : 0;
+                makingAmountDifference > 0 ? (makingAmountDifference) : 0;
 
             const cashCredit =
-                makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0;
+                makingAmountDifference < 0 ? (makingAmountDifference) : 0;
 
             const goldDebit =
-                stockDifference > 0 ? Math.abs(stockDifference) : 0;
+                stockDifference > 0 ? (stockDifference) : 0;
 
             const goldCredit =
-                stockDifference < 0 ? Math.abs(stockDifference) : 0;
+                stockDifference < 0 ? (stockDifference) : 0;
 
 
             await this.createRegistryEntry({
@@ -180,10 +180,8 @@ export class StockAdjustmentService {
                 value: 0,
                 purity: data.fromData.purity ?? 0,
 
-                debit: cashDebit,       // ALWAYS >= 0
-                credit: cashCredit,     // ALWAYS >= 0
-
-
+                debit: Math.abs(cashDebit),       // ALWAYS >= 0
+                credit: Math.abs(cashCredit),     // ALWAYS >= 0
                 cashDebit: Math.abs(cashDebit),
                 cashCredit: Math.abs(cashCredit),
                 goldDebit: Math.abs(goldDebit),
@@ -280,7 +278,7 @@ export class StockAdjustmentService {
                     lineNo: index + 1,
                     from: {
                         stockId: from.stockId,
-                        stockCode: from.stockCode, // ✅ REQUIRED
+                        stockCode: from.stockCode,
                         grossWeight: from.grossWeight,
                         purity: from.purity,
                         pureWeight: from.pureWeight,
@@ -289,7 +287,7 @@ export class StockAdjustmentService {
                     },
                     to: {
                         stockId: to.stockId,
-                        stockCode: to.stockCode, // ✅ REQUIRED
+                        stockCode: to.stockCode,
                         grossWeight: to.grossWeight,
                         purity: to.purity,
                         pureWeight: to.pureWeight,
@@ -325,17 +323,12 @@ export class StockAdjustmentService {
                 const stockDifference = to.pureWeight - from.pureWeight;
                 const makingAmountDifference = to.avgMakingAmount - from.avgMakingAmount;
 
-                const cashDebit =
-                    makingAmountDifference > 0 ? makingAmountDifference : 0;
 
-                const cashCredit =
-                    makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0;
-
-                const goldDebit =
-                    stockDifference < 0 ? Math.abs(stockDifference) : 0;
-
-                const goldCredit =
-                    stockDifference > 0 ? stockDifference : 0;
+                console.log("Stock Difference:", stockDifference, "Making Amount Difference:", makingAmountDifference);
+                const cashDebit = makingAmountDifference > 0 ? Math.abs(makingAmountDifference) : 0;
+                const cashCredit = makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0;
+                const goldDebit = stockDifference > 0 ? Math.abs(stockDifference) : 0;
+                const goldCredit = stockDifference < 0 ? Math.abs(stockDifference) : 0;
 
                 // Inventory Logs
                 await InventoryLog.insertMany(
@@ -382,8 +375,8 @@ export class StockAdjustmentService {
                     transactionId: stockAdjustment[0]._id,
                     reference: voucher.voucherNo,
                     type: "GOLD_STOCK",
-                    credit: from.pureWeight,
-                    goldCredit: from.pureWeight,
+                    credit: to.pureWeight,
+                    goldCredit: to.pureWeight,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Stock Adjustment",
@@ -395,8 +388,8 @@ export class StockAdjustmentService {
                     transactionId: stockAdjustment[0]._id,
                     reference: voucher.voucherNo,
                     type: "GOLD_STOCK",
-                    debit: to.pureWeight,
-                    goldDebit: to.pureWeight,
+                    debit: from.pureWeight,
+                    goldDebit: from.pureWeight,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Stock Adjustment",
@@ -409,7 +402,7 @@ export class StockAdjustmentService {
                     transactionId: stockAdjustment[0]._id,
                     reference: voucher.voucherNo,
                     type: "MAKING_CHARGES",
-                    credit: from.avgMakingAmount,
+                    credit: to.avgMakingAmount,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Stock Adjustment",
@@ -421,7 +414,7 @@ export class StockAdjustmentService {
                     transactionId: stockAdjustment[0]._id,
                     reference: voucher.voucherNo,
                     type: "MAKING_CHARGES",
-                    debit: to.avgMakingAmount,
+                    debit: from.avgMakingAmount,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Stock Adjustment",
@@ -435,12 +428,12 @@ export class StockAdjustmentService {
                         transactionId: stockAdjustment[0]._id,
                         reference: voucher.voucherNo,
                         type: "STOCK_ADJUSTMENT",
-                        debit: makingAmountDifference < 0 ? Math.abs(makingAmountDifference) : 0,
-                        credit: makingAmountDifference > 0 ? Math.abs(makingAmountDifference) : 0,
-                        cashDebit: makingAmountDifference < 0 ?  Math.abs(makingAmountDifference) : 0,
-                        cashCredit: makingAmountDifference > 0 ? Math.abs(makingAmountDifference) : 0,
-                        goldDebit: stockDifference < 0 ? Math.abs(stockDifference) : 0,
-                        goldCredit: stockDifference > 0 ? Math.abs(stockDifference) : 0,
+                        debit: cashDebit,
+                        credit: cashCredit,
+                        cashDebit: cashDebit,
+                        cashCredit: cashCredit,
+                        goldDebit: goldDebit,
+                        goldCredit: goldCredit,
                         costCenter: "INVENTORY",
                         createdBy: adminId,
                         description: "Stock Adjustment",
@@ -612,6 +605,8 @@ export class StockAdjustmentService {
                     throw createAppError("Stock master missing during reversal", 400);
                 }
 
+
+
                 await InventoryLog.insertMany(
                     [
                         {
@@ -710,6 +705,17 @@ export class StockAdjustmentService {
                     throw createAppError("Stock master missing during apply", 400);
                 }
 
+                const stockDifference = to.pureWeight - from.pureWeight;
+                const makingAmountDifference = to.avgMakingAmount - from.avgMakingAmount;
+
+
+                console.log("Stock Difference:", stockDifference, "Making Amount Difference:", makingAmountDifference);
+                const cashDebit = makingAmountDifference > 0 ? makingAmountDifference : 0;
+                const cashCredit = makingAmountDifference < 0 ? (makingAmountDifference) : 0;
+                const goldDebit = stockDifference > 0 ? (stockDifference) : 0;
+                const goldCredit = stockDifference < 0 ? stockDifference : 0;
+
+
                 // Inventory
                 await InventoryLog.insertMany(
                     [
@@ -754,8 +760,8 @@ export class StockAdjustmentService {
                     transactionId: existing._id,
                     reference: voucherNumber,
                     type: "GOLD_STOCK",
-                    credit: from.pureWeight,
-                    goldCredit: from.pureWeight,
+                    credit: to.pureWeight,
+                    goldCredit: to.pureWeight,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Stock Adjustment",
@@ -767,8 +773,8 @@ export class StockAdjustmentService {
                     transactionId: existing._id,
                     reference: voucherNumber,
                     type: "GOLD_STOCK",
-                    debit: to.pureWeight,
-                    goldDebit: to.pureWeight,
+                    debit: from.pureWeight,
+                    goldDebit: from.pureWeight,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Stock Adjustment",
@@ -781,7 +787,7 @@ export class StockAdjustmentService {
                     transactionId: existing._id,
                     reference: voucherNumber,
                     type: "MAKING_CHARGES",
-                    credit: from.avgMakingAmount,
+                    credit: to.avgMakingAmount,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Making Charges Adjustment",
@@ -793,11 +799,31 @@ export class StockAdjustmentService {
                     transactionId: existing._id,
                     reference: voucherNumber,
                     type: "MAKING_CHARGES",
-                    debit: to.avgMakingAmount,
+                    debit: from.avgMakingAmount,
                     costCenter: "INVENTORY",
                     createdBy: adminId,
                     description: "Making Charges Adjustment",
                 });
+                if (stockDifference || makingAmountDifference) {
+                    // STOCK ADJUSTMENT CASH/INVENTORY
+                    await this.createRegistryEntry({
+                        transactionType: "adjustment",
+                        assetType: "AED",
+                        transactionId: existing._id,
+                        reference: voucherNumber,
+                        type: "STOCK_ADJUSTMENT",
+                        debit: cashDebit,
+                        credit: cashCredit,
+                        cashDebit: cashDebit,
+                        cashCredit: cashCredit,
+                        goldDebit: goldDebit,
+                        goldCredit: goldCredit,
+                        costCenter: "INVENTORY",
+                        createdBy: adminId,
+                        description: "Stock Adjustment",
+                    });
+                }
+
             }
 
             await session.commitTransaction();
