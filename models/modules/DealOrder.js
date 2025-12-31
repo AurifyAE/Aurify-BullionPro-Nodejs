@@ -261,12 +261,17 @@ const DealOrderSchema = new mongoose.Schema(
     },
     transactionType: {
       type: String,
-      enum: ["purchase", "sale", "purchaseReturn", "saleReturn"],
+      enum: ["purchase", "sale", "purchaseReturn", "saleReturn", "importPurchase", "exportSale", "importPurchaseReturn", "exportSaleReturn"],
       required: true,
+    },
+    transactionSubType: {
+      type: String,
+      enum: ["purchase", "importPurchase", "sale", "exportSale", "purchaseReturn", "saleReturn", "importPurchaseReturn", "exportSaleReturn"],
+      default: null,
     },
     orderType: {
       type: String,
-      enum: ["PURCHASE", "SALES", "PURCHASE_RETURN", "SALES_RETURN"],
+      enum: ["PURCHASE", "SALES"],
       required: true,
     },
     partyCode: {
