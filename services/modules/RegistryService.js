@@ -2112,9 +2112,13 @@ class RegistryService {
 
       // STOCK DIFFERENCE
       if (r.type === "STOCK_ADJUSTMENT") {
-        agg.diffCash += (r.debit || 0) - (r.credit || 0);
-        agg.diffGold += (r.goldDebit || 0) - (r.goldCredit || 0);
+        // Cash
+        agg.diffCash += (r.credit ?? 0) - (r.debit ?? 0);
+
+        // Gold
+        agg.diffGold += (r.goldCredit ?? 0) - (r.goldDebit ?? 0);
       }
+
     }
 
     // -------------------------
@@ -2170,6 +2174,9 @@ class RegistryService {
       });
     }
 
+    console.log("Stock Adjustment Diff:");
+    console.log(agg.diffCash, agg.diffGold);
+
     // ⑤ Stock Difference (NET)
     if (
       Math.abs(agg.diffCash) > 0.0001 ||
@@ -2179,9 +2186,9 @@ class RegistryService {
         accCode: "STK001",
         description: "Stock Difference",
         currencyDebit: agg.diffCash < 0 ? Math.abs(agg.diffCash) : 0,
-        currencyCredit: agg.diffCash > 0 ? agg.diffCash : 0,
-        metalDebit: agg.diffGold > 0 ? agg.diffGold : 0,
-        metalCredit: agg.diffGold < 0 ? Math.abs(agg.diffGold) : 0,
+        currencyCredit: agg.diffCash > 0 ? Math.abs(agg.diffCash) : 0,
+        metalDebit: agg.diffGold < 0 ? Math.abs(agg.diffGold) : 0,
+        metalCredit: agg.diffGold > 0 ? Math.abs(agg.diffGold) : 0,
       });
     }
 
