@@ -173,7 +173,7 @@ const AccountSchema = new mongoose.Schema(
           },
           city: { type: String, trim: true, default: null },
           country: { type: String, trim: true, default: null },
-          zipCode: { type: String, trim: true,  default: null },
+          zipCode: { type: String, trim: true, default: null },
           phoneNumber1: {
             type: String,
             trim: true,
@@ -257,6 +257,36 @@ const AccountSchema = new mongoose.Schema(
 
     // VAT/GST Details
     vatGstDetails: vatGstDetailsSchema, // Changed to single embedded document
+
+    // zoho details
+    // Zoho Books Integration
+    zoho: {
+      contactId: {
+        type: String,
+        default: null,
+        index: true,
+      },
+      contactType: {
+        type: String,
+        enum: ["customer", "vendor", "both"],
+        default: null,
+      },
+      syncStatus: {
+        type: String,
+        enum: ["PENDING", "SYNCED", "FAILED"],
+        default: "PENDING",
+        index: true,
+      },
+      lastSyncedAt: {
+        type: Date,
+        default: null,
+      },
+      syncError: {
+        type: String,
+        default: null,
+      },
+    },
+
 
     // Bank Details
     bankDetails: {

@@ -12,6 +12,8 @@ import AccountMode from "../../models/modules/AccountMode.js";
 import Registry from "../../models/modules/Registry.js";
 import CurrencyMaster from "../../models/modules/CurrencyMaster.js";
 import mongoose from "mongoose";
+import { createZohoContact } from "../integrations/zohoBooks.service.js";
+import { getZohoConfig } from "../integrations/zohoToken.service.js";
 
 class AccountTypeService {
   // Create new trade debtor
@@ -66,8 +68,8 @@ class AccountTypeService {
         const validStatuses = ["REGISTERED", "UNREGISTERED", "EXEMPTED"];
         debtorData.vatGstDetails.vatStatus = debtorData.vatGstDetails.vatStatus
           ? validStatuses.includes(
-              debtorData.vatGstDetails.vatStatus.toUpperCase()
-            )
+            debtorData.vatGstDetails.vatStatus.toUpperCase()
+          )
             ? debtorData.vatGstDetails.vatStatus.toUpperCase()
             : "UNREGISTERED"
           : "UNREGISTERED";
@@ -169,6 +171,35 @@ class AccountTypeService {
       const tradeDebtor = new AccountType(debtorData);
       await tradeDebtor.save();
 
+      try {
+        const zohoConfig = await getZohoConfig(); // ✅ FROM DB
+        console.log("Zoho Config:", zohoConfig);
+
+        const zohoContact = await createZohoContact(tradeDebtor, {
+          accessToken: zohoConfig.accessToken,
+          orgId: zohoConfig.orgId,
+        });
+
+        tradeDebtor.zoho = {
+          contactId: zohoContact.contact_id,
+          syncStatus: "SYNCED",
+          lastSyncedAt: new Date(),
+          syncError: null,
+        };
+        await tradeDebtor.save();
+      } catch (err) {
+        console.error("Zoho contact creation failed:", err);
+        tradeDebtor.zoho = {
+          syncStatus: "FAILED",
+          syncError:
+            err.response?.data?.message ||
+            err.response?.data?.error ||
+            err.message,
+        };
+
+        await tradeDebtor.save();
+      }
+
       // 9. Populate response
       await tradeDebtor.populate([
         {
@@ -235,7 +266,7 @@ class AccountTypeService {
       if (
         normalizedCustomerName &&
         normalizedCustomerName !==
-          (tradeDebtor.customerName || "").toUpperCase()
+        (tradeDebtor.customerName || "").toUpperCase()
       ) {
         const nameExists = await AccountType.isCustomerNameExists(
           normalizedCustomerName,
@@ -256,8 +287,8 @@ class AccountTypeService {
         console.log("Update VAT/GST Details:", updateData.vatGstDetails);
         updateData.vatGstDetails.vatStatus = updateData.vatGstDetails.vatStatus
           ? validStatuses.includes(
-              updateData.vatGstDetails.vatStatus.toUpperCase()
-            )
+            updateData.vatGstDetails.vatStatus.toUpperCase()
+          )
             ? updateData.vatGstDetails.vatStatus.toUpperCase()
             : "UNREGISTERED"
           : "UNREGISTERED";
@@ -615,7 +646,7 @@ class AccountTypeService {
         const escapedNames = normalizedNames.map((n) =>
           n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
         );
-        
+
         // Use a more flexible regex that matches if the account mode name contains any of the search terms
         // This handles variations like "BALANCE SHEET / GENERAL", "BALANCE & GENERAL", "BALANCE SHEET", etc.
         const regexPattern = escapedNames.join("|");

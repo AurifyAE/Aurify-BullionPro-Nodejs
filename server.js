@@ -44,6 +44,10 @@ import designationRoutes from "./routes/modules/designationRoutes.js";
 import { mongodb } from "./config/db.js";
 import { errorHandler } from "./utils/errorHandler.js";
 
+
+import zohoOAuthRoutes from "./routes/integrations/zohoOAuthRoutes.js";
+
+
 dotenv.config();
 
 const app = express();
@@ -125,6 +129,9 @@ app.use("/api/v1/draftings", draftingRoutes);
 app.use("/api/v1/opening-fixing", openingFixingRoutes);
 app.use("/api/v1/opening-account-fixing", accountFixingRoutes);
 app.use("/api/v1/designations", designationRoutes);
+
+app.use("/api/integration/zoho", zohoOAuthRoutes);
+
 
 // Global error handling middleware
 app.use(errorHandler);
