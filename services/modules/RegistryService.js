@@ -1,6 +1,7 @@
 import { createAppError } from "../../utils/errorHandler.js";
 import Registry from "../../models/modules/Registry.js";
 import mongoose from "mongoose";
+import Account from "../../models/modules/AccountType.js";
 
 class RegistryService {
   // Create new registry entry
@@ -2368,27 +2369,32 @@ class RegistryService {
 
 
   static async generateOpeningAuditTrail(reference) {
+    // -------------------------
+    // Helpers
+    // -------------------------
     const getLedgerDescription = (r) => {
-      // GOLD
-      if (r.type === "GOLD" || r.type === "GOLD_STOCK" || r.type === "PARTY_GOLD_BALANCE") {
+      if (
+        r.type === "GOLD" ||
+        r.type === "GOLD_STOCK" ||
+        r.type === "PARTY_GOLD_BALANCE"
+      ) {
         return "GOLD";
       }
 
-      // CASH
       if (r.type === "PARTY_CASH_BALANCE") {
         return `CASH ${r.assetType || ""}`.trim(); // CASH AED / CASH USD
       }
 
-      // MAKING
       if (r.type === "MAKING_CHARGES") {
         return "MAKING CHARGES";
       }
 
       return "OPENING";
     };
-    console.log("Generating Audit Trail for:", reference);
 
-    // 1️⃣ Fetch ALL registry rows for voucher
+    // -------------------------
+    // 1️⃣ Fetch registry rows
+    // -------------------------
     const registries = await Registry.find({
       reference,
       isActive: true,
@@ -2398,10 +2404,42 @@ class RegistryService {
 
     if (!registries.length) return null;
 
-    // 2️⃣ Build ledger entries (ACCOUNTING-CORRECT)
+    // -------------------------
+    // 2️⃣ Preload party account codes (IMPORTANT)
+    // -------------------------
+    const partyIds = [
+      ...new Set(
+        registries
+          .map((r) => r.party)
+          .filter((id) => id)
+          .map(String)
+      ),
+    ];
+
+    const parties = partyIds.length
+      ? await Account.find(
+        { _id: { $in: partyIds } },
+        { accountCode: 1 }
+      ).lean()
+      : [];
+
+    const partyCodeMap = new Map(
+      parties.map((p) => [String(p._id), p.accountCode])
+    );
+
+    const getPartyCode = (r) => {
+      if (!r.party) return "INVENTORY";
+      return partyCodeMap.get(String(r.party)) || "INVENTORY";
+    };
+
+    // -------------------------
+    // 3️⃣ Build ledger entries
+    // -------------------------
     const entries = registries.map((r) => {
       const isGold =
-        r.type === "GOLD" || r.type === "GOLD_STOCK" || r.type === "PARTY_GOLD_BALANCE";
+        r.type === "GOLD" ||
+        r.type === "GOLD_STOCK" ||
+        r.type === "PARTY_GOLD_BALANCE";
 
       const isCash =
         r.type === "PARTY_CASH_BALANCE" ||
@@ -2409,38 +2447,27 @@ class RegistryService {
 
       return {
         description: getLedgerDescription(r),
-        accCode: r.costCenter || `PARTY 0001 $- ${r.party?.name || "Inventory"}`,
+        accCode: getPartyCode(r),
 
         // 💰 CASH
-        currencyDebit: isCash ? (r.cashDebit || 0) : 0,
-        currencyCredit: isCash ? (r.cashCredit || 0) : 0,
+        currencyDebit: isCash ? (r.cashDebit ?? 0) : 0,
+        currencyCredit: isCash ? (r.cashCredit ?? 0) : 0,
 
         // 🪙 GOLD
-        metalDebit: isGold ? (r.goldDebit || 0) : 0,
-        metalCredit: isGold ? (r.goldCredit || 0) : 0,
+        metalDebit: isGold ? (r.goldDebit ?? 0) : 0,
+        metalCredit: isGold ? (r.goldCredit ?? 0) : 0,
       };
     });
 
-    // 3️⃣ Totals
-    const totals = registries.reduce(
-      (acc, r) => {
-        const isGold =
-          r.type === "GOLD" || r.type === "GOLD_STOCK" || r.type === "PARTY_GOLD_BALANCE";
-
-        const isCash =
-          r.type === "PARTY_CASH_BALANCE" ||
-          r.type === "MAKING_CHARGES";
-
-        if (isCash) {
-          acc.currencyDebit += r.cashDebit || 0;
-          acc.currencyCredit += r.cashCredit || 0;
-        }
-
-        if (isGold) {
-          acc.metalDebit += r.goldDebit || 0;
-          acc.metalCredit += r.goldCredit || 0;
-        }
-
+    // -------------------------
+    // 4️⃣ Totals
+    // -------------------------
+    const totals = entries.reduce(
+      (acc, e) => {
+        acc.currencyDebit += e.currencyDebit;
+        acc.currencyCredit += e.currencyCredit;
+        acc.metalDebit += e.metalDebit;
+        acc.metalCredit += e.metalCredit;
         return acc;
       },
       {
@@ -2451,24 +2478,35 @@ class RegistryService {
       }
     );
 
-    // 4️⃣ Final Response
+    // -------------------------
+    // 5️⃣ Final response
+    // -------------------------
     return {
       transactionId: registries[0].transactionId,
       date: registries[0].transactionDate || registries[0].createdAt,
       reference,
 
       party: {
-        name: `PARTY 001 - ${registries[0].party?.name || "Inventory"}`,
+        name: getPartyCode(registries[0]),
       },
 
       entries,
 
       totals: {
-        currencyBalance: totals.currencyDebit - totals.currencyCredit,
-        metalBalance: totals.metalDebit - totals.metalCredit,
+        currencyDebit: Number(totals.currencyDebit.toFixed(2)),
+        currencyCredit: Number(totals.currencyCredit.toFixed(2)),
+        metalDebit: Number(totals.metalDebit.toFixed(3)),
+        metalCredit: Number(totals.metalCredit.toFixed(3)),
+        currencyBalance: Number(
+          (totals.currencyDebit - totals.currencyCredit).toFixed(2)
+        ),
+        metalBalance: Number(
+          (totals.metalDebit - totals.metalCredit).toFixed(3)
+        ),
       },
     };
   }
+
 
 }
 
