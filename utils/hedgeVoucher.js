@@ -11,16 +11,16 @@ import VoucherMasterService from '../services/modules/VoucherMasterService.js';
  */
 const TRANSACTION_TYPE_TO_MODULE = {
   // Receipt types (purchase-based) - use hedge-metal-receipt
-  purchase: "hedge-metal-purchase",
-  purchasereturn: "hedge-metal-purchase-return",
-  importpurchase: "hedge-metal-import-purchase",
-  importpurchasereturn: "hedge-metal-import-purchase-return",
+  purchase: "hedge-metal-sale",
+  purchasereturn: "hedge-metal-sale-return",
+  importpurchase: "hedge-metal-sale",
+  importpurchasereturn: "hedge-metal-sale-return",
   
   // Payment types (sale-based) - use hedge-metal-payment
-  sale: "hedge-metal-sale",
-  salereturn: "hedge-metal-sale-return",
-  exportsale: "hedge-metal-export-sale",
-  exportsalereturn: "hedge-metal-export-sale-return",
+  sale: "hedge-metal-purchase",
+  salereturn: "hedge-metal-purchase-return",
+  exportsale: "hedge-metal-purchase",
+  exportsalereturn: "hedge-metal-purchase-return",
 };
 
 /**
