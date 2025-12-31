@@ -217,7 +217,7 @@ class DealOrderService {
       .populate("stockItems.stockCode", "code description")
       .populate("partyCurrency", "currencyCode convertRate")
       .populate("itemCurrency", "currencyCode convertRate");
-
+      console.log("dealOrder:", dealOrder);
     if (!dealOrder) {
       throw createAppError("Deal order not found", 404, "DEAL_ORDER_NOT_FOUND");
     }

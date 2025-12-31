@@ -421,6 +421,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       salesman,
       status = "draft",
       notes,
+      dealOrderId,
     } = req.body;
 
     // Required fields
@@ -680,6 +681,7 @@ export const updateMetalTransaction = async (req, res, next) => {
       salesman: salesman || null, // Store as ObjectId, not string
       status,
       notes: trim(notes),
+      dealOrderId: dealOrderId || null, // Pass dealOrderId to service
     };
 
     const updated = await MetalTransactionService.updateMetalTransaction(
