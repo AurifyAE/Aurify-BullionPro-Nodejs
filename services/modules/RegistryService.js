@@ -1856,93 +1856,107 @@ class RegistryService {
     if (!registries.length) return null;
 
     const main = registries[0];
-    const entries = [];
 
-    let diffCash = 0;
-    let diffGold = 0;
+    // -------------------------
+    // 1️⃣ AGGREGATE (SOURCE OF TRUTH)
+    // -------------------------
+    const agg = {
+      making: { debit: 0, credit: 0 },
+      gold: { debit: 0, credit: 0 },
+      diffCash: 0,
+      diffGold: 0,
+    };
 
     for (const r of registries) {
-
-      // -------------------------
       // MAKING CHARGES
-      // -------------------------
       if (r.type === "MAKING_CHARGES") {
-        if (r.debit > 0) {
-          entries.push({
-            accCode: r.accountCode || "MAK001",
-            description: "Making Charges ",
-            currencyDebit: r.debit,
-            currencyCredit: 0,
-            metalDebit: 0,
-            metalCredit: 0,
-          });
-        }
-
-        if (r.credit > 0) {
-          entries.push({
-            accCode: r.accountCode || "MAK001",
-            description: "Making Charges",
-            currencyDebit: 0,
-            currencyCredit: r.credit,
-            metalDebit: 0,
-            metalCredit: 0,
-          });
-        }
+        agg.making.debit += r.debit || 0;
+        agg.making.credit += r.credit || 0;
       }
 
-      // -------------------------
       // GOLD STOCK
-      // -------------------------
       if (r.type === "GOLD_STOCK") {
-        if (r.goldDebit > 0) {
-          entries.push({
-            accCode: r.accountCode || "GOL001",
-            description: "Gold Stock ",
-            currencyDebit: 0,
-            currencyCredit: 0,
-            metalDebit: r.goldDebit,
-            metalCredit: 0,
-          });
-        }
-
-        if (r.goldCredit > 0) {
-          entries.push({
-            accCode: r.accountCode || "GOL001",
-            description: "Gold Stock ",
-            currencyDebit: 0,
-            currencyCredit: 0,
-            metalDebit: 0,
-            metalCredit: r.goldCredit,
-          });
-        }
+        agg.gold.debit += r.goldDebit || 0;
+        agg.gold.credit += r.goldCredit || 0;
       }
 
-      // -------------------------
       // STOCK DIFFERENCE
-      // -------------------------
       if (r.type === "STOCK_ADJUSTMENT") {
-
-        diffCash += (r.debit || 0) - (r.credit || 0);
-        diffGold += (r.goldDebit || 0) - (r.goldCredit || 0);
+        agg.diffCash += (r.debit || 0) - (r.credit || 0);
+        agg.diffGold += (r.goldDebit || 0) - (r.goldCredit || 0);
       }
     }
 
     // -------------------------
-    // FINAL STOCK DIFFERENCE ROW
+    // 2️⃣ BUILD FIXED AUDIT ROWS (MAX 5)
     // -------------------------
-    if (Math.abs(diffCash) > 0.0001 || Math.abs(diffGold) > 0.0001) {
+    const entries = [];
+
+    // ① Making Charges – Debit
+    if (agg.making.debit > 0) {
+      entries.push({
+        accCode: "MAK001",
+        description: "Making Charges",
+        currencyDebit: agg.making.debit,
+        currencyCredit: 0,
+        metalDebit: 0,
+        metalCredit: 0,
+      });
+    }
+
+    // ② Making Charges – Credit
+    if (agg.making.credit > 0) {
+      entries.push({
+        accCode: "MAK001",
+        description: "Making Charges",
+        currencyDebit: 0,
+        currencyCredit: agg.making.credit,
+        metalDebit: 0,
+        metalCredit: 0,
+      });
+    }
+
+    // ③ Gold Stock – Debit
+    if (agg.gold.debit > 0) {
+      entries.push({
+        accCode: "GOL001",
+        description: "Gold Stock",
+        currencyDebit: 0,
+        currencyCredit: 0,
+        metalDebit: agg.gold.debit,
+        metalCredit: 0,
+      });
+    }
+
+    // ④ Gold Stock – Credit
+    if (agg.gold.credit > 0) {
+      entries.push({
+        accCode: "GOL001",
+        description: "Gold Stock",
+        currencyDebit: 0,
+        currencyCredit: 0,
+        metalDebit: 0,
+        metalCredit: agg.gold.credit,
+      });
+    }
+
+    // ⑤ Stock Difference (NET)
+    if (
+      Math.abs(agg.diffCash) > 0.0001 ||
+      Math.abs(agg.diffGold) > 0.0001
+    ) {
       entries.push({
         accCode: "STK001",
         description: "Stock Difference",
-        currencyDebit: diffCash < 0 ? Math.abs(diffCash) : 0,
-        currencyCredit: diffCash > 0 ? diffCash : 0,
-        metalDebit: diffGold > 0 ? diffGold : 0,
-        metalCredit: diffGold < 0 ? Math.abs(diffGold) : 0,
+        currencyDebit: agg.diffCash < 0 ? Math.abs(agg.diffCash) : 0,
+        currencyCredit: agg.diffCash > 0 ? agg.diffCash : 0,
+        metalDebit: agg.diffGold > 0 ? agg.diffGold : 0,
+        metalCredit: agg.diffGold < 0 ? Math.abs(agg.diffGold) : 0,
       });
     }
 
     // -------------------------
-    // TOTALS
+    // 3️⃣ TOTALS
     // -------------------------
     const totals = entries.reduce(
       (a, e) => {
@@ -1955,11 +1969,14 @@ class RegistryService {
       { currencyDebit: 0, currencyCredit: 0, metalDebit: 0, metalCredit: 0 }
     );
 
+    // -------------------------
+    // 4️⃣ FINAL RESPONSE
+    // -------------------------
     return {
       metalTransactionId: null,
       transactionId: main.transactionId,
       reference: main.reference,
-      date: main.transactionDate,
+      date: main.transactionDate || main.createdAt,
       party: {
         name: "Inventory Adjustment",
         code: "INVENTORY",
@@ -1979,6 +1996,7 @@ class RegistryService {
       },
     };
   }
+
 
   static async generateOpeningFixingAuditTrail(purchaseFixingId) {
     if (!mongoose.Types.ObjectId.isValid(purchaseFixingId)) return null;
