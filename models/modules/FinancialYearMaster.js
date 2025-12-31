@@ -168,7 +168,8 @@ FinancialYearSchema.statics.hasDateOverlap = async function (
 
 // Get current active financial year
 FinancialYearSchema.statics.getCurrentFinancialYear = async function () {
-  const currentDate = new Date();
+  // Normalize current date to start of day (00:00:00) to ensure end date is included
+  const currentDate = normalizeDateToUTC(new Date());
   return await this.findOne({
     status: true,
     startDate: { $lte: currentDate },
@@ -180,11 +181,14 @@ FinancialYearSchema.statics.getCurrentFinancialYear = async function () {
 
 // Check if this financial year is current
 FinancialYearSchema.methods.isCurrent = function () {
-  const currentDate = new Date();
+  // Normalize current date to start of day (00:00:00) to ensure end date is included
+  const currentDate = normalizeDateToUTC(new Date());
+  const normalizedStart = normalizeDateToUTC(this.startDate);
+  const normalizedEnd = normalizeDateToUTC(this.endDate);
   return (
     this.status &&
-    this.startDate <= currentDate &&
-    this.endDate >= currentDate
+    normalizedStart <= currentDate &&
+    normalizedEnd >= currentDate
   );
 };
 
