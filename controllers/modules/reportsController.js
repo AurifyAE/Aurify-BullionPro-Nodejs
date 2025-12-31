@@ -19,10 +19,12 @@ export const getStockLedgerReports = async (req, res) => {
       message: reportData.totalRecords > 0
         ? `Metal stock ledger report generated successfully with ${reportData.totalRecords} records`
         : "No transactions found for the specified criteria",
-      data: reportData.data,
+      stocks: reportData.stocks || [], // Grouped by stock - PRIMARY RESPONSE
       summary: reportData.summary || null,
       totalRecords: reportData.totalRecords,
-      filters: reportData.filters
+      totalStocks: reportData.totalStocks || 0,
+      filters: reportData.filters,
+      appliedFilters: reportData.appliedFilters
     });
 
   } catch (error) {

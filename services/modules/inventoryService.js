@@ -210,28 +210,97 @@ class InventoryService {
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
         
-        // Inventory Log
-        await InventoryLog.create(
-          [
-            {
-              code: metal.code,
-              stockCode: metal._id,
-              voucherCode:
-                transaction.voucherNumber || item.voucherNumber || "",
-              voucherDate: transaction.voucherDate || item.voucherDate || new Date(),
-              voucherType: voucherType,
-              transactionType: transaction.transactionType,
-              pcs: item.pieces || 0,
-              grossWeight: item.grossWeight || 0,
-              pureWeight: (item.grossWeight * item.purity) / 100,
-              party: partyId,
-              action: isSale ? "remove" : "add",
-              createdBy: transaction.createdBy || null,
-              createdAt: new Date(),
-            },
-          ],
-          { session }
-        );
+        // Inventory Log - Main entry
+        const logEntries = [
+          {
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode:
+              transaction.voucherNumber || item.voucherNumber || "",
+            voucherDate: transaction.voucherDate || item.voucherDate || new Date(),
+            voucherType: voucherType,
+            transactionType: transaction.transactionType,
+            pcs: item.pieces || 0,
+            grossWeight: item.grossWeight || 0,
+            purity: item.purity || 0,
+            avgMakingRate: item.makingUnit?.makingRate || item.avgMakingRate || 0,
+            avgMakingAmount: item.makingUnit?.makingAmount || item.avgMakingAmount || 0,
+            premiumDiscountAmount: item.premiumDiscount?.type === "discount" 
+              ? -(Math.abs(item.premiumDiscount?.amount || 0)) // Discount = negative
+              : Math.abs(item.premiumDiscount?.amount || 0), // Premium = positive
+            premiumDiscountRate: item.premiumDiscount?.rate || 0,
+            purityDifference: item.purityDifference || 0,
+            isPurityDifferenceEntry: false,
+            party: partyId,
+            action: isSale ? "remove" : "add",
+            createdBy: transaction.createdBy || null,
+            createdAt: new Date(),
+          },
+        ];
+
+        // Create separate InventoryLog entry for purity difference gain/loss
+        const purityDiff = item.purityDifference || 0;
+        if (purityDiff !== 0) {
+          // Fetch the Registry entry with type "PURITY_DIFFERENCE" for this transaction
+          // Match by metalTransactionId, type, and party to find the correct registry entry
+          const purityDiffRegistry = await Registry.findOne({
+            metalTransactionId: transaction._id,
+            type: "PURITY_DIFFERENCE",
+            party: partyId || transaction.party?._id || transaction.party || transaction.partyCode,
+          }).session(session);
+
+          // Determine action based on registry debit/credit
+          // If debit > 0 → Gain → action = "add"
+          // If credit > 0 → Loss → action = "remove"
+          let action = "add"; // Default
+          let isGain = true;
+          
+          if (purityDiffRegistry) {
+            if (purityDiffRegistry.debit > 0) {
+              action = "add"; // Gain
+              isGain = true;
+            } else if (purityDiffRegistry.credit > 0) {
+              action = "remove"; // Loss
+              isGain = false;
+            } else {
+              // Fallback to purityDifference value if registry doesn't have debit/credit
+              isGain = purityDiff > 0;
+              action = isGain ? "add" : "remove";
+            }
+          } else {
+            // Fallback if registry entry not found yet
+            isGain = purityDiff > 0;
+            action = isGain ? "add" : "remove";
+          }
+
+          logEntries.push({
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode:
+              transaction.voucherNumber || item.voucherNumber || "",
+            voucherDate: transaction.voucherDate || item.voucherDate || new Date(),
+            voucherType: voucherType,
+            transactionType: transaction.transactionType,
+            pcs: 0,
+            grossWeight: 0, // Purity difference entries don't affect actual weight - only for reporting
+            purity: item.purity || 0,
+            avgMakingRate: 0,
+            avgMakingAmount: 0,
+            premiumDiscountAmount: 0,
+            premiumDiscountRate: 0,
+            purityDifference: purityDiff,
+            isPurityDifferenceEntry: true, // Mark as purity difference entry
+            party: partyId,
+            action: action, // Dynamically set based on registry debit/credit
+            createdBy: transaction.createdBy || null,
+            createdAt: new Date(),
+            note: isGain
+              ? `Purity difference gain: ${purityDiff} (for reporting only)`
+              : `Purity difference loss: ${Math.abs(purityDiff)} (for reporting only)`,
+          });
+        }
+
+        await InventoryLog.create(logEntries, { session });
       }
     } catch (error) {
       if (error.name === "AppError") throw error;
@@ -244,7 +313,10 @@ class InventoryService {
   }
   static async fetchInvLogs() {
     try {
-      const logs = await InventoryLog.find().sort({ createdAt: -1 });
+      // Exclude purity difference entries (gain/loss) - these are only for reports
+      const logs = await InventoryLog.find({
+        isPurityDifferenceEntry: { $ne: true } // Exclude purity difference entries
+      }).sort({ createdAt: -1 });
       return logs;
     } catch (error) {
       throw createAppError(
@@ -259,7 +331,11 @@ class InventoryService {
     console.log("inventoryId", inventoryId);
     console.log("Fetching logs for inventoryId", inventoryId);
     try {
-      const logs = await InventoryLog.find({ stockCode: new mongoose.Types.ObjectId(inventoryId) });
+      // Exclude purity difference entries (gain/loss) - these are only for reports
+      const logs = await InventoryLog.find({ 
+        stockCode: new mongoose.Types.ObjectId(inventoryId),
+        isPurityDifferenceEntry: { $ne: true } // Exclude purity difference entries
+      });
       return logs;
     } catch (error) {
       throw createAppError(
@@ -285,10 +361,11 @@ class InventoryService {
       console.log(`[GOLD_BALANCE] Total logs: ${totalLogs}, Non-draft logs: ${nonDraftLogs}`);
 
       const pipeline = [
-        // 1. Filter out draft logs (only finalized transactions)
+        // 1. Filter out draft logs and purity difference entries (only finalized transactions, exclude purity gain/loss)
         {
           $match: {
-            isDraft: { $ne: true }
+            isDraft: { $ne: true },
+            isPurityDifferenceEntry: { $ne: true } // Exclude purity difference entries (only for reports)
           }
         },
         // 2. Lookup MetalStock to get standardPurity (do this BEFORE grouping)
@@ -873,7 +950,8 @@ class InventoryService {
       // --------------------------------------------------
       const draftLogs = await InventoryLog.find({
         stockCode: new mongoose.Types.ObjectId(inventoryId),
-        isDraft: true
+        isDraft: true,
+        isPurityDifferenceEntry: { $ne: true } // Exclude purity difference entries (only for reports)
       })
         .populate("draftId", "draftNumber transactionId status")
         .populate("party", "customerName accountCode")
@@ -1023,6 +1101,10 @@ class InventoryService {
         purity: purity,
         avgMakingRate: avgMakingRate,
         avgMakingAmount: avgMakingAmount,
+        premiumDiscountAmount: 0,
+        premiumDiscountRate: 0,
+        purityDifference: 0,
+        isPurityDifferenceEntry: false,
       });
 
       const res = await this.createRegistryEntry({
@@ -1171,33 +1253,102 @@ class InventoryService {
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
 
-        // Log entry
-        await InventoryLog.create(
-          [
-            {
-              code: metal.code,
-              stockCode: metal._id,
-              voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
-              voucherDate: transaction.voucherDate || new Date(),
-              voucherType: voucherType,
-              grossWeight: item.grossWeight || 0,
-              party: partyId,
-              avgMakingAmount: item.makingUnit?.makingAmount || 0,
-              avgMakingRate: item.makingUnit?.makingRate || 0,
-              action: isSale ? "remove" : "add",
-              transactionType:
-                transaction.transactionType ||
-                item.transactionType ||
-                (isSale ? "sale" : "purchase"),
-              createdBy: transaction.createdBy || admin || null,
-              pcs: item.pieces,
-              note: isSale
-                ? "Inventory reduced due to sale transaction"
-                : "Inventory increased due to purchase transaction",
-            },
-          ],
-          { session }
-        );
+        // Log entry - Main entry
+        const logEntries = [
+          {
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
+            voucherDate: transaction.voucherDate || new Date(),
+            voucherType: voucherType,
+            grossWeight: item.grossWeight || 0,
+            party: partyId,
+            purity: item.purity || 0,
+            avgMakingAmount: item.makingUnit?.makingAmount || 0,
+            avgMakingRate: item.makingUnit?.makingRate || 0,
+            premiumDiscountAmount: item.premiumDiscount?.type === "discount" 
+              ? -(Math.abs(item.premiumDiscount?.amount || 0)) // Discount = negative
+              : Math.abs(item.premiumDiscount?.amount || 0), // Premium = positive
+            premiumDiscountRate: item.premiumDiscount?.rate || 0,
+            purityDifference: item.purityDifference || 0,
+            isPurityDifferenceEntry: false,
+            action: isSale ? "remove" : "add",
+            transactionType:
+              transaction.transactionType ||
+              item.transactionType ||
+              (isSale ? "sale" : "purchase"),
+            createdBy: transaction.createdBy || admin || null,
+            pcs: item.pieces,
+            note: isSale
+              ? "Inventory reduced due to sale transaction"
+              : "Inventory increased due to purchase transaction",
+          },
+        ];
+
+        // Create separate InventoryLog entry for purity difference gain/loss
+        const purityDiff = item.purityDifference || 0;
+        if (purityDiff !== 0) {
+          // Fetch the Registry entry with type "PURITY_DIFFERENCE" for this transaction
+          // Match by metalTransactionId, type, and party to find the correct registry entry
+          const purityDiffRegistry = await Registry.findOne({
+            metalTransactionId: transaction._id,
+            type: "PURITY_DIFFERENCE",
+            party: partyId || transaction.party?._id || transaction.party || transaction.partyCode,
+          }).session(session);
+
+          // Determine action based on registry debit/credit
+          // If debit > 0 → Gain → action = "add"
+          // If credit > 0 → Loss → action = "remove"
+          let action = "add"; // Default
+          let isGain = true;
+          
+          if (purityDiffRegistry) {
+            if (purityDiffRegistry.debit > 0) {
+              action = "add"; // Gain
+              isGain = true;
+            } else if (purityDiffRegistry.credit > 0) {
+              action = "remove"; // Loss
+              isGain = false;
+            } else {
+              // Fallback to purityDifference value if registry doesn't have debit/credit
+              isGain = purityDiff > 0;
+              action = isGain ? "add" : "remove";
+            }
+          } else {
+            // Fallback if registry entry not found yet
+            isGain = purityDiff > 0;
+            action = isGain ? "add" : "remove";
+          }
+
+          logEntries.push({
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode: transaction.voucherNumber || item.voucherNumber || `TX-${transaction._id}`,
+            voucherDate: transaction.voucherDate || new Date(),
+            voucherType: voucherType,
+            grossWeight: 0, // Purity difference entries don't affect actual weight - only for reporting
+            party: partyId,
+            purity: item.purity || 0,
+            avgMakingAmount: 0,
+            avgMakingRate: 0,
+            premiumDiscountAmount: 0,
+            premiumDiscountRate: 0,
+            purityDifference: purityDiff,
+            isPurityDifferenceEntry: true, // Mark as purity difference entry
+            action: action, // Dynamically set based on registry debit/credit
+            transactionType:
+              transaction.transactionType ||
+              item.transactionType ||
+              (isSale ? "sale" : "purchase"),
+            createdBy: transaction.createdBy || admin || null,
+            pcs: 0,
+            note: isGain
+              ? `Purity difference gain: ${purityDiff} (for reporting only)`
+              : `Purity difference loss: ${Math.abs(purityDiff)} (for reporting only)`,
+          });
+        }
+
+        await InventoryLog.create(logEntries, { session });
       }
 
       console.log("✅ [updateInventory] Completed successfully");

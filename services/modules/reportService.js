@@ -35,10 +35,15 @@ export class ReportService {
 
       return {
         success: true,
-        data: formattedData.transactions,
+        stocks: formattedData.stocks, // Array of stocks, each with grouped transactions - PRIMARY RESPONSE
         summary: formattedData.summary,
         filters: validatedFilters,
         totalRecords: reportData.length,
+        totalStocks: formattedData.stocks.length,
+        appliedFilters: formattedData.appliedFilters,
+        // Backward compatibility fields
+        data: formattedData.transactions, // All transactions (flat array) - for backward compatibility
+        groupedByStock: formattedData.groupedByStock, // Object format - for backward compatibility
       };
     } catch (error) {
       throw new Error(
@@ -1897,6 +1902,186 @@ export class ReportService {
       },
     });
 
+    // Step 6.1: Lookup MainCategory (category)
+    pipeline.push({
+      $lookup: {
+        from: "maincategories",
+        localField: "stockDetails.category",
+        foreignField: "_id",
+        as: "categoryDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$categoryDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6.2: Lookup SubCategory
+    pipeline.push({
+      $lookup: {
+        from: "subcategories",
+        localField: "stockDetails.subCategory",
+        foreignField: "_id",
+        as: "subCategoryDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$subCategoryDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6.3: Lookup DivisionMaster (metalType)
+    pipeline.push({
+      $lookup: {
+        from: "divisionmasters",
+        localField: "stockDetails.metalType",
+        foreignField: "_id",
+        as: "metalTypeDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$metalTypeDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6.4: Lookup Brand
+    pipeline.push({
+      $lookup: {
+        from: "brands",
+        localField: "stockDetails.brand",
+        foreignField: "_id",
+        as: "brandDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$brandDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6.5: Lookup Type
+    pipeline.push({
+      $lookup: {
+        from: "types",
+        localField: "stockDetails.type",
+        foreignField: "_id",
+        as: "typeDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$typeDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6.6: Lookup Size
+    pipeline.push({
+      $lookup: {
+        from: "sizes",
+        localField: "stockDetails.size",
+        foreignField: "_id",
+        as: "sizeDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$sizeDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6.7: Lookup Color
+    pipeline.push({
+      $lookup: {
+        from: "colors",
+        localField: "stockDetails.color",
+        foreignField: "_id",
+        as: "colorDetails",
+      },
+    });
+
+    pipeline.push({
+      $unwind: {
+        path: "$colorDetails",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // Step 6.8: Apply groupByRange filters (after all lookups)
+    if (filters.groupByRange) {
+      const matchConditions = {};
+      
+      // Filter by stockCode
+      if (filters.groupByRange.stockCode?.length > 0) {
+        matchConditions["stockDetails._id"] = { 
+          $in: filters.groupByRange.stockCode.map(id => new ObjectId(id)) 
+        };
+      }
+      
+      // Filter by categoryCode
+      if (filters.groupByRange.categoryCode?.length > 0) {
+        matchConditions["stockDetails.category"] = { 
+          $in: filters.groupByRange.categoryCode.map(id => new ObjectId(id)) 
+        };
+      }
+      
+      // Filter by karat
+      if (filters.groupByRange.karat?.length > 0) {
+        matchConditions["stockDetails.karat"] = { 
+          $in: filters.groupByRange.karat.map(id => new ObjectId(id)) 
+        };
+      }
+      
+      // Filter by type
+      if (filters.groupByRange.type?.length > 0) {
+        matchConditions["stockDetails.type"] = { 
+          $in: filters.groupByRange.type.map(id => new ObjectId(id)) 
+        };
+      }
+      
+      // Filter by size
+      if (filters.groupByRange.size?.length > 0) {
+        matchConditions["stockDetails.size"] = { 
+          $in: filters.groupByRange.size.map(id => new ObjectId(id)) 
+        };
+      }
+      
+      // Filter by color
+      if (filters.groupByRange.color?.length > 0) {
+        matchConditions["stockDetails.color"] = { 
+          $in: filters.groupByRange.color.map(id => new ObjectId(id)) 
+        };
+      }
+      
+      // Filter by brand
+      if (filters.groupByRange.brand?.length > 0) {
+        matchConditions["stockDetails.brand"] = { 
+          $in: filters.groupByRange.brand.map(id => new ObjectId(id)) 
+        };
+      }
+      
+      // Apply filters if any conditions exist
+      if (Object.keys(matchConditions).length > 0) {
+        pipeline.push({
+          $match: matchConditions
+        });
+      }
+    }
+
     // Step 7: Lookup Party (Account) details
     pipeline.push({
       $lookup: {
@@ -1940,13 +2125,14 @@ export class ReportService {
       },
     });
 
-    // Step 9: Calculate pure weight and separate in/out
+    // Step 9: Calculate pure weight using grossWeight * purity (purity is already in decimal format 0-1)
     pipeline.push({
       $addFields: {
+        // Pure weight = grossWeight * purity (purity is stored as decimal 0-1)
         pureWeight: {
           $multiply: [
             { $toDouble: { $ifNull: ["$grossWeight", 0] } },
-            { $ifNull: ["$effectivePurity", 0] }
+            { $toDouble: { $ifNull: ["$purity", 0] } }
           ]
         },
         // Pure weight in (when action is "add")
@@ -1956,7 +2142,7 @@ export class ReportService {
             {
               $multiply: [
                 { $toDouble: { $ifNull: ["$grossWeight", 0] } },
-                { $ifNull: ["$effectivePurity", 0] }
+                { $toDouble: { $ifNull: ["$purity", 0] } }
               ]
             },
             0
@@ -1969,7 +2155,7 @@ export class ReportService {
             {
               $multiply: [
                 { $toDouble: { $ifNull: ["$grossWeight", 0] } },
-                { $ifNull: ["$effectivePurity", 0] }
+                { $toDouble: { $ifNull: ["$purity", 0] } }
               ]
             },
             0
@@ -2028,6 +2214,54 @@ export class ReportService {
             0
           ]
         },
+        // Premium/Discount handling
+        premiumDiscountAmount: { $toDouble: { $ifNull: ["$premiumDiscountAmount", 0] } },
+        premiumDiscountRate: { $toDouble: { $ifNull: ["$premiumDiscountRate", 0] } },
+        // Separate premium and discount amounts for clarity
+        premiumAmount: {
+          $cond: [
+            { $gt: [{ $toDouble: { $ifNull: ["$premiumDiscountAmount", 0] } }, 0] },
+            { $toDouble: { $ifNull: ["$premiumDiscountAmount", 0] } },
+            0
+          ]
+        },
+        discountAmount: {
+          $cond: [
+            { $lt: [{ $toDouble: { $ifNull: ["$premiumDiscountAmount", 0] } }, 0] },
+            { $abs: { $toDouble: { $ifNull: ["$premiumDiscountAmount", 0] } } },
+            0
+          ]
+        },
+        // Purity difference handling
+        purityDifference: { $toDouble: { $ifNull: ["$purityDifference", 0] } },
+        isPurityDifferenceEntry: { $ifNull: ["$isPurityDifferenceEntry", false] },
+        // Purity difference gain/loss
+        purityDifferenceGain: {
+          $cond: [
+            {
+              $and: [
+                { $ne: [{ $ifNull: ["$purityDifference", 0] }, 0] },
+                { $gt: [{ $ifNull: ["$purityDifference", 0] }, 0] },
+                { $ifNull: ["$isPurityDifferenceEntry", false] }
+              ]
+            },
+            { $abs: { $ifNull: ["$purityDifference", 0] } },
+            0
+          ]
+        },
+        purityDifferenceLoss: {
+          $cond: [
+            {
+              $and: [
+                { $ne: [{ $ifNull: ["$purityDifference", 0] }, 0] },
+                { $lt: [{ $ifNull: ["$purityDifference", 0] }, 0] },
+                { $ifNull: ["$isPurityDifferenceEntry", false] }
+              ]
+            },
+            { $abs: { $ifNull: ["$purityDifference", 0] } },
+            0
+          ]
+        },
       },
     });
 
@@ -2050,9 +2284,31 @@ export class ReportService {
         },
         stockCode: { $ifNull: ["$stockDetails.code", "N/A"] },
         stockId: "$stockCode",
+        stockDescription: { $ifNull: ["$stockDetails.description", "N/A"] },
         karatId: "$stockDetails.karat",
         karatCode: { $ifNull: ["$karatDetails.karatCode", "N/A"] },
         karatDescription: { $ifNull: ["$karatDetails.description", "N/A"] },
+        categoryId: "$stockDetails.category",
+        categoryCode: { $ifNull: ["$categoryDetails.code", "N/A"] },
+        categoryName: { $ifNull: ["$categoryDetails.name", "N/A"] },
+        subCategoryId: "$stockDetails.subCategory",
+        subCategoryCode: { $ifNull: ["$subCategoryDetails.code", "N/A"] },
+        subCategoryName: { $ifNull: ["$subCategoryDetails.name", "N/A"] },
+        metalTypeId: "$stockDetails.metalType",
+        metalTypeCode: { $ifNull: ["$metalTypeDetails.code", "N/A"] },
+        metalTypeName: { $ifNull: ["$metalTypeDetails.description", "N/A"] },
+        brandId: "$stockDetails.brand",
+        brandCode: { $ifNull: ["$brandDetails.code", "N/A"] },
+        brandName: { $ifNull: ["$brandDetails.name", "N/A"] },
+        typeId: "$stockDetails.type",
+        typeCode: { $ifNull: ["$typeDetails.code", "N/A"] },
+        typeName: { $ifNull: ["$typeDetails.name", "N/A"] },
+        sizeId: "$stockDetails.size",
+        sizeCode: { $ifNull: ["$sizeDetails.code", "N/A"] },
+        sizeName: { $ifNull: ["$sizeDetails.name", "N/A"] },
+        colorId: "$stockDetails.color",
+        colorCode: { $ifNull: ["$colorDetails.code", "N/A"] },
+        colorName: { $ifNull: ["$colorDetails.name", "N/A"] },
         grossWeight: { $toDouble: { $ifNull: ["$grossWeight", 0] } },
         grossWeightIn: 1,
         grossWeightOut: 1,
@@ -2065,15 +2321,24 @@ export class ReportService {
         avgMakingAmount: { $toDouble: { $ifNull: ["$avgMakingAmount", 0] } },
         makingAmountIn: 1,
         makingAmountOut: 1,
+        premiumDiscountAmount: 1,
+        premiumDiscountRate: 1,
+        premiumAmount: 1,
+        discountAmount: 1,
+        purityDifference: 1,
+        isPurityDifferenceEntry: 1,
+        purityDifferenceGain: 1,
+        purityDifferenceLoss: 1,
         pcs: { $ifNull: ["$pcs", 0] },
         note: 1,
         timestamp: 1,
       },
     });
 
-    // Step 11: Sort by date (FIFO - First In First Out) - ascending order
+    // Step 11: Sort by stock code, then date (FIFO - First In First Out) - ascending order
     pipeline.push({
       $sort: { 
+        stockCode: 1,    // Group by stock code first
         voucherDate: 1,  // Ascending for FIFO
         timestamp: 1      // Secondary sort by timestamp for same date
       }
@@ -2089,6 +2354,7 @@ export class ReportService {
     if (!reportData || reportData.length === 0) {
       return {
         transactions: [],
+        groupedByStock: {},
         summary: {
           totalTransactions: 0,
           totalGrossWeightIn: 0,
@@ -2097,6 +2363,11 @@ export class ReportService {
           totalPureWtOut: 0,
           totalMakingAmountIn: 0,
           totalMakingAmountOut: 0,
+          totalPremiumDiscountAmount: 0,
+          totalPremiumAmount: 0,
+          totalDiscountAmount: 0,
+          totalPurityDifferenceGain: 0,
+          totalPurityDifferenceLoss: 0,
           netGrossWeight: 0,
           netPureWeight: 0,
           netMakingAmount: 0,
@@ -2105,37 +2376,136 @@ export class ReportService {
       };
     }
 
-    // Calculate summary statistics
-    const summary = reportData.reduce(
-      (acc, item) => {
-        acc.totalTransactions += 1;
-        acc.totalGrossWeightIn += item.grossWeightIn || 0;
-        acc.totalGrossWeightOut += item.grossWeightOut || 0;
-        acc.totalPureWtIn += item.pureWtIn || 0;
-        acc.totalPureWtOut += item.pureWtOut || 0;
-        acc.totalMakingAmountIn += item.makingAmountIn || 0;
-        acc.totalMakingAmountOut += item.makingAmountOut || 0;
-        return acc;
-      },
-      {
-        totalTransactions: 0,
-        totalGrossWeightIn: 0,
-        totalGrossWeightOut: 0,
-        totalPureWtIn: 0,
-        totalPureWtOut: 0,
-        totalMakingAmountIn: 0,
-        totalMakingAmountOut: 0,
+    // Group transactions by stock code
+    const groupedByStock = {};
+    const summary = {
+      totalTransactions: 0,
+      totalGrossWeightIn: 0,
+      totalGrossWeightOut: 0,
+      totalPureWtIn: 0,
+      totalPureWtOut: 0,
+      totalMakingAmountIn: 0,
+      totalMakingAmountOut: 0,
+      totalPremiumDiscountAmount: 0,
+      totalPremiumAmount: 0,
+      totalDiscountAmount: 0,
+      totalPurityDifferenceGain: 0,
+      totalPurityDifferenceLoss: 0,
+    };
+
+    // Separate regular transactions from purity difference entries
+    const regularTransactions = [];
+    const purityDifferenceEntries = [];
+    
+    reportData.forEach((item) => {
+      if (item.isPurityDifferenceEntry) {
+        purityDifferenceEntries.push(item);
+      } else {
+        regularTransactions.push(item);
       }
-    );
+    });
 
-    // Calculate net values
-    summary.netGrossWeight = summary.totalGrossWeightIn - summary.totalGrossWeightOut;
-    summary.netPureWeight = summary.totalPureWtIn - summary.totalPureWtOut;
-    summary.netMakingAmount = summary.totalMakingAmountIn - summary.totalMakingAmountOut;
+    // Create a map of purity difference entries by voucher key (voucherCode + stockCode + voucherDate)
+    const purityDiffMap = new Map();
+    purityDifferenceEntries.forEach((entry) => {
+      const voucherKey = `${entry.voucherCode || ""}_${entry.stockCode || ""}_${entry.voucherDate ? moment(entry.voucherDate).format("YYYY-MM-DD") : ""}`;
+      purityDiffMap.set(voucherKey, entry);
+    });
 
-    // Format individual transactions
-    const transactions = reportData.map((item) => {
-      return {
+    // Format individual transactions and merge purity difference entries
+    const transactions = regularTransactions.map((item) => {
+      const stockCode = item.stockCode || "N/A";
+      
+      // Initialize stock group if not exists
+      if (!groupedByStock[stockCode]) {
+        groupedByStock[stockCode] = {
+          stockCode: stockCode,
+          stockId: item.stockId,
+          stockDescription: item.stockDescription || "N/A",
+          karatId: item.karatId,
+          karatCode: item.karatCode,
+          karatDescription: item.karatDescription,
+          categoryId: item.categoryId,
+          categoryCode: item.categoryCode,
+          categoryName: item.categoryName,
+          subCategoryId: item.subCategoryId,
+          subCategoryCode: item.subCategoryCode,
+          subCategoryName: item.subCategoryName,
+          metalTypeId: item.metalTypeId,
+          metalTypeCode: item.metalTypeCode,
+          metalTypeName: item.metalTypeName,
+          brandId: item.brandId,
+          brandCode: item.brandCode,
+          brandName: item.brandName,
+          typeId: item.typeId,
+          typeCode: item.typeCode,
+          typeName: item.typeName,
+          sizeId: item.sizeId,
+          sizeCode: item.sizeCode,
+          sizeName: item.sizeName,
+          colorId: item.colorId,
+          colorCode: item.colorCode,
+          colorName: item.colorName,
+          transactions: [],
+          stockSummary: {
+            totalTransactions: 0,
+            totalGrossWeightIn: 0,
+            totalGrossWeightOut: 0,
+            totalPureWtIn: 0,
+            totalPureWtOut: 0,
+            totalMakingAmountIn: 0,
+            totalMakingAmountOut: 0,
+            totalPremiumDiscountAmount: 0,
+            totalPremiumAmount: 0,
+            totalDiscountAmount: 0,
+            totalPurityDifferenceGain: 0,
+            totalPurityDifferenceLoss: 0,
+            netGrossWeight: 0,
+            netPureWeight: 0,
+            netMakingAmount: 0,
+          },
+        };
+      }
+
+      // Find matching purity difference entry for this transaction
+      const voucherKey = `${item.voucherCode || ""}_${item.stockCode || ""}_${item.voucherDate ? moment(item.voucherDate).format("YYYY-MM-DD") : ""}`;
+      const purityDiffEntry = purityDiffMap.get(voucherKey);
+
+      // Merge purity difference data into main transaction
+      const mergedPurityDifferenceGain = purityDiffEntry ? (purityDiffEntry.purityDifferenceGain || 0) : (item.purityDifferenceGain || 0);
+      const mergedPurityDifferenceLoss = purityDiffEntry ? (purityDiffEntry.purityDifferenceLoss || 0) : (item.purityDifferenceLoss || 0);
+      const mergedPurityDifference = purityDiffEntry ? (purityDiffEntry.purityDifference || 0) : (item.purityDifference || 0);
+
+      // Calculate stock-level summary (only count regular transactions, but include merged purity difference)
+      const stockSummary = groupedByStock[stockCode].stockSummary;
+      stockSummary.totalTransactions += 1;
+      stockSummary.totalGrossWeightIn += item.grossWeightIn || 0;
+      stockSummary.totalGrossWeightOut += item.grossWeightOut || 0;
+      stockSummary.totalPureWtIn += item.pureWtIn || 0;
+      stockSummary.totalPureWtOut += item.pureWtOut || 0;
+      stockSummary.totalMakingAmountIn += item.makingAmountIn || 0;
+      stockSummary.totalMakingAmountOut += item.makingAmountOut || 0;
+      stockSummary.totalPremiumDiscountAmount += item.premiumDiscountAmount || 0;
+      stockSummary.totalPremiumAmount += item.premiumAmount || 0;
+      stockSummary.totalDiscountAmount += item.discountAmount || 0;
+      stockSummary.totalPurityDifferenceGain += mergedPurityDifferenceGain;
+      stockSummary.totalPurityDifferenceLoss += mergedPurityDifferenceLoss;
+
+      // Calculate overall summary
+      summary.totalTransactions += 1;
+      summary.totalGrossWeightIn += item.grossWeightIn || 0;
+      summary.totalGrossWeightOut += item.grossWeightOut || 0;
+      summary.totalPureWtIn += item.pureWtIn || 0;
+      summary.totalPureWtOut += item.pureWtOut || 0;
+      summary.totalMakingAmountIn += item.makingAmountIn || 0;
+      summary.totalMakingAmountOut += item.makingAmountOut || 0;
+      summary.totalPremiumDiscountAmount += item.premiumDiscountAmount || 0;
+      summary.totalPremiumAmount += item.premiumAmount || 0;
+      summary.totalDiscountAmount += item.discountAmount || 0;
+      summary.totalPurityDifferenceGain += mergedPurityDifferenceGain;
+      summary.totalPurityDifferenceLoss += mergedPurityDifferenceLoss;
+
+      const transaction = {
         id: item._id,
         code: item.code,
         voucherCode: item.voucherCode || "N/A",
@@ -2147,9 +2517,31 @@ export class ReportService {
         partyName: item.partyName,
         stockCode: item.stockCode,
         stockId: item.stockId,
+        stockDescription: item.stockDescription,
         karatId: item.karatId,
         karatCode: item.karatCode,
         karatDescription: item.karatDescription,
+        categoryId: item.categoryId,
+        categoryCode: item.categoryCode,
+        categoryName: item.categoryName,
+        subCategoryId: item.subCategoryId,
+        subCategoryCode: item.subCategoryCode,
+        subCategoryName: item.subCategoryName,
+        metalTypeId: item.metalTypeId,
+        metalTypeCode: item.metalTypeCode,
+        metalTypeName: item.metalTypeName,
+        brandId: item.brandId,
+        brandCode: item.brandCode,
+        brandName: item.brandName,
+        typeId: item.typeId,
+        typeCode: item.typeCode,
+        typeName: item.typeName,
+        sizeId: item.sizeId,
+        sizeCode: item.sizeCode,
+        sizeName: item.sizeName,
+        colorId: item.colorId,
+        colorCode: item.colorCode,
+        colorName: item.colorName,
         grossWeight: item.grossWeight,
         grossWeightIn: item.grossWeightIn,
         grossWeightOut: item.grossWeightOut,
@@ -2162,14 +2554,47 @@ export class ReportService {
         avgMakingAmount: item.avgMakingAmount,
         makingAmountIn: item.makingAmountIn,
         makingAmountOut: item.makingAmountOut,
+        premiumDiscountAmount: item.premiumDiscountAmount || 0,
+        premiumDiscountRate: item.premiumDiscountRate || 0,
+        premiumAmount: item.premiumAmount || 0, // Positive values only (premium)
+        discountAmount: item.discountAmount || 0, // Positive values only (discount, stored as negative in premiumDiscountAmount)
+        purityDifference: mergedPurityDifference, // Merged from purity difference entry if exists
+        isPurityDifferenceEntry: false, // Always false for merged transactions
+        purityDifferenceGain: mergedPurityDifferenceGain, // Merged from purity difference entry if exists
+        purityDifferenceLoss: mergedPurityDifferenceLoss, // Merged from purity difference entry if exists
         pcs: item.pcs,
         note: item.note || "",
         timestamp: item.timestamp ? moment(item.timestamp).format("DD/MM/YYYY HH:mm:ss") : "N/A",
       };
+
+      // Add transaction to stock group
+      groupedByStock[stockCode].transactions.push(transaction);
+
+      return transaction;
+    });
+
+    // Calculate net values for each stock
+    Object.keys(groupedByStock).forEach((stockCode) => {
+      const stockSummary = groupedByStock[stockCode].stockSummary;
+      stockSummary.netGrossWeight = stockSummary.totalGrossWeightIn - stockSummary.totalGrossWeightOut;
+      stockSummary.netPureWeight = stockSummary.totalPureWtIn - stockSummary.totalPureWtOut;
+      stockSummary.netMakingAmount = stockSummary.totalMakingAmountIn - stockSummary.totalMakingAmountOut;
+    });
+
+    // Calculate overall net values
+    summary.netGrossWeight = summary.totalGrossWeightIn - summary.totalGrossWeightOut;
+    summary.netPureWeight = summary.totalPureWtIn - summary.totalPureWtOut;
+    summary.netMakingAmount = summary.totalMakingAmountIn - summary.totalMakingAmountOut;
+
+    // Convert groupedByStock object to array for better response structure
+    const stocksArray = Object.keys(groupedByStock).map((stockCode) => {
+      return groupedByStock[stockCode];
     });
 
     return {
       transactions,
+      stocks: stocksArray, // Array of stocks, each with its transactions grouped
+      groupedByStock, // Keep for backward compatibility
       summary,
       appliedFilters: this.getAppliedFiltersInfo(filters),
     };

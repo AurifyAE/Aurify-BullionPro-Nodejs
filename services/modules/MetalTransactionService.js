@@ -251,7 +251,7 @@ class MetalTransactionService {
     }
   }
 
-  static async updateInventory(transaction, isSale, admin) {
+  static async updateInventory(transaction, isSale, admin, session = null) {
     try {
       const updated = [];
 
@@ -260,8 +260,8 @@ class MetalTransactionService {
         if (!metalId) continue;
 
         const [inventory, metal] = await Promise.all([
-          Inventory.findOne({ metal: new mongoose.Types.ObjectId(metalId) }),
-          MetalStock.findById(metalId),
+          Inventory.findOne({ metal: new mongoose.Types.ObjectId(metalId) }).session(session),
+          MetalStock.findById(metalId).session(session),
         ]);
 
         if (!inventory) {
@@ -285,7 +285,7 @@ class MetalTransactionService {
         inventory.grossWeight += weightDelta;
         inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
 
-        await inventory.save();
+        await inventory.save({ session });
         updated.push(inventory);
 
         // Extract party - try party object first, then partyCode
@@ -294,24 +294,98 @@ class MetalTransactionService {
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
 
-        // Inventory Log
-        await InventoryLog.create({
-          code: metal.code,
-          stockCode: metal._id,
-          voucherCode: transaction.voucherNumber || item.voucherNumber || "",
-          voucherDate: transaction.voucherDate || new Date(),
-          voucherType: voucherType,
-          grossWeight: item.grossWeight || 0,
-          party: partyId,
-          action: isSale ? "remove" : "add",
-          transactionType:
-            transaction.transactionType || (isSale ? "sale" : "purchase"),
-          createdBy: transaction.createdBy || admin || null,
-          pcs: item.pieces || 0,
-          note: isSale
-            ? "Inventory reduced due to sale transaction"
-            : "Inventory increased due to purchase transaction",
-        });
+        // Inventory Log - Main entry
+        const logEntries = [
+          {
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode: transaction.voucherNumber || item.voucherNumber || "",
+            voucherDate: transaction.voucherDate || new Date(),
+            voucherType: voucherType,
+            grossWeight: item.grossWeight || 0,
+            party: partyId,
+            action: isSale ? "remove" : "add",
+            transactionType:
+              transaction.transactionType || (isSale ? "sale" : "purchase"),
+            createdBy: transaction.createdBy || admin || null,
+            pcs: item.pieces || 0,
+            purity: item.purity || 0,
+            avgMakingRate: item.makingUnit?.makingRate || item.avgMakingRate || 0,
+            avgMakingAmount: item.makingUnit?.makingAmount || item.avgMakingAmount || 0,
+            premiumDiscountAmount: item.premiumDiscount?.type === "discount" 
+              ? -(Math.abs(item.premiumDiscount?.amount || 0)) // Discount = negative
+              : Math.abs(item.premiumDiscount?.amount || 0), // Premium = positive
+            premiumDiscountRate: item.premiumDiscount?.rate || 0,
+            purityDifference: item.purityDifference || 0,
+            isPurityDifferenceEntry: false,
+            note: isSale
+              ? "Inventory reduced due to sale transaction"
+              : "Inventory increased due to purchase transaction",
+          },
+        ];
+
+        // Create separate InventoryLog entry for purity difference gain/loss
+        const purityDiff = item.purityDifference || 0;
+        if (purityDiff !== 0) {
+          // Fetch the Registry entry with type "PURITY_DIFFERENCE" for this transaction
+          // Match by metalTransactionId, type, and party to find the correct registry entry
+          const purityDiffRegistry = await Registry.findOne({
+            metalTransactionId: transaction._id,
+            type: "PURITY_DIFFERENCE",
+            party: partyId || transaction.party?._id || transaction.party || transaction.partyCode,
+          }).session(session);
+
+          // Determine action based on registry debit/credit
+          // If debit > 0 → Gain → action = "add"
+          // If credit > 0 → Loss → action = "remove"
+          let action = "add"; // Default
+          let isGain = true;
+          
+          if (purityDiffRegistry) {
+            if (purityDiffRegistry.debit > 0) {
+              action = "add"; // Gain
+              isGain = true;
+            } else if (purityDiffRegistry.credit > 0) {
+              action = "remove"; // Loss
+              isGain = false;
+            } else {
+              // Fallback to purityDifference value if registry doesn't have debit/credit
+              isGain = purityDiff > 0;
+              action = isGain ? "add" : "remove";
+            }
+          } else {
+            // Fallback if registry entry not found yet
+            isGain = purityDiff > 0;
+            action = isGain ? "add" : "remove";
+          }
+
+          logEntries.push({
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode: transaction.voucherNumber || item.voucherNumber || "",
+            voucherDate: transaction.voucherDate || new Date(),
+            voucherType: voucherType,
+            grossWeight: 0, // Purity difference entries don't affect actual weight - only for reporting
+            party: partyId,
+            action: action, // Dynamically set based on registry debit/credit
+            transactionType:
+              transaction.transactionType || (isSale ? "sale" : "purchase"),
+            createdBy: transaction.createdBy || admin || null,
+            pcs: 0,
+            purity: item.purity || 0,
+            avgMakingRate: 0,
+            avgMakingAmount: 0,
+            premiumDiscountAmount: 0,
+            premiumDiscountRate: 0,
+            purityDifference: purityDiff,
+            isPurityDifferenceEntry: true, // Mark as purity difference entry
+            note: isGain
+              ? `Purity difference gain: ${purityDiff} (for reporting only)`
+              : `Purity difference loss: ${Math.abs(purityDiff)} (for reporting only)`,
+          });
+        }
+
+        await InventoryLog.create(logEntries, { session, ordered: true });
       }
 
       return updated;
