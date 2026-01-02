@@ -38,6 +38,7 @@ const MetalStockSchema = new mongoose.Schema(
       ref: "KaratMaster",
       required: [true, "Karat is required"],
     },
+
     standardPurity: {
       type: Number,
       min: [0, "Standard purity cannot be negative"],
@@ -145,23 +146,23 @@ const MetalStockSchema = new mongoose.Schema(
     },
     passPurityDiff: {
       type: Boolean,
-      default:true
+      default: true
     },
-    excludeVAT:{
+    excludeVAT: {
       type: Boolean,
-      default:false
+      default: false
     },
-      includeVAT:{
+    includeVAT: {
       type: Boolean,
-      default:true
+      default: true
     },
     vatOnMaking: {
       type: Boolean,
-      default:false
+      default: false
     },
     wastage: {
       type: Boolean,
-      default:false
+      default: false
     },
     isActive: {
       type: Boolean,
@@ -180,6 +181,26 @@ const MetalStockSchema = new mongoose.Schema(
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin",
+    },
+    zoho: {
+      itemId: {
+        type: String,
+        default: null,
+      },
+      syncStatus: {
+        type: String,
+        enum: ["PENDING", "SYNCED", "FAILED"],
+        default: "PENDING",
+        index: true,
+      },
+      lastSyncedAt: {
+        type: Date,
+        default: null,
+      },
+      syncError: {
+        type: String,
+        default: null,
+      },
     },
   },
   {

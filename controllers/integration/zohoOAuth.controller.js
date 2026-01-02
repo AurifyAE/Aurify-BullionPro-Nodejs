@@ -10,7 +10,7 @@ export const zohoOAuthCallback = async (req, res) => {
   }
 
   const tokenRes = await axios.post(
-    "https://accounts.zoho.in/oauth/v2/token",
+    "https://accounts.zoho.com/oauth/v2/token",
     null,
     {
       params: {

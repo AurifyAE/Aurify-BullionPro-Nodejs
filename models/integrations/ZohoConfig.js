@@ -10,6 +10,7 @@ const ZohoConfigSchema = new mongoose.Schema({
     accessTokenExpiresAt: Date,
     lastRefreshedAt: Date,
     isActive: { type: Boolean, default: true },
+    stockAccountId: String,
 });
 
 

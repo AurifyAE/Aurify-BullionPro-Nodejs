@@ -1,6 +1,8 @@
 import { createAppError } from "../../utils/errorHandler.js";
 import MetalStockService from "../../services/modules/MetalStockService.js";
 import InventoryService from "../../services/modules/inventoryService.js";
+import { createZohoContact, createZohoItem } from "../../services/integrations/zohoBooks.service.js";
+import { getZohoConfig } from "../../services/integrations/zohoToken.service.js";
 
 // Create new metal stock
 
@@ -102,6 +104,37 @@ export const createMetalStock = async (req, res, next) => {
       req.admin.id
     );
     await InventoryService.addInitialInventory(result, req.admin.id);
+
+    let zohoItem = null;
+
+    try {
+      const zohoConfig = await getZohoConfig();
+
+      zohoItem = await createZohoItem(result, {
+        accessToken: zohoConfig.accessToken,
+        orgId: zohoConfig.orgId,
+        stockAccountId: zohoConfig.stockAccountId,
+      });
+
+      console.log("Zoho item created:", zohoItem);
+    } catch (zohoError) {
+      console.error("Zoho item creation failed:", zohoError.message);
+
+      // mark sync failed (important)
+      await MetalStockService.updateMetalStockWithZohoItem(result.id, {
+        item_id: null,
+        syncStatus: "FAILED",
+        syncError: zohoError.message,
+      });
+    }
+
+    // update the metal stock with zohoItemId if success
+    if (zohoItem) {
+      await MetalStockService.updateMetalStockWithZohoItem(
+        result.id,
+        zohoItem
+      );
+    }
 
     res.status(201).json({
       success: true,
@@ -263,8 +296,8 @@ export const updateMetalStock = async (req, res, next) => {
 
     if (passPurityDiff !== undefined)
       cleanedUpdateData.passPurityDiff = passPurityDiff || false;
- if (includeVAT !== undefined)
-      cleanedUpdateData.includeVAT = excludeVAT || vatOnMaking ?  !includeVAT  : includeVAT || true;
+    if (includeVAT !== undefined)
+      cleanedUpdateData.includeVAT = excludeVAT || vatOnMaking ? !includeVAT : includeVAT || true;
 
     if (excludeVAT !== undefined)
       cleanedUpdateData.excludeVAT = excludeVAT || false;

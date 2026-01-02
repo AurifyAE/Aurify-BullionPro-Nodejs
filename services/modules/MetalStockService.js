@@ -234,6 +234,38 @@ class MetalStockService {
     }
   }
 
+  // Update metal stock with Zoho item ID
+  static async updateMetalStockWithZohoItem(metalStockId, zohoItem) {
+    try {
+      const updatedMetalStock = await MetalStock.findByIdAndUpdate(
+        metalStockId,
+        {
+          $set: {
+            "zoho.itemId": zohoItem.item_id,
+            "zoho.syncStatus": "SYNCED",
+            "zoho.lastSyncedAt": new Date(),
+            "zoho.syncError": null,
+          },
+        },
+        { new: true }
+      ).populate([
+        { path: "metalType", select: "code description" },
+        { path: "branch", select: "name code" },
+        { path: "karat", select: "name value standardPurity" },
+        { path: "category", select: "name code" },
+        { path: "subCategory", select: "name code" },
+        { path: "type", select: "name code" },
+        { path: "costCenter", select: "name code" },
+        { path: "createdBy", select: "name email" },
+      ]);
+
+      return updatedMetalStock;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+
   // Get all metal stocks with pagination and filters
   static async getAllMetalStocks(options = {}) {
     try {
@@ -438,10 +470,10 @@ class MetalStockService {
       const shouldCreateRegistry =
         (updatedMetalStock.pcs &&
           previousValues.totalValue !== updatedMetalStock.totalValue) ||
-          // previousValues.pcsCount !== updatedMetalStock.pcsCount
+        // previousValues.pcsCount !== updatedMetalStock.pcsCount
         (!updatedMetalStock.pcs &&
           previousValues.standardPurity !==
-            (updatedMetalStock.karat?.standardPurity || 0)) ||
+          (updatedMetalStock.karat?.standardPurity || 0)) ||
         previousValues.pcs !== updatedMetalStock.pcs;
 
       if (shouldCreateRegistry) {
@@ -476,8 +508,7 @@ class MetalStockService {
 
     if (existingTransaction) {
       throw createAppError(
-        `This stock cannot be deleted because it is used in transaction ${
-          existingTransaction.voucherNumber || existingTransaction._id
+        `This stock cannot be deleted because it is used in transaction ${existingTransaction.voucherNumber || existingTransaction._id
         }`,
         400,
         "STOCK_IN_TRANSACTION"
@@ -541,7 +572,7 @@ class MetalStockService {
         inventoryLogs: inventoryLogDeleteResult.deletedCount
       });
 
-      return { 
+      return {
         message: "Metal stock permanently deleted",
         deletedInventory: inventoryDeleteResult.deletedCount,
         deletedInventoryLogs: inventoryLogDeleteResult.deletedCount
