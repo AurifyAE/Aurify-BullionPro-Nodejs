@@ -35,6 +35,7 @@ export const getAllRegistries = async (req, res, next) => {
       status,
       startDate,
       endDate,
+      division,
       sortBy = "transactionDate",
       sortOrder = "desc",
     } = req.query;
@@ -56,6 +57,7 @@ export const getAllRegistries = async (req, res, next) => {
     if (startDate) filters.startDate = startDate;
     if (endDate) filters.endDate = endDate;
     if (search) filters.search = search;
+    if (division) filters.division = division;
 
     const result = await RegistryService.getAllRegistries(
       parseInt(page),
@@ -402,6 +404,7 @@ export const getRegistriesByType = async (req, res, next) => {
       startDate,
       endDate,
       costCenter,
+      division,
       sortBy = "transactionDate",
       sortOrder = "desc",
     } = req.query;
@@ -410,6 +413,7 @@ export const getRegistriesByType = async (req, res, next) => {
     if (startDate) filters.startDate = startDate;
     if (endDate) filters.endDate = endDate;
     if (costCenter) filters.costCenter = costCenter.toUpperCase();
+    if (division) filters.division = division;
 
     const result = await RegistryService.getRegistriesByType(
       parseInt(page),
@@ -440,6 +444,7 @@ export const getRegistriesByCostCenter = async (req, res, next) => {
       type,
       startDate,
       endDate,
+      division,
       sortBy = "transactionDate",
       sortOrder = "desc",
     } = req.query;
@@ -448,6 +453,7 @@ export const getRegistriesByCostCenter = async (req, res, next) => {
     if (type) filters.type = type;
     if (startDate) filters.startDate = startDate;
     if (endDate) filters.endDate = endDate;
+    if (division) filters.division = division;
 
     const result = await RegistryService.getRegistriesByCostCenter(
       parseInt(page),
@@ -471,13 +477,14 @@ export const getRegistriesByCostCenter = async (req, res, next) => {
 // Get registry statistics
 export const getRegistryStatistics = async (req, res, next) => {
   try {
-    const { startDate, endDate, type, costCenter } = req.query;
+    const { startDate, endDate, type, costCenter, division } = req.query;
 
     const filters = {};
     if (type) filters.type = type;
     if (costCenter) filters.costCenter = costCenter.toUpperCase();
     if (startDate) filters.startDate = startDate;
     if (endDate) filters.endDate = endDate;
+    if (division) filters.division = division;
 
     const statistics = await RegistryService.getRegistryStatistics(filters);
 
@@ -550,13 +557,14 @@ export const getRegistryBalance = async (req, res, next) => {
 // getting registry type is stock balance
 export const getRegistryStockBalance = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search = "" } = req.query;
+    const { page = 1, limit = 10, search = "", division } = req.query;
 
     const { registries, totalItems, totalPages, summary } =
       await RegistryService.getStockBalanceRegistries({
         page: Number(page),
         limit: Number(limit),
         search,
+        division,
       });
 
     res.status(200).json({
@@ -580,13 +588,14 @@ export const getRegistryStockBalance = async (req, res, next) => {
 
 export const getRegistryPremiumDiscount = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search = "" } = req.query;
+    const { page = 1, limit = 10, search = "", division } = req.query;
 
     const { registries, totalItems, totalPages, summary } =
       await RegistryService.getPremiumDiscountRegistries({
         page: Number(page),
         limit: Number(limit),
         search,
+        division,
       });
 
     res.status(200).json({
@@ -608,13 +617,14 @@ export const getRegistryPremiumDiscount = async (req, res, next) => {
 
 export const getMakingChargesRegistries = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search = "" } = req.query;
+    const { page = 1, limit = 10, search = "", division } = req.query;
 
     const { registries, totalItems, totalPages, summary } =
       await RegistryService.getMakingChargesRegistries({
         page: Number(page),
         limit: Number(limit),
         search,
+        division,
       });
 
     res.status(200).json({
@@ -641,6 +651,7 @@ export const getRegistriesByPartyId = async (req, res, next) => {
     const partyId = req.params.partyId;
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 5000000) || 5000000;
+    const division = req.query.division || null;
 
     if (!partyId) {
       return res
@@ -651,7 +662,8 @@ export const getRegistriesByPartyId = async (req, res, next) => {
     const result = await RegistryService.getRegistriesByPartyId(
       partyId,
       page,
-      limit
+      limit,
+      division
     );
 
     res.status(200).json({
@@ -668,10 +680,11 @@ export const getRegistriesByPartyId = async (req, res, next) => {
 // Get registries by type "PREMIUM" or "DISCOUNT" (case-insensitive)
 export const getPremiumOrDiscountRegistries = async (req, res, next) => {
   try {
-    const { page = 1, limit = 50 } = req.query;
+    const { page = 1, limit = 50, division } = req.query;
     const result = await RegistryService.getPremiumAndDiscountRegistries({
       page: Number(page),
       limit: Number(limit),
+      division,
     });
     res.status(200).json({
       success: true,
@@ -696,6 +709,7 @@ export const getStatementByParty = async (req, res) => {
       foreignCurrency,
       localCurrency,
       metalOnly,
+      division,
     } = req.query;
 
     if (!partyId) {
@@ -736,6 +750,11 @@ export const getStatementByParty = async (req, res) => {
       },
     };
 
+    // Add division filter if provided
+    if (division) {
+      filter.division = division;
+    }
+
     // Separate filter for drafts (to show but not calculate)
     const draftFilter = {
       party: partyId,
@@ -749,6 +768,11 @@ export const getStatementByParty = async (req, res) => {
         ],
       },
     };
+
+    // Add division filter to drafts if provided
+    if (division) {
+      draftFilter.division = division;
+    }
 
     // Date range filter
     if (startDate || endDate) {
@@ -793,6 +817,11 @@ export const getStatementByParty = async (req, res) => {
       ],
       type: { $in: filter.type.$in },
     };
+
+    // Add division filter to opening balance if provided
+    if (division) {
+      openingFilter.division = division;
+    }
 
     if (startDate) {
       openingFilter.transactionDate = { $lt: new Date(startDate) };

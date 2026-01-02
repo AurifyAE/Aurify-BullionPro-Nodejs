@@ -1250,6 +1250,58 @@ class InventoryService {
         // Extract party - try party object first, then partyCode
         const partyId = transaction.party?._id || transaction.party || transaction.partyCode || item.party?._id || item.party || item.partyCode || null;
         
+        // Extract divisionId from transaction or party (same logic as buildRegistryEntries)
+        let divisionId = null;
+        if (transaction.division) {
+          // Handle division as ObjectId, string, or object with _id
+          divisionId = transaction.division._id || transaction.division;
+        } else if (transaction.party?.acDefinition?.preciousMetal?.[0]?.division) {
+          divisionId = transaction.party.acDefinition.preciousMetal[0].division._id || transaction.party.acDefinition.preciousMetal[0].division;
+        } else if (partyId) {
+          // Fetch party to get division from acDefinition
+          try {
+            const Account = (await import("../../models/modules/accountMaster.js")).default;
+            const party = await Account.findById(partyId).select('acDefinition.preciousMetal.division').lean().session(session);
+            if (party?.acDefinition?.preciousMetal?.[0]?.division) {
+              divisionId = party.acDefinition.preciousMetal[0].division._id || party.acDefinition.preciousMetal[0].division;
+            }
+          } catch (error) {
+            console.warn(`[updateInventory] Could not fetch party for division: ${error.message}`);
+          }
+        }
+        
+        // Convert divisionId to ObjectId format for Mongoose
+        let divisionObjectId = null;
+        if (divisionId) {
+          try {
+            if (divisionId instanceof mongoose.Types.ObjectId) {
+              divisionObjectId = divisionId;
+            } else if (typeof divisionId === 'string') {
+              if (mongoose.Types.ObjectId.isValid(divisionId)) {
+                divisionObjectId = new mongoose.Types.ObjectId(divisionId);
+              } else {
+                console.warn(`[updateInventory] Invalid divisionId string format: ${divisionId}`);
+              }
+            } else if (divisionId._id) {
+              if (divisionId._id instanceof mongoose.Types.ObjectId) {
+                divisionObjectId = divisionId._id;
+              } else if (typeof divisionId._id === 'string' && mongoose.Types.ObjectId.isValid(divisionId._id)) {
+                divisionObjectId = new mongoose.Types.ObjectId(divisionId._id);
+              }
+            } else {
+              const divisionStr = String(divisionId);
+              if (mongoose.Types.ObjectId.isValid(divisionStr)) {
+                divisionObjectId = new mongoose.Types.ObjectId(divisionStr);
+              } else {
+                console.warn(`[updateInventory] Could not convert divisionId to ObjectId: ${divisionId}`);
+              }
+            }
+          } catch (error) {
+            console.warn(`[updateInventory] Error converting divisionId to ObjectId: ${error.message}`, divisionId);
+            divisionObjectId = null;
+          }
+        }
+
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
 
@@ -1263,6 +1315,7 @@ class InventoryService {
             voucherType: voucherType,
             grossWeight: item.grossWeight || 0,
             party: partyId,
+            division: divisionObjectId, // Add division to inventory log
             purity: item.purity || 0,
             avgMakingAmount: item.makingUnit?.makingAmount || 0,
             avgMakingRate: item.makingUnit?.makingRate || 0,
@@ -1328,6 +1381,7 @@ class InventoryService {
             voucherType: voucherType,
             grossWeight: 0, // Purity difference entries don't affect actual weight - only for reporting
             party: partyId,
+            division: divisionObjectId, // Add division to purity difference entry
             purity: item.purity || 0,
             avgMakingAmount: 0,
             avgMakingRate: 0,

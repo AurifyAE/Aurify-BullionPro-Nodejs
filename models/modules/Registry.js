@@ -57,7 +57,6 @@ const RegistrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "DivisionMaster",
       default: null,
-      index: true,
     },
     type: {
       type: String,

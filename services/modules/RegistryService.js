@@ -47,6 +47,11 @@ class RegistryService {
         query.status = filters.status;
       }
 
+      // Division filter
+      if (filters.division) {
+        query.division = new mongoose.Types.ObjectId(filters.division);
+      }
+
       // Date range filter
       if (filters.startDate || filters.endDate) {
         query.transactionDate = {};
@@ -1006,6 +1011,11 @@ class RegistryService {
         query.costCenter = filters.costCenter;
       }
 
+      // Division filter
+      if (filters.division) {
+        query.division = new mongoose.Types.ObjectId(filters.division);
+      }
+
       // Date range filter
       if (filters.startDate || filters.endDate) {
         query.transactionDate = {};
@@ -1085,6 +1095,11 @@ class RegistryService {
       // Apply additional filters
       if (filters.type) {
         query.type = filters.type;
+      }
+
+      // Division filter
+      if (filters.division) {
+        query.division = new mongoose.Types.ObjectId(filters.division);
       }
 
       // Date range filter
@@ -1174,6 +1189,11 @@ class RegistryService {
 
       if (filters.costCenter) {
         query.costCenter = filters.costCenter;
+      }
+
+      // Division filter
+      if (filters.division) {
+        query.division = new mongoose.Types.ObjectId(filters.division);
       }
 
       // Date range filter
@@ -1346,12 +1366,18 @@ class RegistryService {
     page = 1,
     limit = 10,
     search = "",
+    division = null,
   }) {
     try {
       const filter = {
         type: { $in: ["STOCK_BALANCE", "stock_balance"] },
         isActive: true,
       };
+
+      // Division filter
+      if (division) {
+        filter.division = new mongoose.Types.ObjectId(division);
+      }
 
       if (search) {
         filter.$or = [
@@ -1397,12 +1423,18 @@ class RegistryService {
     page = 1,
     limit = 10,
     search = "",
+    division = null,
   }) {
     try {
       const filter = {
         type: { $in: ["PREMIUM-DISCOUNT", "premium-discount"] },
         isActive: true,
       };
+
+      // Division filter
+      if (division) {
+        filter.division = new mongoose.Types.ObjectId(division);
+      }
 
       if (search) {
         filter.$or = [
@@ -1448,12 +1480,18 @@ class RegistryService {
     page = 1,
     limit = 10,
     search = "",
+    division = null,
   }) {
     try {
       const filter = {
         type: { $in: ["MAKING CHARGES", "making charges"] },
         isActive: true,
       };
+
+      // Division filter
+      if (division) {
+        filter.division = new mongoose.Types.ObjectId(division);
+      }
 
       if (search) {
         filter.$or = [
@@ -1491,7 +1529,7 @@ class RegistryService {
       throw error;
     }
   }
-  static async getOpeningBalanceByPartyId(partyId) {
+  static async getOpeningBalanceByPartyId(partyId, division = null) {
     try {
       // Define transaction types
       const goldTypes = ["PARTY_GOLD_BALANCE"];
@@ -1508,8 +1546,8 @@ class RegistryService {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Fetch all transactions before today (up to yesterday end of day) - exclude drafts
-      const previousTransactions = await Registry.find({
+      // Build filter
+      const filter = {
         party: partyId,
         isActive: true,
         $or: [
@@ -1517,7 +1555,24 @@ class RegistryService {
           { isDraft: { $exists: false } }, // Old entries without isDraft field
         ],
         transactionDate: { $lt: today }, // All transactions before today
-      }).sort({ transactionDate: 1, createdAt: 1 }); // Sort chronologically
+      };
+
+      // Add division filter if provided (also include entries without division for backwards compatibility)
+      if (division) {
+        const divisionObjectId = new mongoose.Types.ObjectId(division);
+        filter.$and = [
+          {
+            $or: [
+              { division: divisionObjectId },
+              { division: null },
+              { division: { $exists: false } }
+            ]
+          }
+        ];
+      }
+
+      // Fetch all transactions before today (up to yesterday end of day) - exclude drafts
+      const previousTransactions = await Registry.find(filter).sort({ transactionDate: 1, createdAt: 1 }); // Sort chronologically
 
       // Initialize balances
       let cashBalance = 0;
@@ -1551,8 +1606,10 @@ class RegistryService {
 
   // get registry by party id
 
-  static async getRegistriesByPartyId(partyId, page = 1, limit = 10) {
+  static async getRegistriesByPartyId(partyId, page = 1, limit = 10, division = null) {
     try {
+      console.log(`[getRegistriesByPartyId] partyId: ${partyId}, division: ${division}`);
+      
       // Filter for non-draft entries (for balance calculation)
       const filter = {
         party: partyId,
@@ -1563,6 +1620,22 @@ class RegistryService {
         ],
       };
 
+      // Add division filter if provided (also include entries without division for backwards compatibility)
+      if (division) {
+        const divisionObjectId = new mongoose.Types.ObjectId(division);
+        // Match entries with this division OR entries without division field (old data)
+        filter.$and = [
+          {
+            $or: [
+              { division: divisionObjectId },
+              { division: null },
+              { division: { $exists: false } }
+            ]
+          }
+        ];
+        console.log(`[getRegistriesByPartyId] Division filter applied: ${divisionObjectId}`);
+      }
+
       // Separate filter for drafts (to show but not calculate)
       const draftFilter = {
         party: partyId,
@@ -1570,15 +1643,29 @@ class RegistryService {
         isDraft: true,
       };
 
+      // Add division filter to drafts if provided (also include entries without division)
+      if (division) {
+        const divisionObjectId = new mongoose.Types.ObjectId(division);
+        draftFilter.$or = [
+          { division: divisionObjectId },
+          { division: null },
+          { division: { $exists: false } }
+        ];
+      }
+
       const skip = (page - 1) * limit;
 
       const openingBalanceResult = await this.getOpeningBalanceByPartyId(
-        partyId
+        partyId,
+        division
       );
       const openingBalance = openingBalanceResult.openingBalance;
 
       const totalItems = await Registry.countDocuments(filter);
       const draftTotalItems = await Registry.countDocuments(draftFilter);
+      
+      console.log(`[getRegistriesByPartyId] Found ${totalItems} registry entries, ${draftTotalItems} drafts`);
+      console.log(`[getRegistriesByPartyId] Filter:`, JSON.stringify(filter, null, 2));
 
       // Fetch non-draft registries (for balance calculation)
       const registries = await Registry.find(filter)
@@ -1612,7 +1699,7 @@ class RegistryService {
     }
   }
 
-  static async getPremiumAndDiscountRegistries({ page = 1, limit = 50 }) {
+  static async getPremiumAndDiscountRegistries({ page = 1, limit = 50, division = null }) {
     try {
       // Case-insensitive match for "PREMIUM" or "DISCOUNT"
       const typeRegex = [/^premium$/i, /^discount$/i];
@@ -1621,6 +1708,11 @@ class RegistryService {
         type: { $in: typeRegex },
         isActive: true,
       };
+
+      // Division filter
+      if (division) {
+        filters.division = new mongoose.Types.ObjectId(division);
+      }
 
       const skip = (page - 1) * limit;
 
