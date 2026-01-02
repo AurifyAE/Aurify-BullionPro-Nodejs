@@ -61,7 +61,8 @@ const inventoryLogSchema = new mongoose.Schema(
     grossWeight: {
       type: Number,
       default: 0,
-      min: [0, "Gross Weight cannot be negative"],
+      // Note: For purity difference entries (isPurityDifferenceEntry: true), 
+      // grossWeight should always be 0 as these entries don't represent actual weight changes
     },
     pcs: {
       type: Number,
@@ -79,6 +80,29 @@ const inventoryLogSchema = new mongoose.Schema(
     avgMakingAmount: {
       type: Number,
       default: 0,
+    },
+    premiumDiscountAmount: {
+      type: Number,
+      default: 0,
+      // Premium = positive amount, Discount = negative amount
+      // This allows easy calculation: positive = premium, negative = discount
+    },
+    premiumDiscountRate: {
+      type: Number,
+      default: 0,
+    },
+    purityDifference: {
+      type: Number,
+      default: 0,
+      // Positive = gain (treated as "add" in reports), Negative = loss (treated as "remove" in reports)
+      // This is for reporting purposes only and does not affect actual inventory
+    },
+    isPurityDifferenceEntry: {
+      type: Boolean,
+      default: false,
+      // If true, this entry is specifically for tracking purity difference gain/loss
+      // Action will be "add" for gain (positive) and "remove" for loss (negative)
+      // IMPORTANT: grossWeight must be 0 for these entries - they don't affect actual inventory weight
     },
     action: {
       type: String,

@@ -13,6 +13,7 @@ import FixingPrice from "../../models/modules/FixingPrice.js";
 import { generateHedgeVoucherNumber } from "../../utils/hedgeVoucher.js";
 import TransactionFixing from "../../models/modules/TransactionFixing.js";
 import DealOrderService from "./dealOrderService.js";
+import CurrencyMaster from "../../models/modules/CurrencyMaster.js";
 
 dotenv.config();
 const generateUniqueTransactionId = async (prefix) => {
@@ -26,6 +27,55 @@ const generateUniqueTransactionId = async (prefix) => {
 }
 
 class MetalTransactionService {
+  // Helper function to extract currency code from partyCurrency
+  // partyCurrency can be an ObjectId string, ObjectId, or a populated currency object
+  // Based on transaction data structure: partyCurrency is an ObjectId string like "68d5022eaac2a0c78fb79931"
+  static async getCurrencyCodeFromPartyCurrency(partyCurrency, defaultCode = "AED") {
+    if (!partyCurrency) return defaultCode;
+    
+    // If it's a populated object with currencyCode (from populate)
+    // A populated object will have currencyCode field, even if it also has _id
+    if (typeof partyCurrency === 'object' && partyCurrency.currencyCode) {
+      return partyCurrency.currencyCode;
+    }
+    // If it's a populated object with code (alternative field name)
+    if (typeof partyCurrency === 'object' && partyCurrency.code) {
+      return partyCurrency.code;
+    }
+    
+    // If it's an ObjectId string (like "68d5022eaac2a0c78fb79931") or ObjectId, look it up
+    let currencyId = null;
+    if (typeof partyCurrency === 'string') {
+      // It's an ObjectId string from the transaction data
+      currencyId = partyCurrency;
+    } else if (typeof partyCurrency === 'object') {
+      // It could be a Mongoose ObjectId or an object with _id
+      // Check if it's a Mongoose ObjectId (has toString method)
+      if (partyCurrency.toString && typeof partyCurrency.toString === 'function') {
+        currencyId = partyCurrency.toString();
+      } else if (partyCurrency._id) {
+        currencyId = partyCurrency._id.toString();
+      } else {
+        // Try to use it directly as an ID
+        currencyId = String(partyCurrency);
+      }
+    }
+    
+    if (currencyId) {
+      try {
+        const currency = await CurrencyMaster.findById(currencyId).select('currencyCode').lean();
+        if (currency && currency.currencyCode) {
+          return currency.currencyCode;
+        }
+      } catch (error) {
+        console.error("Error fetching currency code from CurrencyMaster:", error);
+      }
+    }
+    
+    // Fallback to default
+    return defaultCode;
+  }
+
   static async createMetalTransaction(transactionData, adminId) {
     const session = await mongoose.startSession();
     let createdTransaction;
@@ -201,7 +251,7 @@ class MetalTransactionService {
     }
   }
 
-  static async updateInventory(transaction, isSale, admin) {
+  static async updateInventory(transaction, isSale, admin, session = null) {
     try {
       const updated = [];
 
@@ -210,8 +260,8 @@ class MetalTransactionService {
         if (!metalId) continue;
 
         const [inventory, metal] = await Promise.all([
-          Inventory.findOne({ metal: new mongoose.Types.ObjectId(metalId) }),
-          MetalStock.findById(metalId),
+          Inventory.findOne({ metal: new mongoose.Types.ObjectId(metalId) }).session(session),
+          MetalStock.findById(metalId).session(session),
         ]);
 
         if (!inventory) {
@@ -235,7 +285,7 @@ class MetalTransactionService {
         inventory.grossWeight += weightDelta;
         inventory.pureWeight = (inventory.grossWeight * inventory.purity) / 100;
 
-        await inventory.save();
+        await inventory.save({ session });
         updated.push(inventory);
 
         // Extract party - try party object first, then partyCode
@@ -244,24 +294,98 @@ class MetalTransactionService {
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
 
-        // Inventory Log
-        await InventoryLog.create({
-          code: metal.code,
-          stockCode: metal._id,
-          voucherCode: transaction.voucherNumber || item.voucherNumber || "",
-          voucherDate: transaction.voucherDate || new Date(),
-          voucherType: voucherType,
-          grossWeight: item.grossWeight || 0,
-          party: partyId,
-          action: isSale ? "remove" : "add",
-          transactionType:
-            transaction.transactionType || (isSale ? "sale" : "purchase"),
-          createdBy: transaction.createdBy || admin || null,
-          pcs: item.pieces || 0,
-          note: isSale
-            ? "Inventory reduced due to sale transaction"
-            : "Inventory increased due to purchase transaction",
-        });
+        // Inventory Log - Main entry
+        const logEntries = [
+          {
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode: transaction.voucherNumber || item.voucherNumber || "",
+            voucherDate: transaction.voucherDate || new Date(),
+            voucherType: voucherType,
+            grossWeight: item.grossWeight || 0,
+            party: partyId,
+            action: isSale ? "remove" : "add",
+            transactionType:
+              transaction.transactionType || (isSale ? "sale" : "purchase"),
+            createdBy: transaction.createdBy || admin || null,
+            pcs: item.pieces || 0,
+            purity: item.purity || 0,
+            avgMakingRate: item.makingUnit?.makingRate || item.avgMakingRate || 0,
+            avgMakingAmount: item.makingUnit?.makingAmount || item.avgMakingAmount || 0,
+            premiumDiscountAmount: item.premiumDiscount?.type === "discount" 
+              ? -(Math.abs(item.premiumDiscount?.amount || 0)) // Discount = negative
+              : Math.abs(item.premiumDiscount?.amount || 0), // Premium = positive
+            premiumDiscountRate: item.premiumDiscount?.rate || 0,
+            purityDifference: item.purityDifference || 0,
+            isPurityDifferenceEntry: false,
+            note: isSale
+              ? "Inventory reduced due to sale transaction"
+              : "Inventory increased due to purchase transaction",
+          },
+        ];
+
+        // Create separate InventoryLog entry for purity difference gain/loss
+        const purityDiff = item.purityDifference || 0;
+        if (purityDiff !== 0) {
+          // Fetch the Registry entry with type "PURITY_DIFFERENCE" for this transaction
+          // Match by metalTransactionId, type, and party to find the correct registry entry
+          const purityDiffRegistry = await Registry.findOne({
+            metalTransactionId: transaction._id,
+            type: "PURITY_DIFFERENCE",
+            party: partyId || transaction.party?._id || transaction.party || transaction.partyCode,
+          }).session(session);
+
+          // Determine action based on registry debit/credit
+          // If debit > 0 → Gain → action = "add"
+          // If credit > 0 → Loss → action = "remove"
+          let action = "add"; // Default
+          let isGain = true;
+          
+          if (purityDiffRegistry) {
+            if (purityDiffRegistry.debit > 0) {
+              action = "add"; // Gain
+              isGain = true;
+            } else if (purityDiffRegistry.credit > 0) {
+              action = "remove"; // Loss
+              isGain = false;
+            } else {
+              // Fallback to purityDifference value if registry doesn't have debit/credit
+              isGain = purityDiff > 0;
+              action = isGain ? "add" : "remove";
+            }
+          } else {
+            // Fallback if registry entry not found yet
+            isGain = purityDiff > 0;
+            action = isGain ? "add" : "remove";
+          }
+
+          logEntries.push({
+            code: metal.code,
+            stockCode: metal._id,
+            voucherCode: transaction.voucherNumber || item.voucherNumber || "",
+            voucherDate: transaction.voucherDate || new Date(),
+            voucherType: voucherType,
+            grossWeight: 0, // Purity difference entries don't affect actual weight - only for reporting
+            party: partyId,
+            action: action, // Dynamically set based on registry debit/credit
+            transactionType:
+              transaction.transactionType || (isSale ? "sale" : "purchase"),
+            createdBy: transaction.createdBy || admin || null,
+            pcs: 0,
+            purity: item.purity || 0,
+            avgMakingRate: 0,
+            avgMakingAmount: 0,
+            premiumDiscountAmount: 0,
+            premiumDiscountRate: 0,
+            purityDifference: purityDiff,
+            isPurityDifferenceEntry: true, // Mark as purity difference entry
+            note: isGain
+              ? `Purity difference gain: ${purityDiff} (for reporting only)`
+              : `Purity difference loss: ${Math.abs(purityDiff)} (for reporting only)`,
+          });
+        }
+
+        await InventoryLog.create(logEntries, { session, ordered: true });
       }
 
       return updated;
@@ -460,11 +584,15 @@ class MetalTransactionService {
       voucherDate,
       voucherNumber,
       partyCurrency,
+      partyCurrencyRate = 1,
       otherCharges = [],
       itemCurrency,
       dealOrderId,
       remarks: transactionRemarks, // Main transaction remarks for PARTY entries
     } = transaction;
+    
+    // Extract currency code from partyCurrency (can be ObjectId string or populated object)
+    const partyCurrencyCode = await this.getCurrencyCodeFromPartyCurrency(partyCurrency, "AED");
     let hedgeVoucherNo = transaction.hedgeVoucherNumber;
 
     // Generate ONLY if hedge=true and not already generated
@@ -527,7 +655,9 @@ class MetalTransactionService {
             itemCurrency,
             dealOrderId,
             false, // skipHedgeEntry - individual items skip hedge
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
 
           itemEntries = purchaseEntries || [];
@@ -552,7 +682,9 @@ class MetalTransactionService {
             itemCurrency,
             dealOrderId,
             false, // skipHedgeEntry
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
           itemEntries = saleEntries || [];
           break;
@@ -576,7 +708,9 @@ class MetalTransactionService {
             itemCurrency,
             dealOrderId,
             false, // skipHedgeEntry
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
           itemEntries = purchaseReturnEntries || [];
           break;
@@ -600,7 +734,9 @@ class MetalTransactionService {
             itemCurrency,
             dealOrderId,
             false, // skipHedgeEntry
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
           itemEntries = saleReturnEntries || [];
           break;
@@ -624,7 +760,9 @@ class MetalTransactionService {
             itemCurrency,
             null, // dealOrderId
             false, // skipHedgeEntry
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
 
           itemEntries = importPurchase || [];
@@ -648,9 +786,11 @@ class MetalTransactionService {
               otherCharges,
               hedgeVoucherNo,
               itemCurrency,
-              false, // skipHedgeEntry
-              transactionRemarks // Pass transaction remarks for PARTY entries
-            );
+            false, // skipHedgeEntry
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
+          );
           itemEntries = importPurchaseReturnEntries || [];
           break;
 
@@ -672,7 +812,9 @@ class MetalTransactionService {
             hedgeVoucherNo,
             itemCurrency,
             false, // skipHedgeEntry
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
           itemEntries = exportSale || [];
           break;
@@ -695,9 +837,11 @@ class MetalTransactionService {
               otherCharges,
               hedgeVoucherNo,
               itemCurrency,
-              false, // skipHedgeEntry
-              transactionRemarks // Pass transaction remarks for PARTY entries
-            );
+            false, // skipHedgeEntry
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
+          );
           itemEntries = exportSaleReturnEntries || [];
           break;
 
@@ -721,7 +865,9 @@ class MetalTransactionService {
             itemCurrency,
             dealOrderId,
             false, // skipHedgeEntry
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
           itemEntries = hedgeMetalPaymentEntries || [];
           break;
@@ -747,7 +893,9 @@ class MetalTransactionService {
             itemCurrency,
             dealOrderId,
             false, // skipHedgeEntry - individual items skip hedge
-            transactionRemarks // Pass transaction remarks for PARTY entries
+            transactionRemarks, // Pass transaction remarks for PARTY entries
+            partyCurrencyCode,
+            partyCurrencyRate
           );
           itemEntries = hedgeMetalReceiptEntries || [];
           break;
@@ -898,6 +1046,7 @@ class MetalTransactionService {
         adminId,
         partyCurrency,
         partyCurrencyRate: transaction.partyCurrencyRate || 1,
+        partyCurrencyCode: await this.getCurrencyCodeFromPartyCurrency(transaction.partyCurrency, "AED"),
         dealOrderId,
         transactionRemarks,
       });
@@ -952,6 +1101,9 @@ class MetalTransactionService {
     adminId,
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrency,
+    partyCurrencyRate = 1,
+    partyCurrencyCode = "AED",
   }) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -991,8 +1143,8 @@ class MetalTransactionService {
     const isGroupA = groupA.includes(normalizedTypeKey);
 
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -1460,7 +1612,9 @@ class MetalTransactionService {
     itemCurrency,
     dealOrderId = null,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     console.log(itemCurrency);
     let transactionType = "Purchase";
@@ -1498,7 +1652,9 @@ class MetalTransactionService {
         otherCharges,
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate
       )
       : this.buildPurchaseUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1516,7 +1672,9 @@ class MetalTransactionService {
         otherCharges, // 13
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate
       );
   }
 
@@ -1538,7 +1696,9 @@ class MetalTransactionService {
     itemCurrency,
     dealOrderId = null,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     console.log(itemCurrency);
     let transactionType = "Import-Purchase";
@@ -1576,7 +1736,9 @@ class MetalTransactionService {
         otherCharges,
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate
       )
       : this.buildImportPurchaseUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1615,7 +1777,9 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     let transactionType = "Sale";
     if (mode === "fix") {
@@ -1690,7 +1854,9 @@ class MetalTransactionService {
     itemCurrency,
     dealOrderId = null,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     let transactionType = "Sale";
     if (mode === "fix") {
@@ -1765,7 +1931,9 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     let transactionType = "Import-Purchase-Return";
     if (mode === "fix") {
@@ -1836,7 +2004,9 @@ class MetalTransactionService {
     hedgeVoucherNo,
     itemCurrency,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     console.log(itemCurrency);
     let transactionType = "Export-Sale-Return";
@@ -1910,7 +2080,9 @@ class MetalTransactionService {
     itemCurrency,
     dealOrderId = null,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     let transactionType = "Purchase-Return";
     if (mode === "fix") {
@@ -1986,7 +2158,9 @@ class MetalTransactionService {
     itemCurrency,
     dealOrderId = null,
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     console.log(itemCurrency);
     let transactionType = "Sale-Return";
@@ -2060,15 +2234,17 @@ class MetalTransactionService {
     otherCharges = [],
     transactionType,
     dealOrderId = null,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // ⭐ Add FX fields (same structure used everywhere)
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -2747,15 +2923,17 @@ class MetalTransactionService {
     otherCharges = [],
     transactionType,
     dealOrderId = null,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // FX fields – consistent everywhere
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -3309,14 +3487,16 @@ class MetalTransactionService {
     otherCharges = [],
     transactionType,
     dealOrderId = null,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -4005,15 +4185,17 @@ class MetalTransactionService {
     otherCharges, // 13
     transactionType,
     dealOrderId = null,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // 🔥 NEW: FX Info applied to every entry
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -4545,8 +4727,8 @@ class MetalTransactionService {
 
     // ⭐ FX injection for all entries
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
     };
 
     // ------------------------------
@@ -5164,8 +5346,8 @@ class MetalTransactionService {
 
     // FX injection for all entries
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
     };
 
     // ----------------------------------------------------
@@ -5859,15 +6041,17 @@ class MetalTransactionService {
     otherCharges,
     transactionType,
     dealOrderId,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // FX injection for all entries
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -6520,15 +6704,17 @@ class MetalTransactionService {
     otherCharges, // 13
     transactionType,
     dealOrderId,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // FX injection for all entries
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -7220,15 +7406,17 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     transactionType,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // ⭐ Inject FX metadata everywhere
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
     };
 
     // =====================================================
@@ -7862,15 +8050,17 @@ class MetalTransactionService {
     totalSummary,
     otherCharges = [],
     transactionType,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // ⭐ Inject FX metadata (same as all updated functions)
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
     };
 
     // =====================================================
@@ -8574,15 +8764,17 @@ class MetalTransactionService {
     totalSummary,
     otherCharges,
     transactionType,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // 🔥 FX Injection for all entries
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
     };
 
     // ------------------------------
@@ -9190,15 +9382,17 @@ class MetalTransactionService {
     otherCharges,
     transactionType,
     dealOrderId = null,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // ⭐ FX fields injected everywhere
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -9790,8 +9984,8 @@ class MetalTransactionService {
 
     // ⭐ FX Injection
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
     };
 
     // ============================================================
@@ -10425,8 +10619,8 @@ class MetalTransactionService {
 
     // ⭐ Add FX fields (same as in all updated functions)
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
     };
 
     // ============================================================
@@ -11036,15 +11230,17 @@ class MetalTransactionService {
     otherCharges = [],
     transactionType,
     dealOrderId = null,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // ⭐ FX Injection
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -11669,15 +11865,17 @@ class MetalTransactionService {
     otherCharges = [],
     transactionType,
     dealOrderId = null,
-    transactionRemarks = null // Transaction remarks for PARTY entries
+    transactionRemarks = null, // Transaction remarks for PARTY entries
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
 
     // ⭐ Add FX fields (same as in all updated functions)
     const FX = {
-      assetType: totals.currencyCode || "AED",
-      currencyRate: totals.currencyRate || 1,
+      assetType: partyCurrencyCode || "AED",
+      currencyRate: partyCurrencyRate || 1,
       dealOrderId: dealOrderId || null,
     };
 
@@ -12296,15 +12494,16 @@ class MetalTransactionService {
     return entries;
   }
 
-  static calculateTotals(stockItems, totalSummary, isRegistry = false) {
+  static calculateTotals(stockItems, totalSummary, isRegistry = false, currencyCode, currencyRate) {
     const totals = stockItems.reduce(
       (acc, item) => {
-        const currencyRate = item.currencyRate || 1;
-        const currencyCode = item.currencyCode || "AED";
+        // Use parameter values or fallback to item values
+        const itemCurrencyRate = currencyRate || item.currencyRate || 1;
+        const itemCurrencyCode = currencyCode || item.currencyCode || "AED";
         // NEW LOGIC:
         // If registry mode: apply conversion
         // If NOT registry: multiplier = 1
-        const fx = isRegistry ? currencyRate : 1;
+        const fx = isRegistry ? itemCurrencyRate : 1;
 
         const makingChargesAmount =
           (item.itemTotal?.makingChargesTotal ||
@@ -12375,8 +12574,8 @@ class MetalTransactionService {
           FXGain: item.FXGain || 0,
           FXLoss: item.FXLoss || 0,
 
-          currencyRate,
-          currencyCode,
+          currencyRate: itemCurrencyRate,
+          currencyCode: itemCurrencyCode,
           isRegistry,
         };
       },
@@ -12577,10 +12776,13 @@ class MetalTransactionService {
       otherCharges,
       totalSummary,
       itemCurrency,
+      itemCurrencyRate = 1,
+      partyCurrency,
     } = metalTransaction;
 
     const logs = [];
-    const currencyId = itemCurrency?.toString?.() || null;
+    // Use partyCurrency for party cash balance instead of itemCurrency
+    const currencyId = partyCurrency?.toString?.() || null;
     const currencyObjId = currencyId
       ? new mongoose.Types.ObjectId(currencyId)
       : null;
@@ -12588,11 +12790,12 @@ class MetalTransactionService {
     // 1️⃣ Calculate totals and mode
     const totals = this.calculateTotals(stockItems, totalSummary, false);
     const mode = this.getTransactionMode(fixed, unfix);
+    // Use partyCurrency for party cash balance instead of itemCurrency
     const ch = this.calculateBalanceChanges(
       transactionType,
       mode,
       totals,
-      itemCurrency
+      partyCurrency
     );
 
     // 2️⃣ Update GOLD balance
@@ -12610,17 +12813,30 @@ class MetalTransactionService {
     const roundOff = totalSummary?.rounded || 0;
     const roundOffAmount = Number(roundOff) || 0;
 
+    // 4️⃣ Convert amounts from itemCurrency to partyCurrency if currencies are different
+    // Frontend sends amounts in itemCurrency, but party cash balance is in partyCurrency
+    // So we need to convert using itemCurrencyRate
+    const itemCurrencyId = itemCurrency?.toString?.() || null;
+    const partyCurrencyId = partyCurrency?.toString?.() || null;
+    const needsConversion = itemCurrencyId && partyCurrencyId && itemCurrencyId !== partyCurrencyId;
+    const conversionRate = needsConversion ? (Number(itemCurrencyRate) || 1) : 1;
+
     // 4️⃣ Update CASH balance safely (per currency)
+    // Convert amounts from itemCurrency to partyCurrency before adding to cash balance
     // Include round-off in the cash balance calculation
     const netCash =
-      (ch.cashBalance || 0) +
+      ((ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.otherCharges || 0) +
       (ch.discountBalance || 0) +
       (ch.vatAmount || 0) +
-      roundOffAmount; // Add round-off to cash balance
+      roundOffAmount) * conversionRate; // Convert to party currency
     console.log("--------------------");
-    console.log("Net Cash (before round-off):",
+    console.log("Item Currency:", itemCurrencyId);
+    console.log("Party Currency:", partyCurrencyId);
+    console.log("Needs Conversion:", needsConversion);
+    console.log("Conversion Rate:", conversionRate);
+    console.log("Net Cash (before conversion & round-off):",
       (ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.otherCharges || 0) +
@@ -12628,7 +12844,7 @@ class MetalTransactionService {
       (ch.vatAmount || 0)
     );
     console.log("Round-off amount:", roundOffAmount);
-    console.log("Net Cash (after round-off):", netCash);
+    console.log("Net Cash (after conversion & round-off):", netCash);
     console.log("--------------------");
 
     if (currencyObjId && !isNaN(netCash) && netCash !== 0) {
@@ -12742,7 +12958,7 @@ class MetalTransactionService {
     return updateOps;
   }
 
-  static calculateBalanceChanges(transactionType, mode, totals, itemCurrency) {
+  static calculateBalanceChanges(transactionType, mode, totals, partyCurrency) {
     const balanceMatrix = {
       purchase: {
         unfix: {
@@ -12909,7 +13125,7 @@ class MetalTransactionService {
       vatAmount: 0,
     };
 
-    return { ...changes, currency: itemCurrency }; // ✅ include currency id
+    return { ...changes, currency: partyCurrency }; // ✅ include party currency id for cash balance
   }
 
   static generateTransactionId() {
@@ -13651,8 +13867,28 @@ class MetalTransactionService {
         isPartyChanged,
         updateData
       );
-      // Commit transaction
 
+      // Update deal order status if dealOrderId is provided (only on create, not update)
+      // Note: For updates, we check if dealOrderId is in updateData
+      const dealOrderIdToUpdate = updateData.dealOrderId || transaction.dealOrderId;
+      if (dealOrderIdToUpdate) {
+        try {
+          await DealOrderService.updateOrderStatus(
+            dealOrderIdToUpdate,
+            {
+              status: "completed",
+              stage: "completed",
+              note: `Order completed via ${updateData.transactionType || transaction.transactionType} transaction`,
+            },
+            { id: adminId }
+          );
+        } catch (error) {
+          console.error("Failed to update deal order status:", error);
+          // Don't throw - transaction should still succeed
+        }
+      }
+
+      // Commit transaction
       await session.commitTransaction();
 
       // Fetch and return final transaction
@@ -13802,6 +14038,7 @@ class MetalTransactionService {
       "notes",
       "status",
       "division",
+      "dealOrderId",
     ];
 
     for (const [key, value] of Object.entries(updateData)) {
@@ -13921,14 +14158,15 @@ class MetalTransactionService {
   static async updateReverseAccountBalances(party, originalData, session) {
     try {
       // MINUS THE OLD BALANCES
-      const { transactionType, fixed, unfix, stockItems, totalSummary } =
+      const { transactionType, fixed, unfix, stockItems, totalSummary, partyCurrency } =
         originalData;
       const totals = this.calculateTotals(stockItems, totalSummary);
       const mode = this.getTransactionMode(fixed, unfix);
       const balanceChanges = this.calculateBalanceChanges(
         transactionType,
         mode,
-        totals
+        totals,
+        partyCurrency
       );
       console.log(
         `[BALANCE_UPDATE] Reversing balances for party: ${party._id}`,
@@ -13989,14 +14227,15 @@ class MetalTransactionService {
 
   // [NEW] Validate party balances before reversal
   static async validatePartyBalances(party, transaction, isReversal = false) {
-    const { transactionType, stockItems, totalSummary } = transaction;
+    const { transactionType, stockItems, totalSummary, partyCurrency } = transaction;
     const totals = this.calculateTotals(stockItems, totalSummary);
     const mode = this.getTransactionMode(transaction.fixed, transaction.unfix);
 
     const balanceChanges = this.calculateBalanceChanges(
       transactionType,
       mode,
-      totals
+      totals,
+      partyCurrency
     );
 
     if (isReversal) {
@@ -14039,14 +14278,15 @@ class MetalTransactionService {
       unfix,
       partyCurrency,
       itemCurrency,
+      itemCurrencyRate = 1,
       otherCharges,
     } = transaction;
 
     const totals = this.calculateTotals(stockItems, totalSummary, false);
     const mode = this.getTransactionMode(fixed, unfix);
 
-    // Use itemCurrency for cash balance if available, otherwise fallback to partyCurrency
-    const currencyForBalance = itemCurrency || partyCurrency;
+    // Use partyCurrency for cash balance (changed from itemCurrency)
+    const currencyForBalance = partyCurrency;
 
     const ch = this.calculateBalanceChanges(
       transactionType,
@@ -14067,13 +14307,20 @@ class MetalTransactionService {
       );
     }
 
-    // 2️⃣ Reverse CASH (use itemCurrency for cash balance)
+    // 2️⃣ Convert amounts from itemCurrency to partyCurrency if currencies are different
+    // Frontend sends amounts in itemCurrency, but party cash balance is in partyCurrency
+    const itemCurrencyId = itemCurrency?.toString?.() || null;
+    const partyCurrencyId = partyCurrency?.toString?.() || null;
+    const needsConversion = itemCurrencyId && partyCurrencyId && itemCurrencyId !== partyCurrencyId;
+    const conversionRate = needsConversion ? (Number(itemCurrencyRate) || 1) : 1;
+
+    // 2️⃣ Reverse CASH (convert from itemCurrency to partyCurrency before reversing)
     const netCash =
-      (ch.cashBalance || 0) +
+      ((ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.discountBalance || 0) +
       (ch.otherCharges || 0) +
-      (ch.vatAmount || 0);
+      (ch.vatAmount || 0)) * conversionRate; // Convert to party currency
 
     const currencyId = currencyForBalance?.toString?.() || null;
     const currencyObjId = currencyId
@@ -14892,8 +15139,8 @@ class MetalTransactionService {
     const totals = this.calculateTotals(stockItems, totalSummary);
     const mode = this.getTransactionMode(fixed, unfix);
 
-    // Use itemCurrency for cash balance if available, otherwise fallback to partyCurrency
-    const currencyForBalance = itemCurrency || partyCurrency;
+    // Use partyCurrency for cash balance (changed from itemCurrency)
+    const currencyForBalance = partyCurrency;
 
     const ch = this.calculateBalanceChanges(
       transactionType,
@@ -14913,13 +15160,19 @@ class MetalTransactionService {
       );
     }
 
-    // CASH (use itemCurrency for cash balance)
+    // CASH - Convert amounts from itemCurrency to partyCurrency if currencies are different
+    // Frontend sends amounts in itemCurrency, but party cash balance is in partyCurrency
+    const itemCurrencyId = itemCurrency?.toString?.() || null;
+    const partyCurrencyId = partyCurrency?.toString?.() || null;
+    const needsConversion = itemCurrencyId && partyCurrencyId && itemCurrencyId !== partyCurrencyId;
+    const conversionRate = needsConversion ? (Number(itemCurrencyRate) || 1) : 1;
+
     const netCash =
-      (ch.cashBalance || 0) +
+      ((ch.cashBalance || 0) +
       (ch.premiumBalance || 0) +
       (ch.otherCharges || 0) +
       (ch.discountBalance || 0) +
-      (ch.vatAmount || 0);
+      (ch.vatAmount || 0)) * conversionRate; // Convert to party currency
 
     const currencyId = currencyForBalance?.toString?.() || null;
     const currencyObjId = currencyId
