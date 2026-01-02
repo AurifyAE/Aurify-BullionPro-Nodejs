@@ -328,8 +328,6 @@ class InventoryService {
   }
 
   static async getInventoryLogById(inventoryId) {
-    console.log("inventoryId", inventoryId);
-    console.log("Fetching logs for inventoryId", inventoryId);
     try {
       // Exclude purity difference entries (gain/loss) - these are only for reports
       const logs = await InventoryLog.find({ 
@@ -353,12 +351,9 @@ class InventoryService {
    */
   static async getGoldBalanceFromLogs() {
     try {
-      console.log("[GOLD_BALANCE] Starting gold balance calculation from inventory logs...");
-
       // First, check total logs count
       const totalLogs = await InventoryLog.countDocuments({});
       const nonDraftLogs = await InventoryLog.countDocuments({ isDraft: { $ne: true } });
-      console.log(`[GOLD_BALANCE] Total logs: ${totalLogs}, Non-draft logs: ${nonDraftLogs}`);
 
       const pipeline = [
         // 1. Filter out draft logs and purity difference entries (only finalized transactions, exclude purity gain/loss)
@@ -483,171 +478,13 @@ class InventoryService {
         }
       ];
 
-      console.log("[GOLD_BALANCE] Executing aggregation pipeline...");
-
       // Execute the full pipeline
       const stockBalances = await InventoryLog.aggregate(pipeline);
-      console.log(`[GOLD_BALANCE] Aggregation completed. Found ${stockBalances.length} stocks with positive balance`);
-
-      // Also get all balances (including negative) for debugging
-      const pipelineAllBalances = [
-        ...pipeline.slice(0, -4), // Everything before the positive filter
-        {
-          $project: {
-            _id: 0,
-            stockCode: "$_id",
-            stockName: 1,
-            totalGrossWeight: { $round: ["$totalGrossWeight", 2] },
-            totalPureWeight: { $round: ["$totalPureWeight", 2] }
-          }
-        },
-        { $sort: { totalPureWeight: -1 } }
-      ];
-      const allBalances = await InventoryLog.aggregate(pipelineAllBalances);
-      console.log(`[GOLD_BALANCE] All balances (including negative/zero): ${allBalances.length} stocks`);
-      if (allBalances.length > 0) {
-        console.log("[GOLD_BALANCE] All balances:", JSON.stringify(allBalances, null, 2));
-      }
-
-      // Debug: Log sample results
-      if (stockBalances.length > 0) {
-        console.log("[GOLD_BALANCE] Sample stock balances:", JSON.stringify(stockBalances.slice(0, 3), null, 2));
-      } else {
-        console.log("[GOLD_BALANCE] WARNING: No stocks found with positive balance!");
-
-        // Debug: Check what's happening before the final filter
-        const debugPipeline = [
-          {
-            $match: {
-              isDraft: { $ne: true }
-            }
-          },
-          {
-            $lookup: {
-              from: "metalstocks",
-              localField: "stockCode",
-              foreignField: "_id",
-              as: "stock"
-            }
-          },
-          { $unwind: { path: "$stock", preserveNullAndEmptyArrays: true } },
-          {
-            $lookup: {
-              from: "karatmasters",
-              localField: "stock.karat",
-              foreignField: "_id",
-              as: "karatInfo"
-            }
-          },
-          { $unwind: { path: "$karatInfo", preserveNullAndEmptyArrays: true } },
-          {
-            $addFields: {
-              effectivePurity: {
-                $cond: [
-                  { $gt: [{ $ifNull: ["$purity", 0] }, 0] },
-                  { $divide: [{ $toDouble: { $ifNull: ["$purity", 0] } }, 100] },
-                  {
-                    $cond: [
-                      { $gt: [{ $ifNull: ["$stock.standardPurity", 0] }, 0] },
-                      { $toDouble: { $ifNull: ["$stock.standardPurity", 0] } },
-                      {
-                        $cond: [
-                          { $gt: [{ $ifNull: ["$karatInfo.standardPurity", 0] }, 0] },
-                          { $divide: [{ $toDouble: { $ifNull: ["$karatInfo.standardPurity", 0] } }, 100] },
-                          0
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              },
-              calculatedPureWeight: {
-                $multiply: [
-                  { $toDouble: { $ifNull: ["$grossWeight", 0] } },
-                  {
-                    $cond: [
-                      { $gt: [{ $ifNull: ["$purity", 0] }, 0] },
-                      { $divide: [{ $toDouble: { $ifNull: ["$purity", 0] } }, 100] },
-                      {
-                        $cond: [
-                          { $gt: [{ $ifNull: ["$stock.standardPurity", 0] }, 0] },
-                          { $toDouble: { $ifNull: ["$stock.standardPurity", 0] } },
-                          {
-                            $cond: [
-                              { $gt: [{ $ifNull: ["$karatInfo.standardPurity", 0] }, 0] },
-                              { $divide: [{ $toDouble: { $ifNull: ["$karatInfo.standardPurity", 0] } }, 100] },
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            }
-          },
-          {
-            $group: {
-              _id: "$stockCode",
-              stockName: {
-                $first: {
-                  $ifNull: [
-                    "$stock.description",
-                    {
-                      $ifNull: ["$stock.code", "Other"]
-                    }
-                  ]
-                }
-              },
-              totalGrossWeight: {
-                $sum: {
-                  $cond: [
-                    { $eq: ["$action", "add"] },
-                    { $toDouble: { $ifNull: ["$grossWeight", 0] } },
-                    {
-                      $subtract: [
-                        0,
-                        { $toDouble: { $ifNull: ["$grossWeight", 0] } }
-                      ]
-                    }
-                  ]
-                }
-              },
-              totalPureWeight: {
-                $sum: {
-                  $cond: [
-                    { $eq: ["$action", "add"] },
-                    "$calculatedPureWeight",
-                    {
-                      $subtract: [0, "$calculatedPureWeight"]
-                    }
-                  ]
-                }
-              },
-              sampleLogs: { $push: { action: "$action", grossWeight: "$grossWeight", purity: "$purity", effectivePurity: "$effectivePurity", calculatedPureWeight: "$calculatedPureWeight", stockPurity: "$stock.standardPurity", karatPurity: "$karatInfo.standardPurity" } }
-            }
-          },
-          { $limit: 5 }
-        ];
-
-        const debugResults = await InventoryLog.aggregate(debugPipeline);
-        console.log("[GOLD_BALANCE] DEBUG - Sample grouped results before positive filter:", JSON.stringify(debugResults, null, 2));
-      }
 
       // Calculate total pure gold
       const totalPureGold = stockBalances.reduce((sum, stock) => {
         return sum + (stock.totalPureWeight || 0);
       }, 0);
-
-      // Separate balances for logging
-      const positiveBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) > 0);
-      const negativeBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) < 0);
-      const zeroBalances = stockBalances.filter(stock => (stock.totalPureWeight || 0) === 0);
-
-      console.log(`[GOLD_BALANCE] Total stocks: ${stockBalances.length}`);
-      console.log(`[GOLD_BALANCE] Positive: ${positiveBalances.length}, Negative: ${negativeBalances.length}, Zero: ${zeroBalances.length}`);
-      console.log(`[GOLD_BALANCE] Total pure gold calculated: ${totalPureGold}`);
 
       // Create breakdown array with percentages
       // For percentage calculation, use absolute value of total to avoid issues with negative totals
@@ -666,12 +503,8 @@ class InventoryService {
         breakdown,
       };
 
-      console.log("[GOLD_BALANCE] Final result:", JSON.stringify(result, null, 2));
-
       return result;
     } catch (error) {
-      console.error("[GOLD_BALANCE] Error in aggregation:", error);
-      console.error("[GOLD_BALANCE] Error stack:", error.stack);
       throw createAppError(
         `Failed to calculate gold balance from logs: ${error.message}`,
         500,
@@ -681,14 +514,12 @@ class InventoryService {
   }
 
   static async updateInventoryLog(inventoryId, body, admin) {
-
     try {
       // updated by also add to inventory log
       body.updatedBy = admin;
       const logs = await InventoryLog.findByIdAndUpdate(inventoryId, body, { new: true });
       return logs;
     } catch (error) {
-      console.log(error)
       throw createAppError(
         "Failed to fetch inventory Logs",
         500,
@@ -698,10 +529,8 @@ class InventoryService {
   }
 
   static async deleteInventoryLogById(inventoryId) {
-
     try {
       const result = await InventoryLog.deleteMany({ _id: new mongoose.Types.ObjectId(inventoryId) });
-      console.log("Deleted inventory logs for inventoryId:", inventoryId, "Result:", result);
       return result;
     } catch (error) {
       throw createAppError(
@@ -713,14 +542,9 @@ class InventoryService {
   }
 
   static async deleteVoucherByVoucher(voucherId) {
-
     try {
       const result = await InventoryLog.deleteMany({ voucherCode: voucherId });
-      console.log("Deleted inventory logs for voucherId:", voucherId, "Result:", result);
-
       const registryResult = await Registry.deleteMany({ reference: voucherId });
-      console.log("Deleted registry entries for voucherId:", voucherId, "Result:", registryResult);
-
       return result;
     } catch (error) {
       throw createAppError(
@@ -741,11 +565,7 @@ class InventoryService {
 
       }
       const result = await OpeningBalance.deleteMany({ voucherCode: voucherId });
-      console.log("Deleted inventory logs for voucherId:", voucherId, "Result:", result);
-
       const registryResult = await Registry.deleteMany({ reference: voucherId });
-      console.log("Deleted registry entries for voucherId:", voucherId, "Result:", registryResult);
-
       return result;
     } catch (error) {
       throw createAppError(
@@ -1058,7 +878,6 @@ class InventoryService {
           "METAL_NOT_FOUND"
         );
       }
-      console.log("Updating inventory for metal:", voucher);
 
       // first clean the inventoryLog based on the voucher as well remove registry entries
       await InventoryLog.deleteMany({ voucherCode: voucher.voucherCode });
@@ -1145,8 +964,6 @@ class InventoryService {
         });
       }
 
-
-      console.log("Registry entry created:", res);
       return savedInventory;
     } catch (error) {
       if (error.name === "AppError") throw error;
@@ -1168,16 +985,11 @@ class InventoryService {
         const metalId = new mongoose.Types.ObjectId(item.stockCode?._id || item.stockCode);
         if (!metalId) continue;
 
-        console.log("🔍 Looking for MetalStock with ID:", metalId);
-
         // Load inventory + metal in parallel
         const [inventory, metal] = await Promise.all([
           Inventory.findOne({ metal: metalId }).session(session),
           MetalStock.findById(metalId).session(session),
         ]);
-
-        console.log("🔧 Inventory:", inventory ? "found ✅" : "missing ❌");
-        console.log("🔧 MetalStock:", metal ? metal.code : "null");
 
         if (!inventory) {
           throw createAppError(
@@ -1188,7 +1000,6 @@ class InventoryService {
         }
 
         if (!metal) {
-          console.warn(`⚠️ MetalStock not found for ID: ${metalId}`);
           continue; // skip instead of crashing
         }
 
@@ -1245,7 +1056,6 @@ class InventoryService {
 
         await inventory.save({ session });
         updated.push(inventory);
-        console.log(JSON.stringify(transaction));
 
         // Extract party - try party object first, then partyCode
         const partyId = transaction.party?._id || transaction.party || transaction.partyCode || item.party?._id || item.party || item.partyCode || null;
@@ -1266,7 +1076,7 @@ class InventoryService {
               divisionId = party.acDefinition.preciousMetal[0].division._id || party.acDefinition.preciousMetal[0].division;
             }
           } catch (error) {
-            console.warn(`[updateInventory] Could not fetch party for division: ${error.message}`);
+            // Could not fetch party for division
           }
         }
         
@@ -1279,8 +1089,6 @@ class InventoryService {
             } else if (typeof divisionId === 'string') {
               if (mongoose.Types.ObjectId.isValid(divisionId)) {
                 divisionObjectId = new mongoose.Types.ObjectId(divisionId);
-              } else {
-                console.warn(`[updateInventory] Invalid divisionId string format: ${divisionId}`);
               }
             } else if (divisionId._id) {
               if (divisionId._id instanceof mongoose.Types.ObjectId) {
@@ -1292,12 +1100,9 @@ class InventoryService {
               const divisionStr = String(divisionId);
               if (mongoose.Types.ObjectId.isValid(divisionStr)) {
                 divisionObjectId = new mongoose.Types.ObjectId(divisionStr);
-              } else {
-                console.warn(`[updateInventory] Could not convert divisionId to ObjectId: ${divisionId}`);
               }
             }
           } catch (error) {
-            console.warn(`[updateInventory] Error converting divisionId to ObjectId: ${error.message}`, divisionId);
             divisionObjectId = null;
           }
         }
@@ -1405,16 +1210,8 @@ class InventoryService {
         await InventoryLog.create(logEntries, { session });
       }
 
-      console.log("✅ [updateInventory] Completed successfully");
       return updated;
     } catch (err) {
-      console.error("❌ [Inventory Update Error]", {
-        message: err?.message,
-        name: err?.name,
-        code: err?.code,
-        stack: err?.stack,
-      });
-
       throw createAppError(
         err?.message || "Failed to update inventory",
         err?.statusCode || 500,
@@ -1471,9 +1268,7 @@ class InventoryService {
 
       return await registryEntry.save();
     } catch (error) {
-      console.error("Failed to create registry entry:", error);
       // Don't throw error to prevent inventory update from failing
-      // Log the error for debugging purposes
     }
   }
 }

@@ -174,7 +174,6 @@ class RegistryService {
       const type = String(r.type || "");
       return type != "PARTY_HEDGE_ENTRY" && type != "HEDGE_ENTRY"; // EXCLUDE HEDGE
     });
-    console.log(validRegistries, "validRegistries🟢🟢🟢---------------------------------------");
     // If all entries were hedges → nothing to show
     if (validRegistries.length === 0) {
       return {
@@ -1608,8 +1607,6 @@ class RegistryService {
 
   static async getRegistriesByPartyId(partyId, page = 1, limit = 10, division = null) {
     try {
-      console.log(`[getRegistriesByPartyId] partyId: ${partyId}, division: ${division}`);
-      
       // Filter for non-draft entries (for balance calculation)
       const filter = {
         party: partyId,
@@ -1633,7 +1630,6 @@ class RegistryService {
             ]
           }
         ];
-        console.log(`[getRegistriesByPartyId] Division filter applied: ${divisionObjectId}`);
       }
 
       // Separate filter for drafts (to show but not calculate)
@@ -1663,9 +1659,6 @@ class RegistryService {
 
       const totalItems = await Registry.countDocuments(filter);
       const draftTotalItems = await Registry.countDocuments(draftFilter);
-      
-      console.log(`[getRegistriesByPartyId] Found ${totalItems} registry entries, ${draftTotalItems} drafts`);
-      console.log(`[getRegistriesByPartyId] Filter:`, JSON.stringify(filter, null, 2));
 
       // Fetch non-draft registries (for balance calculation)
       const registries = await Registry.find(filter)
@@ -2115,8 +2108,6 @@ class RegistryService {
   }
 
   static async generateOpeningStockAuditTrail(reference) {
-    console.log("Generating Opening Stock Audit Trail for:", reference);
-
     // 1️⃣ Fetch ALL registry rows for this voucher
     const registries = await Registry.find({
       reference,          // eg: MOP0001
@@ -2207,7 +2198,6 @@ class RegistryService {
 
       return "OPENING";
     };
-    console.log("Generating Audit Trail for:", reference);
 
     // 1️⃣ Fetch ALL registry rows for voucher
     const registries = await Registry.find({
