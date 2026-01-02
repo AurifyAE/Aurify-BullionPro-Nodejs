@@ -210,6 +210,10 @@ class InventoryService {
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
         
+        // Extract isDraft and draftId from transaction or item
+        const isDraft = transaction.isDraft || item.isDraft || false;
+        const draftId = transaction.draftId || item.draftId || null;
+        
         // Inventory Log - Main entry
         const logEntries = [
           {
@@ -235,6 +239,8 @@ class InventoryService {
             action: isSale ? "remove" : "add",
             createdBy: transaction.createdBy || null,
             createdAt: new Date(),
+            isDraft: isDraft,
+            draftId: draftId,
           },
         ];
 
@@ -294,6 +300,8 @@ class InventoryService {
             action: action, // Dynamically set based on registry debit/credit
             createdBy: transaction.createdBy || null,
             createdAt: new Date(),
+            isDraft: isDraft,
+            draftId: draftId,
             note: isGain
               ? `Purity difference gain: ${purityDiff} (for reporting only)`
               : `Purity difference loss: ${Math.abs(purityDiff)} (for reporting only)`,
@@ -1253,6 +1261,10 @@ class InventoryService {
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
 
+        // Extract isDraft and draftId from transaction or item
+        const isDraft = transaction.isDraft || item.isDraft || false;
+        const draftId = transaction.draftId || item.draftId || null;
+
         // Log entry - Main entry
         const logEntries = [
           {
@@ -1279,6 +1291,8 @@ class InventoryService {
               (isSale ? "sale" : "purchase"),
             createdBy: transaction.createdBy || admin || null,
             pcs: item.pieces,
+            isDraft: isDraft,
+            draftId: draftId,
             note: isSale
               ? "Inventory reduced due to sale transaction"
               : "Inventory increased due to purchase transaction",
@@ -1342,6 +1356,8 @@ class InventoryService {
               (isSale ? "sale" : "purchase"),
             createdBy: transaction.createdBy || admin || null,
             pcs: 0,
+            isDraft: isDraft,
+            draftId: draftId,
             note: isGain
               ? `Purity difference gain: ${purityDiff} (for reporting only)`
               : `Purity difference loss: ${Math.abs(purityDiff)} (for reporting only)`,
