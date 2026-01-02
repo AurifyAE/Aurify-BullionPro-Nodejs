@@ -287,75 +287,49 @@ class VoucherMasterService {
       }
 
 
-      // Draft Metal module - Get last voucher number instead of counting
-      // This prevents duplicate numbers when drafts are deleted
+      // Draft Metal module - Get last draft and extract number from draftNumber
       if (moduleLC === "draft-metal") {
-        console.log(`[getTransactionCount] Using model: Drafting - Getting last voucher number`);
+        console.log(`[getTransactionCount] Using model: Drafting - Getting last draft number`);
 
         const { default: Drafting } = await import("../../models/modules/Drafting.js");
 
-        // Get voucher config first to know the prefix
+        // Get voucher config to know the prefix
         const voucher = await this.getVoucherConfig(module);
         const prefix = voucher.prefix;
+        console.log(`[getTransactionCount] Draft-Metal prefix: ${prefix}`);
 
-        // Build query to find drafts with voucherCode matching the prefix
-        const matchQuery = {
-          voucherCode: {
-            $exists: true,
-            $ne: null,
-            $ne: "",
-            $regex: `^${prefix}` // Match voucher codes starting with the prefix
-          }
-        };
-        if (transactionType) {
-          matchQuery.voucherType = { $regex: `^${transactionType}$`, $options: "i" };
-        }
+        // Get the last draft (sorted by createdAt descending)
+        const lastDraft = await Drafting.findOne({
+          draftNumber: { $exists: true, $ne: null, $ne: "" }
+        })
+          .sort({ createdAt: -1 })
+          .select('draftNumber')
+          .lean();
 
-        // Use aggregation to extract numeric parts and find the maximum
-        const result = await Drafting.aggregate([
-          { $match: matchQuery },
-          {
-            $project: {
-              voucherCode: 1,
-              // Extract numeric part after prefix
-              numericPart: {
-                $substr: [
-                  "$voucherCode",
-                  prefix.length,
-                  { $strLenCP: "$voucherCode" }
-                ]
-              }
-            }
-          },
-          {
-            $project: {
-              voucherCode: 1,
-              number: {
-                $convert: {
-                  input: "$numericPart",
-                  to: "int",
-                  onError: 0,
-                  onNull: 0
-                }
-              }
-            }
-          },
-          {
-            $group: {
-              _id: null,
-              maxNumber: { $max: "$number" }
-            }
-          }
-        ]);
-
-        if (!result || result.length === 0 || !result[0].maxNumber) {
-          console.log(`[getTransactionCount] No drafts with valid voucherCode found, returning 0`);
+        if (!lastDraft || !lastDraft.draftNumber) {
+          console.log(`[getTransactionCount] No drafts found, returning 0`);
           return 0;
         }
 
-        const maxNumber = result[0].maxNumber;
-        console.log(`[getTransactionCount] Maximum voucher number found: ${maxNumber}, returning ${maxNumber}`);
-        return maxNumber;
+        const draftNumber = lastDraft.draftNumber;
+        console.log(`[getTransactionCount] Last draftNumber: ${draftNumber}`);
+
+        // Extract numeric part after prefix (e.g., "DM0001" -> "0001" -> 1)
+        if (!draftNumber.startsWith(prefix)) {
+          console.log(`[getTransactionCount] DraftNumber "${draftNumber}" doesn't start with prefix "${prefix}", returning 0`);
+          return 0;
+        }
+
+        const numericPart = draftNumber.substring(prefix.length);
+        const number = parseInt(numericPart, 10);
+
+        if (isNaN(number) || number <= 0) {
+          console.log(`[getTransactionCount] Invalid numeric part: "${numericPart}", returning 0`);
+          return 0;
+        }
+
+        console.log(`[getTransactionCount] Extracted number: ${number} from draftNumber "${draftNumber}", returning ${number}`);
+        return number;
       }
 
 

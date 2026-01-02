@@ -127,6 +127,12 @@ const DraftingSchema = new mongoose.Schema(
     voucherDate: {
       type: Date,
     },
+    // Purchase type: local or import
+    purchaseType: {
+      type: String,
+      enum: ["purchase", "importPurchase"],
+      default: null,
+    },
     // PDF file reference (if saved)
     pdfFile: {
       type: String, // Path or S3 key (for certificate PDF)

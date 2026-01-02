@@ -8,45 +8,7 @@ import mongoose from "mongoose";
 
 class DraftingService {
   // Generate unique draft number with retry logic to handle duplicates
-  static async generateUniqueDraftNumber(maxRetries = 10) {
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        // Get the highest draft number
-        const lastDraft = await Drafting.findOne(
-          { draftNumber: { $regex: /^DRF\d+$/ } },
-          { draftNumber: 1 }
-        )
-          .sort({ draftNumber: -1 })
-          .lean();
-
-        let nextNumber = 1;
-        if (lastDraft && lastDraft.draftNumber) {
-          // Extract number from last draft number (e.g., "DRF003" -> 3)
-          const lastNumber = parseInt(lastDraft.draftNumber.replace("DRF", ""), 10);
-          if (!isNaN(lastNumber)) {
-            nextNumber = lastNumber + 1;
-          }
-        }
-
-        const draftNumber = `DRF${String(nextNumber).padStart(3, "0")}`;
-
-        // Check if this draft number already exists (double-check)
-        const exists = await Drafting.findOne({ draftNumber }).lean();
-        if (!exists) {
-          return draftNumber;
-        }
-
-        // If exists, try next number
-        nextNumber++;
-      } catch (error) {
-        console.error(`Error generating draft number (attempt ${attempt + 1}):`, error);
-        if (attempt === maxRetries - 1) {
-          throw new Error("Failed to generate unique draft number after multiple attempts");
-        }
-      }
-    }
-    throw new Error("Failed to generate unique draft number");
-  }
+ 
 
   // Create a new draft
   static async createDraft(draftData, adminId) {
@@ -55,9 +17,9 @@ class DraftingService {
     console.log(draftData,"draftData");
     try {
       // Generate draft number if not provided
-      if (!draftData.draftNumber) {
-        draftData.draftNumber = await this.generateUniqueDraftNumber();
-      }
+      // if (!draftData.draftNumber) {
+      //   draftData.draftNumber = await this.generateUniqueDraftNumber();
+      // }
 
       // Calculate purity, karat, and pureWeight
       const grossWeight = parseFloat(draftData.grossWeight) || 0;
