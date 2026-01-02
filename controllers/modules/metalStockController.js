@@ -116,7 +116,6 @@ export const createMetalStock = async (req, res, next) => {
         stockAccountId: zohoConfig.stockAccountId,
       });
 
-      console.log("Zoho item created:", zohoItem);
     } catch (zohoError) {
       console.error("Zoho item creation failed:", zohoError.message);
 

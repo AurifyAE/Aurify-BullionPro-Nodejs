@@ -1,3 +1,6 @@
+import ZohoConfig from "../../models/integrations/ZohoConfig.js";
+import MetalStock from "../../models/modules/MetalStock.js";
+import { createZohoBill, createZohoItem } from "../../services/integrations/zohoBooks.service.js";
 import InventoryService from "../../services/modules/inventoryService.js";
 import MetalTransactionService from "../../services/modules/MetalTransactionService.js";
 import { createAppError } from "../../utils/errorHandler.js";
@@ -12,7 +15,7 @@ const toDate = (val) => (val ? new Date(val) : null);
 
 // ======================== CREATE METAL TRANSACTION ========================
 export const createMetalTransaction = async (req, res, next) => {
-  console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
+  // console.log("CREATE BODY:", JSON.stringify(req.body, null, 2));
 
   try {
     const {
@@ -47,7 +50,7 @@ export const createMetalTransaction = async (req, res, next) => {
       division,
     } = req.body;
 
-    console.log("CREATE METAL TRANSACTION BODY:", JSON.stringify(req.body, null, 2));
+    // console.log("CREATE METAL TRANSACTION BODY:", JSON.stringify(req.body, null, 2));
 
     // === VALIDATION ===
     if (
@@ -365,6 +368,67 @@ export const createMetalTransaction = async (req, res, next) => {
         transactionData,
         req.admin.id
       );
+
+
+    // == ZOHO BOOKS INTEGRATION (IF APPLICABLE) ==
+    const zohoConfig = await ZohoConfig.findOne({ isActive: true });
+    if (!zohoConfig) {
+      throw createAppError("Zoho not configured", 400);
+    }
+
+    const party = metalTransaction.partyCode;
+    if (!party) {
+      throw createAppError("Party not found in transaction", 400);
+    }
+
+    let zohoVendorId = party.zoho?.contactId;
+    // const zohoItem = await createZohoBill(stock, zohoConfig);
+
+    if (metalTransaction.transactionType === "purchase") {
+      const stockItem = metalTransaction.stockItems[0];
+      const stock = await MetalStock.findById(stockItem.stockCode._id);
+
+      // if (!stock?.zoho?.itemId) {
+      //   const zohoItem = await createZohoItem(stock, zohoConfig);
+      //   stock.zoho = {
+      //     itemId: zohoItem.item_id,
+      //     syncStatus: "SYNCED",
+      //   };
+      //   await stock.save();
+      // }
+
+      try {
+        const bill = await createZohoBill({
+          vendorId: zohoVendorId,
+          billNumber: metalTransaction.voucherNumber,
+          billDate: metalTransaction.voucherDate,
+          itemId: stock.zoho.itemId,
+          quantity: stockItem.pureWeight || stockItem.grossWeight,
+          rate:
+            stockItem.itemTotal.baseAmount /
+            (stockItem.pureWeight || stockItem.grossWeight),
+          zohoConfig,
+        });
+        console.log("Zoho Bill created:", bill);
+      } catch (error) {
+        console.error("Error creating Zoho Bill:", error);
+      }
+
+
+
+      // await MetalTransaction.updateOne(
+      //   { _id: metalTransaction._id },
+      //   {
+      //     "zoho.billId": bill.bill_id,
+      //     "zoho.syncStatus": "SYNCED",
+      //   }
+      // );
+    }
+
+
+
+
+
 
     // === INVENTORY UPDATE ===
     if (["purchase", "saleReturn", "importPurchase", "exportSaleReturn", "hedgeMetalReceipt", "hedgeMetalReciept"].includes(transactionType)) {

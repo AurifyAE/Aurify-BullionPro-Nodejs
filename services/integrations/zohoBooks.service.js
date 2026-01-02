@@ -100,3 +100,42 @@ export async function getInventoryAccountId(zohoConfig) {
 
     return inventoryAccount.account_id;
 }
+
+
+export async function createZohoBill({
+    vendorId,
+    billNumber,
+    billDate,
+    itemId,
+    quantity,
+    rate,
+    zohoConfig,
+}) {
+    const payload = {
+        vendor_id: vendorId,
+        bill_number: billNumber,
+        date: new Date(billDate).toISOString().split("T")[0], // ✅ FIX
+        line_items: [
+            {
+                item_id: itemId,
+                quantity: Number(quantity), // ✅ grams with decimals
+                rate: Number(rate),
+            },
+        ],
+        is_inclusive_tax: false,
+    };
+
+    const res = await axios.post(
+        "https://www.zohoapis.com/books/v3/bills",
+        payload,
+        {
+            headers: {
+                Authorization: `Zoho-oauthtoken ${zohoConfig.accessToken}`,
+                "X-com-zoho-books-organizationid": zohoConfig.orgId,
+            },
+        }
+    );
+
+    return res.data.bill;
+}
+

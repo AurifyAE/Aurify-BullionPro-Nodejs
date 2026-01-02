@@ -31,7 +31,7 @@ export const createTradeDebtor = async (req, res, next) => {
       accountCode, // Accept manual account code from frontend
     } = req.body;
 
-    console.log("req.body : ", req.body);
+ 
 
     // ✅ Helper function to handle 'null' and 'undefined' strings
     const sanitizeString = (value, defaultValue = "") => {
