@@ -36,6 +36,12 @@ const inventoryLogSchema = new mongoose.Schema(
       ref: "Account",
       default: null,
     },
+    division: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DivisionMaster",
+      default: null,
+      index: true,
+    },
     pcs: {
       type: Boolean,
       default: false,

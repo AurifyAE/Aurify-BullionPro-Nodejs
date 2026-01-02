@@ -7,6 +7,7 @@ import { createAppError } from "../../utils/errorHandler.js";
 import { deleteMultipleS3Files } from "../../utils/s3Utils.js"; // Ensure this import is added
 import AccountMode from "../../models/modules/AccountMode.js";
 import AccountType from "../../models/modules/AccountType.js";
+import mongoose from "mongoose";
 
 // Create new trade debtor
 export const createTradeDebtor = async (req, res, next) => {
@@ -158,6 +159,58 @@ export const createTradeDebtor = async (req, res, next) => {
         parsedAcDefinition.branches.length === 0)
     ) {
       delete parsedAcDefinition.branches;
+    }
+
+    // ✅ Handle preciousMetal array with validation
+    if (parsedAcDefinition.preciousMetal) {
+      if (Array.isArray(parsedAcDefinition.preciousMetal)) {
+        // Validate ObjectId format for all divisions
+        parsedAcDefinition.preciousMetal.forEach((pm, index) => {
+          const divisionId = pm.division?._id || pm.division;
+          if (!divisionId) {
+            throw createAppError(
+              `Division reference is required for preciousMetal[${index}]`,
+              400,
+              "MISSING_DIVISION"
+            );
+          }
+          if (!mongoose.Types.ObjectId.isValid(divisionId)) {
+            throw createAppError(
+              `Invalid division ID format for preciousMetal[${index}]: ${divisionId}`,
+              400,
+              "INVALID_DIVISION_ID"
+            );
+          }
+        });
+
+        // Check for duplicate divisions
+        const divisionIds = parsedAcDefinition.preciousMetal.map(
+          (pm) => (pm.division?._id || pm.division)?.toString()
+        );
+        const uniqueDivisionIds = [...new Set(divisionIds)];
+        if (divisionIds.length !== uniqueDivisionIds.length) {
+          throw createAppError(
+            "Duplicate divisions found in preciousMetal array",
+            400,
+            "DUPLICATE_DIVISIONS"
+          );
+        }
+
+        parsedAcDefinition.preciousMetal = parsedAcDefinition.preciousMetal.map(
+          (pm) => {
+            const divisionId = pm.division?._id || pm.division;
+            return {
+              division: divisionId,
+            };
+          }
+        );
+      } else if (
+        parsedAcDefinition.preciousMetal === null ||
+        parsedAcDefinition.preciousMetal === "null"
+      ) {
+        // Allow null to clear preciousMetal
+        parsedAcDefinition.preciousMetal = [];
+      }
     }
 
     // ✅ Parse and validate limitsMargins
@@ -580,23 +633,27 @@ export const createTradeDebtor = async (req, res, next) => {
     if (parsedKycDetails && parsedKycDetails.length > 0)
       tradeDebtorData.kycDetails = parsedKycDetails;
 
-    // Initialize cash balances
+    // Initialize cash balances and precious metal balances
     if (
       parsedAcDefinition.currencies &&
       parsedAcDefinition.currencies.length > 0
     ) {
       tradeDebtorData.balances = {
-        goldBalance: {
-          totalGrams: 0,
-          totalValue: 0,
-          lastUpdated: new Date(),
-        },
         cashBalance: parsedAcDefinition.currencies.map((curr) => ({
           currency: curr.currency,
           amount: 0,
           isDefault: curr.isDefault || false,
           lastUpdated: new Date(),
         })),
+        preciousMetalBalance: parsedAcDefinition.preciousMetal
+          ? parsedAcDefinition.preciousMetal.map((pm) => ({
+              division: pm.division,
+              totalGrams: 0,
+              totalValue: 0,
+              draftBalance: 0,
+              lastUpdated: new Date(),
+            }))
+          : [],
         totalOutstanding: 0,
         lastBalanceUpdate: new Date(),
       };
@@ -853,6 +910,57 @@ export const updateTradeDebtor = async (req, res, next) => {
           updateData.acDefinition.branches.length === 0)
       ) {
         delete updateData.acDefinition.branches;
+      }
+
+      // Handle preciousMetal array with validation
+      if (updateData.acDefinition.preciousMetal) {
+        if (Array.isArray(updateData.acDefinition.preciousMetal)) {
+          // Validate ObjectId format for all divisions
+          updateData.acDefinition.preciousMetal.forEach((pm, index) => {
+            const divisionId = pm.division?._id || pm.division;
+            if (!divisionId) {
+              throw createAppError(
+                `Division reference is required for preciousMetal[${index}]`,
+                400,
+                "MISSING_DIVISION"
+              );
+            }
+            if (!mongoose.Types.ObjectId.isValid(divisionId)) {
+              throw createAppError(
+                `Invalid division ID format for preciousMetal[${index}]: ${divisionId}`,
+                400,
+                "INVALID_DIVISION_ID"
+              );
+            }
+          });
+
+          // Check for duplicate divisions
+          const divisionIds = updateData.acDefinition.preciousMetal.map(
+            (pm) => (pm.division?._id || pm.division)?.toString()
+          );
+          const uniqueDivisionIds = [...new Set(divisionIds)];
+          if (divisionIds.length !== uniqueDivisionIds.length) {
+            throw createAppError(
+              "Duplicate divisions found in preciousMetal array",
+              400,
+              "DUPLICATE_DIVISIONS"
+            );
+          }
+
+          updateData.acDefinition.preciousMetal =
+            updateData.acDefinition.preciousMetal.map((pm) => {
+              const divisionId = pm.division?._id || pm.division;
+              return {
+                division: divisionId,
+              };
+            });
+        } else if (
+          updateData.acDefinition.preciousMetal === null ||
+          updateData.acDefinition.preciousMetal === "null"
+        ) {
+          // Allow null to clear preciousMetal
+          updateData.acDefinition.preciousMetal = [];
+        }
       }
     }
 

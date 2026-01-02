@@ -77,11 +77,22 @@ const AccountSchema = new mongoose.Schema(
 
     // Balance Information
     balances: {
-      goldBalance: {
-        totalGrams: { type: Number, default: 0 },
-        totalValue: { type: Number, default: 0 },
-        lastUpdated: { type: Date, default: Date.now },
-        draftBalance: { type: Number, default: 0 },
+      // Multiple precious metal balances (one per division)
+      preciousMetalBalance: {
+        type: [
+          {
+            division: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "DivisionMaster",
+              required: true,
+            },
+            totalGrams: { type: Number, default: 0 },
+            totalValue: { type: Number, default: 0 },
+            lastUpdated: { type: Date, default: Date.now },
+            draftBalance: { type: Number, default: 0 },
+          },
+        ],
+        default: [],
       },
       cashBalance: {
         type: [
@@ -130,6 +141,18 @@ const AccountSchema = new mongoose.Schema(
           {
             branch: { type: mongoose.Schema.Types.ObjectId },
             isDefault: { type: Boolean, default: false },
+          },
+        ],
+        default: [],
+      },
+      preciousMetal: {
+        type: [
+          {
+            division: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "DivisionMaster",
+              required: true,
+            },
           },
         ],
         default: [],
@@ -404,7 +427,8 @@ AccountSchema.index({ createdAt: -1 });
 AccountSchema.index({ "employees.email": 1 });
 AccountSchema.index({ "vatGstDetails.vatNumber": 1 });
 AccountSchema.index({ "balances.totalOutstanding": 1 });
-AccountSchema.index({ "balances.goldBalance.totalGrams": 1 });
+AccountSchema.index({ "balances.preciousMetalBalance.division": 1 });
+AccountSchema.index({ "balances.preciousMetalBalance.totalGrams": 1 });
 AccountSchema.index({ "balances.cashBalance.currency": 1 });
 AccountSchema.index({ "balances.cashBalance.amount": 1 });
 
@@ -430,6 +454,45 @@ AccountSchema.pre("save", function (next) {
         });
       }
     });
+  }
+
+  // Initialize precious metal balances from acDefinition.preciousMetal (for both new and updates)
+  if (this.acDefinition?.preciousMetal?.length > 0) {
+    // Ensure balances.preciousMetalBalance exists
+    if (!this.balances.preciousMetalBalance) {
+      this.balances.preciousMetalBalance = [];
+    }
+
+    const existingDivisions = this.balances.preciousMetalBalance.map((pmb) =>
+      pmb.division?.toString()
+    );
+
+    // Add missing divisions from acDefinition.preciousMetal
+    this.acDefinition.preciousMetal.forEach((pmDef) => {
+      const divisionId = pmDef.division?.toString();
+      if (divisionId && !existingDivisions.includes(divisionId)) {
+        this.balances.preciousMetalBalance.push({
+          division: pmDef.division,
+          totalGrams: 0,
+          totalValue: 0,
+          draftBalance: 0,
+          lastUpdated: new Date(),
+        });
+      }
+    });
+
+    // Remove divisions that are no longer in acDefinition.preciousMetal (only if not new)
+    if (!this.isNew) {
+      const acDefDivisionIds = this.acDefinition.preciousMetal.map((pm) =>
+        pm.division?.toString()
+      );
+      this.balances.preciousMetalBalance = this.balances.preciousMetalBalance.filter(
+        (pmb) => {
+          const pmbDivisionId = pmb.division?.toString();
+          return acDefDivisionIds.includes(pmbDivisionId);
+        }
+      );
+    }
   }
 
   const ensureSingle = (items, field) => {
@@ -499,12 +562,33 @@ AccountSchema.methods.getDefaultCashBalances = function () {
   return this.balances.cashBalance?.filter((cb) => cb.isDefault) || [];
 };
 
-AccountSchema.methods.updateGoldBalance = function (grams, value) {
-  Object.assign(this.balances.goldBalance, {
-    totalGrams: grams,
-    totalValue: value,
-    lastUpdated: new Date(),
-  });
+AccountSchema.methods.updatePreciousMetalBalance = function (divisionId, grams, value, draftBalance = null) {
+  if (!divisionId) {
+    throw new Error("Division ID is required to update precious metal balance");
+  }
+
+  const divisionIdStr = divisionId.toString();
+  const existingBalance = this.balances.preciousMetalBalance.find(
+    (pmb) => pmb.division?.toString() === divisionIdStr
+  );
+
+  if (existingBalance) {
+    existingBalance.totalGrams = grams;
+    existingBalance.totalValue = value;
+    if (draftBalance !== null) {
+      existingBalance.draftBalance = draftBalance;
+    }
+    existingBalance.lastUpdated = new Date();
+  } else {
+    this.balances.preciousMetalBalance.push({
+      division: divisionId,
+      totalGrams: grams,
+      totalValue: value,
+      draftBalance: draftBalance || 0,
+      lastUpdated: new Date(),
+    });
+  }
+
   this.balances.lastBalanceUpdate = new Date();
   return this.save();
 };
@@ -563,8 +647,11 @@ AccountSchema.methods.calculateTotalOutstanding = function () {
     (sum, cb) => sum + (cb.amount || 0),
     0
   );
-  const goldValue = this.balances.goldBalance.totalValue || 0;
-  this.balances.totalOutstanding = totalCashAmount + goldValue;
+  const totalPreciousMetalValue = this.balances.preciousMetalBalance.reduce(
+    (sum, pmb) => sum + (pmb.totalValue || 0),
+    0
+  );
+  this.balances.totalOutstanding = totalCashAmount + totalPreciousMetalValue;
   return this.balances.totalOutstanding;
 };
 

@@ -291,6 +291,64 @@ class MetalTransactionService {
         // Extract party - try party object first, then partyCode
         const partyId = transaction.party?._id || transaction.party || transaction.partyCode || item.party?._id || item.party || item.partyCode || null;
         
+        // Extract divisionId from transaction or party (same logic as buildRegistryEntries)
+        let divisionId = null;
+        if (transaction.division) {
+          // Handle division as ObjectId, string, or object with _id
+          divisionId = transaction.division._id || transaction.division;
+        } else if (transaction.party?.acDefinition?.preciousMetal?.[0]?.division) {
+          divisionId = transaction.party.acDefinition.preciousMetal[0].division._id || transaction.party.acDefinition.preciousMetal[0].division;
+        } else if (partyId) {
+          // Fetch party to get division from acDefinition
+          try {
+            const party = await Account.findById(partyId).select('acDefinition.preciousMetal.division').lean();
+            if (party?.acDefinition?.preciousMetal?.[0]?.division) {
+              divisionId = party.acDefinition.preciousMetal[0].division._id || party.acDefinition.preciousMetal[0].division;
+            }
+          } catch (error) {
+            console.warn(`[updateInventory] Could not fetch party for division: ${error.message}`);
+          }
+        }
+        
+        // Convert divisionId to ObjectId format for Mongoose (Mongoose accepts ObjectId, string, or null)
+        let divisionObjectId = null;
+        if (divisionId) {
+          try {
+            // If it's already an ObjectId, use it directly
+            if (divisionId instanceof mongoose.Types.ObjectId) {
+              divisionObjectId = divisionId;
+            } 
+            // If it's a string, validate and convert to ObjectId
+            else if (typeof divisionId === 'string') {
+              if (mongoose.Types.ObjectId.isValid(divisionId)) {
+                divisionObjectId = new mongoose.Types.ObjectId(divisionId);
+              } else {
+                console.warn(`[updateInventory] Invalid divisionId string format: ${divisionId}`);
+              }
+            }
+            // If it's an object with _id property
+            else if (divisionId._id) {
+              if (divisionId._id instanceof mongoose.Types.ObjectId) {
+                divisionObjectId = divisionId._id;
+              } else if (typeof divisionId._id === 'string' && mongoose.Types.ObjectId.isValid(divisionId._id)) {
+                divisionObjectId = new mongoose.Types.ObjectId(divisionId._id);
+              }
+            }
+            // Try to convert using toString()
+            else {
+              const divisionStr = String(divisionId);
+              if (mongoose.Types.ObjectId.isValid(divisionStr)) {
+                divisionObjectId = new mongoose.Types.ObjectId(divisionStr);
+              } else {
+                console.warn(`[updateInventory] Could not convert divisionId to ObjectId: ${divisionId}`);
+              }
+            }
+          } catch (error) {
+            console.warn(`[updateInventory] Error converting divisionId to ObjectId: ${error.message}`, divisionId);
+            divisionObjectId = null;
+          }
+        }
+        
         // Extract voucherType
         const voucherType = transaction.voucherType || item.voucherType || transaction.transactionType || "N/A";
 
@@ -304,6 +362,7 @@ class MetalTransactionService {
             voucherType: voucherType,
             grossWeight: item.grossWeight || 0,
             party: partyId,
+            division: divisionObjectId, // Add division to inventory log (as ObjectId)
             action: isSale ? "remove" : "add",
             transactionType:
               transaction.transactionType || (isSale ? "sale" : "purchase"),
@@ -367,6 +426,7 @@ class MetalTransactionService {
             voucherType: voucherType,
             grossWeight: 0, // Purity difference entries don't affect actual weight - only for reporting
             party: partyId,
+            division: divisionObjectId, // Add division to purity difference entry (as ObjectId)
             action: action, // Dynamically set based on registry debit/credit
             transactionType:
               transaction.transactionType || (isSale ? "sale" : "purchase"),
@@ -589,7 +649,13 @@ class MetalTransactionService {
       itemCurrency,
       dealOrderId,
       remarks: transactionRemarks, // Main transaction remarks for PARTY entries
+      division, // Division from transaction
     } = transaction;
+    
+    // Get divisionId - from transaction or party's first preciousMetal division
+    const divisionId = division?.toString() || 
+                      party.acDefinition?.preciousMetal?.[0]?.division?.toString() || 
+                      null;
     
     // Extract currency code from partyCurrency (can be ObjectId string or populated object)
     const partyCurrencyCode = await this.getCurrencyCodeFromPartyCurrency(partyCurrency, "AED");
@@ -657,7 +723,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry - individual items skip hedge
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
 
           itemEntries = purchaseEntries || [];
@@ -684,7 +751,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
           itemEntries = saleEntries || [];
           break;
@@ -710,7 +778,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
           itemEntries = purchaseReturnEntries || [];
           break;
@@ -736,7 +805,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
           itemEntries = saleReturnEntries || [];
           break;
@@ -762,7 +832,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
 
           itemEntries = importPurchase || [];
@@ -789,7 +860,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
           itemEntries = importPurchaseReturnEntries || [];
           break;
@@ -814,7 +886,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
           itemEntries = exportSale || [];
           break;
@@ -840,7 +913,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId // Pass division from transaction
           );
           itemEntries = exportSaleReturnEntries || [];
           break;
@@ -867,7 +941,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId
           );
           itemEntries = hedgeMetalPaymentEntries || [];
           break;
@@ -895,7 +970,8 @@ class MetalTransactionService {
             false, // skipHedgeEntry - individual items skip hedge
             transactionRemarks, // Pass transaction remarks for PARTY entries
             partyCurrencyCode,
-            partyCurrencyRate
+            partyCurrencyRate,
+            divisionId
           );
           itemEntries = hedgeMetalReceiptEntries || [];
           break;
@@ -1000,6 +1076,7 @@ class MetalTransactionService {
         hedgeVoucherNo,
         adminId,
         dealOrderId,
+        divisionId, // Pass division from transaction
       });
 
       // Separate PARTY entries from hedge entries for aggregation
@@ -1049,6 +1126,7 @@ class MetalTransactionService {
         partyCurrencyCode: await this.getCurrencyCodeFromPartyCurrency(transaction.partyCurrency, "AED"),
         dealOrderId,
         transactionRemarks,
+        divisionId, // Pass division from transaction
       });
       entries.push(...roundOffEntries);
     }
@@ -1104,6 +1182,7 @@ class MetalTransactionService {
     partyCurrency,
     partyCurrencyRate = 1,
     partyCurrencyCode = "AED",
+    divisionId = null, // Division from transaction
   }) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -1172,7 +1251,8 @@ class MetalTransactionService {
           voucherDate,
           voucherNumber,
           adminId,
-          hedgeVoucherNo
+          hedgeVoucherNo,
+          divisionId
         )
       );
     } else {
@@ -1199,7 +1279,8 @@ class MetalTransactionService {
           voucherDate,
           voucherNumber,
           adminId,
-          hedgeVoucherNo
+          hedgeVoucherNo,
+          divisionId
         )
       );
     }
@@ -1223,22 +1304,24 @@ class MetalTransactionService {
         totals.goldValue,
         isGroupA
           ? {
-            goldCredit: totals.pureWeight,
-            cashDebit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          }
+              goldCredit: totals.pureWeight,
+              cashDebit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            }
           : {
-            goldDebit: totals.pureWeight,
-            cashCredit: totals.goldValue,
-            grossWeight: totals.grossWeight,
-            goldBidValue: totals.bidValue,
-            ...FX,
-          },
+              goldDebit: totals.pureWeight,
+              cashCredit: totals.goldValue,
+              grossWeight: totals.grossWeight,
+              goldBidValue: totals.bidValue,
+              ...FX,
+            },
         voucherDate,
         hedgeVoucherNo,
-        adminId
+        adminId,
+        null, // hedgeReference
+        divisionId
       )
     );
 
@@ -1279,7 +1362,9 @@ class MetalTransactionService {
           },
         voucherDate,
         voucherNumber,
-        adminId
+        adminId,
+        null, // hedgeReference
+        divisionId
       )
     );
 
@@ -1318,7 +1403,9 @@ class MetalTransactionService {
           },
         voucherDate,
         hedgeVoucherNo,
-        adminId
+        adminId,
+        null, // hedgeReference
+        divisionId
       )
     );
 
@@ -1339,6 +1426,7 @@ class MetalTransactionService {
     partyCurrencyRate = 1,
     dealOrderId = null,
     transactionRemarks = null,
+    divisionId = null, // Division from transaction
   }) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -1428,7 +1516,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -1461,7 +1551,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -1614,7 +1706,8 @@ class MetalTransactionService {
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     console.log(itemCurrency);
     let transactionType = "Purchase";
@@ -1654,7 +1747,8 @@ class MetalTransactionService {
         dealOrderId,
         transactionRemarks, // Pass transaction remarks for PARTY entries
         partyCurrencyCode,
-        partyCurrencyRate
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildPurchaseUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1674,7 +1768,8 @@ class MetalTransactionService {
         dealOrderId,
         transactionRemarks, // Pass transaction remarks for PARTY entries
         partyCurrencyCode,
-        partyCurrencyRate
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -1698,7 +1793,8 @@ class MetalTransactionService {
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     console.log(itemCurrency);
     let transactionType = "Import-Purchase";
@@ -1738,7 +1834,8 @@ class MetalTransactionService {
         dealOrderId,
         transactionRemarks, // Pass transaction remarks for PARTY entries
         partyCurrencyCode,
-        partyCurrencyRate
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildImportPurchaseUnfixEntries(
         hedgeVoucherNo, // 1
@@ -1756,7 +1853,10 @@ class MetalTransactionService {
         otherCharges, // 13
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -1779,7 +1879,8 @@ class MetalTransactionService {
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     let transactionType = "Sale";
     if (mode === "fix") {
@@ -1815,7 +1916,10 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildExportSaleUnfixEntries(
         hedgeVoucherNo,
@@ -1832,7 +1936,10 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -1892,7 +1999,10 @@ class MetalTransactionService {
         totalSummary,
         otherCharges,
         transactionType,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildSaleUnfixEntries(
         hedgeVoucherNo,
@@ -1910,7 +2020,10 @@ class MetalTransactionService {
         otherCharges,
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -1933,7 +2046,8 @@ class MetalTransactionService {
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     let transactionType = "Import-Purchase-Return";
     if (mode === "fix") {
@@ -1967,7 +2081,10 @@ class MetalTransactionService {
         partyCurrency,
         totalSummary,
         otherCharges,
-        transactionType
+        transactionType,
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildImportPurchaseReturnUnfixEntries(
         hedgeVoucherNo,
@@ -1983,7 +2100,10 @@ class MetalTransactionService {
         partyCurrency,
         totalSummary,
         otherCharges,
-        transactionType
+        transactionType,
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -2006,7 +2126,8 @@ class MetalTransactionService {
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     console.log(itemCurrency);
     let transactionType = "Export-Sale-Return";
@@ -2042,7 +2163,10 @@ class MetalTransactionService {
         partyCurrency,
         totalSummary,
         otherCharges,
-        transactionType
+        transactionType,
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildExportSaleReturnUnfixEntries(
         hedgeVoucherNo, // 1
@@ -2058,7 +2182,10 @@ class MetalTransactionService {
         partyCurrency, // 11
         totalSummary, // 12
         otherCharges, // 13
-        transactionType
+        transactionType,
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -2082,7 +2209,8 @@ class MetalTransactionService {
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     let transactionType = "Purchase-Return";
     if (mode === "fix") {
@@ -2118,7 +2246,10 @@ class MetalTransactionService {
         otherCharges,
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildPurchaseReturnUnfixEntries(
         hedgeVoucherNo, // 1
@@ -2136,7 +2267,10 @@ class MetalTransactionService {
         otherCharges, // 13
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -2160,7 +2294,8 @@ class MetalTransactionService {
     skipHedgeEntry = true, // Skip hedge entry creation per-item (handled in buildRegistryEntries)
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     console.log(itemCurrency);
     let transactionType = "Sale-Return";
@@ -2198,7 +2333,10 @@ class MetalTransactionService {
         otherCharges,
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       )
       : this.buildSaleReturnUnfixEntries(
         hedgeVoucherNo, // 1
@@ -2216,7 +2354,10 @@ class MetalTransactionService {
         otherCharges, // 13
         transactionType,
         dealOrderId,
-        transactionRemarks // Pass transaction remarks for PARTY entries
+        transactionRemarks, // Pass transaction remarks for PARTY entries
+        partyCurrencyCode,
+        partyCurrencyRate,
+        divisionId // Pass division from transaction
       );
   }
 
@@ -2236,7 +2377,8 @@ class MetalTransactionService {
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -2279,7 +2421,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2314,7 +2458,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2350,7 +2496,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -2382,7 +2530,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2419,7 +2569,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2453,7 +2605,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2608,7 +2762,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -2640,7 +2796,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2675,7 +2833,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -2706,7 +2866,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2739,7 +2901,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -2769,7 +2933,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2807,7 +2973,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2861,7 +3029,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2899,7 +3069,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -2925,7 +3097,8 @@ class MetalTransactionService {
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -3009,7 +3182,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -3041,7 +3216,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3198,7 +3375,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -3230,7 +3409,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3261,7 +3442,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -3288,7 +3471,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3317,7 +3502,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -3343,7 +3530,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3381,7 +3570,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3428,7 +3619,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3465,7 +3658,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3489,7 +3684,8 @@ class MetalTransactionService {
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -3531,7 +3727,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3566,7 +3764,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3601,7 +3801,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -3632,7 +3834,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3670,7 +3874,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3707,7 +3913,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -3954,7 +4162,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -3985,7 +4195,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4013,7 +4225,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -4038,7 +4252,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4076,7 +4292,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4123,7 +4341,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4161,7 +4381,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4187,7 +4409,8 @@ class MetalTransactionService {
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -4270,7 +4493,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -4301,7 +4526,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4515,7 +4742,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -4541,7 +4770,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4569,7 +4800,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -4594,7 +4827,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4627,7 +4862,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4669,7 +4906,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4702,7 +4941,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4720,7 +4961,10 @@ class MetalTransactionService {
     adminId,
     item,
     otherCharges = [],
-    transactionType = "Purchase-Return"
+    transactionType = "Purchase-Return",
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -4757,7 +5001,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4788,7 +5034,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4820,7 +5068,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -4847,7 +5097,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4879,7 +5131,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -4908,7 +5162,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5121,7 +5377,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -5148,7 +5406,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5177,7 +5437,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -5203,7 +5465,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5235,7 +5499,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5284,7 +5550,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5317,7 +5585,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5465,7 +5735,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -5525,7 +5797,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -5551,7 +5825,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5583,7 +5859,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5611,7 +5889,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5824,7 +6104,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -5851,7 +6133,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5880,7 +6164,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -5906,7 +6192,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5938,7 +6226,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -5987,7 +6277,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6019,7 +6311,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6043,7 +6337,8 @@ class MetalTransactionService {
     dealOrderId,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -6086,7 +6381,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6122,7 +6419,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6159,7 +6458,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -6191,7 +6492,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6228,7 +6531,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6262,7 +6567,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6475,7 +6782,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -6502,7 +6811,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6531,7 +6842,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -6557,7 +6870,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6589,7 +6904,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6643,7 +6960,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6680,7 +6999,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6706,7 +7027,8 @@ class MetalTransactionService {
     dealOrderId,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -6807,7 +7129,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
       // Party cash credit after unfix purchase return
@@ -6892,7 +7216,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -6918,7 +7244,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6950,7 +7278,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -6978,7 +7308,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7191,7 +7523,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -7218,7 +7552,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7247,7 +7583,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -7273,7 +7611,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7305,7 +7645,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7353,7 +7695,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7385,7 +7729,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7408,7 +7754,8 @@ class MetalTransactionService {
     transactionType,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -7450,7 +7797,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7486,7 +7835,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7523,7 +7874,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -7554,7 +7907,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7591,7 +7946,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7624,7 +7981,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7839,7 +8198,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -7866,7 +8227,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7895,7 +8258,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -7921,7 +8286,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7953,7 +8320,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -7995,7 +8364,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8027,7 +8398,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8052,7 +8425,8 @@ class MetalTransactionService {
     transactionType,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -8177,7 +8551,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -8240,7 +8616,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -8271,7 +8649,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8307,7 +8687,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8340,7 +8722,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8553,7 +8937,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -8580,7 +8966,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8609,7 +8997,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -8635,7 +9025,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8668,7 +9060,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8710,7 +9104,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8743,7 +9139,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8766,7 +9164,8 @@ class MetalTransactionService {
     transactionType,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -8803,7 +9202,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8834,7 +9235,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8866,7 +9269,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -8893,7 +9298,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8925,7 +9332,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -8954,7 +9363,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9108,7 +9519,9 @@ class MetalTransactionService {
             },
             voucherDate,
             voucherNumber,
-            adminId
+            adminId,
+            null, // hedgeReference
+            divisionId
           )
         );
 
@@ -9135,7 +9548,9 @@ class MetalTransactionService {
             },
             voucherDate,
             voucherNumber,
-            adminId
+            adminId,
+            null, // hedgeReference
+            divisionId
           )
         );
       }
@@ -9166,7 +9581,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -9192,7 +9609,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9220,7 +9639,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -9245,7 +9666,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9277,7 +9700,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9326,7 +9751,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9358,7 +9785,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9384,7 +9813,8 @@ class MetalTransactionService {
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -9464,7 +9894,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -9491,7 +9923,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9523,7 +9957,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9552,7 +9988,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9664,7 +10102,9 @@ class MetalTransactionService {
                 },
                 voucherDate,
                 voucherNumber,
-                adminId
+                adminId,
+                null, // hedgeReference
+                divisionId
               )
             );
           }
@@ -9706,7 +10146,9 @@ class MetalTransactionService {
             },
             voucherDate,
             voucherNumber,
-            adminId
+            adminId,
+            null, // hedgeReference
+            divisionId
           )
         );
 
@@ -9764,7 +10206,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -9790,7 +10234,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9818,7 +10264,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -9843,7 +10291,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9874,7 +10324,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9923,7 +10375,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9955,7 +10409,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -9977,7 +10433,10 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges = [],
-    transactionType
+    transactionType,
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -10098,7 +10557,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -10156,7 +10617,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -10183,7 +10646,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10272,7 +10737,9 @@ class MetalTransactionService {
                 },
                 voucherDate,
                 voucherNumber,
-                adminId
+                adminId,
+                null, // hedgeReference
+                divisionId
               )
             );
           }
@@ -10364,7 +10831,9 @@ class MetalTransactionService {
             },
             voucherDate,
             voucherNumber,
-            adminId
+            adminId,
+            null, // hedgeReference
+            divisionId
           )
         );
       }
@@ -10396,7 +10865,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -10423,7 +10894,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10452,7 +10925,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -10478,7 +10953,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10511,7 +10988,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10559,7 +11038,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10592,7 +11073,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10612,7 +11095,10 @@ class MetalTransactionService {
     partyCurrency,
     totalSummary,
     otherCharges = [],
-    transactionType
+    transactionType,
+    partyCurrencyCode = "AED",
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -10648,7 +11134,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10678,7 +11166,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10709,7 +11199,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -10736,7 +11228,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10768,7 +11262,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -10797,7 +11293,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11010,7 +11508,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -11037,7 +11537,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11066,7 +11568,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -11092,7 +11596,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11125,7 +11631,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11173,7 +11681,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11206,7 +11716,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11232,7 +11744,8 @@ class MetalTransactionService {
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -11355,7 +11868,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -11413,7 +11928,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -11440,7 +11957,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11529,7 +12048,9 @@ class MetalTransactionService {
                 },
                 voucherDate,
                 voucherNumber,
-                adminId
+                adminId,
+                null, // hedgeReference
+                divisionId
               )
             );
           }
@@ -11621,7 +12142,9 @@ class MetalTransactionService {
             },
             voucherDate,
             voucherNumber,
-            adminId
+            adminId,
+            null, // hedgeReference
+            divisionId
           )
         );
       }
@@ -11653,7 +12176,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -11680,7 +12205,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11709,7 +12236,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -11735,7 +12264,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11768,7 +12299,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11810,7 +12343,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11843,7 +12378,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11867,7 +12404,8 @@ class MetalTransactionService {
     dealOrderId = null,
     transactionRemarks = null, // Transaction remarks for PARTY entries
     partyCurrencyCode = "AED",
-    partyCurrencyRate = 1
+    partyCurrencyRate = 1,
+    divisionId = null // Division from transaction
   ) {
     const entries = [];
     const partyName = party.customerName || party.accountCode;
@@ -11909,7 +12447,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11944,7 +12484,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -11980,7 +12522,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -12012,7 +12556,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12049,7 +12595,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12083,7 +12631,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12296,7 +12846,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -12323,7 +12875,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12352,7 +12906,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
 
@@ -12378,7 +12934,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12411,7 +12969,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12453,7 +13013,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12486,7 +13048,9 @@ class MetalTransactionService {
           },
           voucherDate,
           voucherNumber,
-          adminId
+          adminId,
+          null, // hedgeReference
+          divisionId
         )
       );
     }
@@ -12616,7 +13180,8 @@ class MetalTransactionService {
     voucherDate,
     reference,
     adminId,
-    hedgeReference
+    hedgeReference,
+    divisionId = null
   ) {
     // Extract fields (old behavior preserved)
     let {
@@ -12694,6 +13259,11 @@ class MetalTransactionService {
       currencyRate, // 1 or conversion rate
     };
 
+    // Add division if provided
+    if (divisionId) {
+      entry.division = divisionId;
+    }
+
     if (
       hedgeReference !== undefined &&
       hedgeReference !== null &&
@@ -12749,21 +13319,82 @@ class MetalTransactionService {
   }
 
   /** 🔹 Increment gold balances safely */
-  static async incGold(accountId, gramsDelta, valueDelta, session) {
-    await Account.updateOne(
-      { _id: accountId },
-      {
-        $inc: {
-          "balances.goldBalance.totalGrams": gramsDelta,
-          "balances.goldBalance.totalValue": valueDelta,
+  static async incGold(accountId, gramsDelta, valueDelta, session, divisionId = null) {
+    // If divisionId is provided, update the specific division's balance
+    if (divisionId) {
+      const divisionObjId = new mongoose.Types.ObjectId(divisionId);
+      
+      // First, try to update if the division entry exists
+      const updateResult = await Account.updateOne(
+        { 
+          _id: accountId,
+          "balances.preciousMetalBalance.division": divisionObjId
         },
-        $set: {
-          "balances.goldBalance.lastUpdated": new Date(),
-          "balances.lastBalanceUpdate": new Date(),
+        {
+          $inc: {
+            "balances.preciousMetalBalance.$.totalGrams": gramsDelta,
+            "balances.preciousMetalBalance.$.totalValue": valueDelta,
+          },
+          $set: {
+            "balances.preciousMetalBalance.$.lastUpdated": new Date(),
+            "balances.lastBalanceUpdate": new Date(),
+          },
         },
-      },
-      { session }
-    );
+        { session }
+      );
+
+      // If no document was modified, the division entry doesn't exist, so add it
+      if (updateResult.matchedCount === 0) {
+        // Ensure preciousMetalBalance array exists, then add new entry
+        await Account.updateOne(
+          { _id: accountId },
+          {
+            $setOnInsert: {
+              "balances.preciousMetalBalance": [],
+            },
+          },
+          { session, upsert: false }
+        );
+
+        // Add new division entry
+        await Account.updateOne(
+          { _id: accountId },
+          {
+            $push: {
+              "balances.preciousMetalBalance": {
+                division: divisionObjId,
+                totalGrams: gramsDelta,
+                totalValue: valueDelta,
+                draftBalance: 0,
+                lastUpdated: new Date(),
+              },
+            },
+            $set: {
+              "balances.lastBalanceUpdate": new Date(),
+            },
+          },
+          { session }
+        );
+      }
+    } else {
+      // Fallback: If no divisionId, try to update the first preciousMetalBalance entry
+      // This maintains backward compatibility but should be avoided
+      console.warn(`[incGold] No divisionId provided for account ${accountId}, updating first preciousMetalBalance entry`);
+      await Account.updateOne(
+        { _id: accountId },
+        {
+          $inc: {
+            "balances.preciousMetalBalance.0.totalGrams": gramsDelta,
+            "balances.preciousMetalBalance.0.totalValue": valueDelta,
+          },
+          $set: {
+            "balances.preciousMetalBalance.0.lastUpdated": new Date(),
+            "balances.lastBalanceUpdate": new Date(),
+          },
+        },
+        { session }
+      );
+    }
   }
 
   /** 🔹 Main balance updater (create/update) */
@@ -12798,14 +13429,24 @@ class MetalTransactionService {
       partyCurrency
     );
 
-    // 2️⃣ Update GOLD balance
+    // 2️⃣ Update GOLD balance (division-based)
     if (ch.goldBalance !== 0 || ch.goldValue !== 0) {
-      await this.incGold(party._id, ch.goldBalance, ch.goldValue, session);
+      // Get division from transaction, or from party's first preciousMetal division
+      const divisionId = metalTransaction.division?.toString() || 
+                        party.acDefinition?.preciousMetal?.[0]?.division?.toString() || 
+                        null;
+      
+      if (!divisionId && party.acDefinition?.preciousMetal?.length > 0) {
+        console.warn(`[updateAccountBalances] Transaction ${metalTransaction._id} has no division, using first preciousMetal division`);
+      }
+      
+      await this.incGold(party._id, ch.goldBalance, ch.goldValue, session, divisionId);
       const s = ch.goldBalance > 0 ? "+" : "-";
+      const divisionInfo = divisionId ? ` [Division: ${divisionId}]` : "";
       logs.push(
         `🏆 GOLD ${s}${Math.abs(ch.goldBalance).toFixed(3)}g (${s}${Math.abs(
           ch.goldValue
-        ).toFixed(2)})`
+        ).toFixed(2)})${divisionInfo}`
       );
     }
 
@@ -12924,12 +13565,10 @@ class MetalTransactionService {
     const incObj = {};
     const setObj = {};
 
-    // ✅ Gold
-    if (goldBalance !== 0) {
-      incObj["balances.goldBalance.totalGrams"] = goldBalance;
-      incObj["balances.goldBalance.totalValue"] = goldValue;
-      setObj["balances.goldBalance.lastUpdated"] = new Date();
-    }
+    // ✅ Gold (division-based) - Note: This method may need divisionId parameter
+    // For now, we'll handle gold updates through incGold method which supports division
+    // This buildUpdateOperations is kept for backward compatibility but may not be used for gold updates
+    // Gold updates should use incGold method directly with divisionId
 
     // ✅ Cash (multi-currency)
     const netCashChange =
@@ -14173,8 +14812,26 @@ class MetalTransactionService {
         { balanceChanges }
       );
 
-      party.balances.goldBalance.totalGrams -= balanceChanges.goldBalance;
-      party.balances.goldBalance.totalValue -= balanceChanges.goldValue;
+      // Update division-based precious metal balance
+      // Get division from originalData or party's first preciousMetal division
+      const divisionId = originalData.division?.toString() || 
+                        party.acDefinition?.preciousMetal?.[0]?.division?.toString() || 
+                        null;
+      
+      if (divisionId) {
+        const pmBalance = party.balances.preciousMetalBalance?.find(
+          (pmb) => pmb.division?.toString() === divisionId
+        );
+        if (pmBalance) {
+          pmBalance.totalGrams -= balanceChanges.goldBalance;
+          pmBalance.totalValue -= balanceChanges.goldValue;
+          pmBalance.lastUpdated = new Date();
+        } else {
+          console.warn(`[updateReverseAccountBalances] Division ${divisionId} not found in preciousMetalBalance`);
+        }
+      } else {
+        console.warn(`[updateReverseAccountBalances] No divisionId found, cannot update precious metal balance`);
+      }
       party.balances.cashBalance.amount -=
         balanceChanges.cashBalance +
         balanceChanges.premiumBalance +
@@ -14240,7 +14897,18 @@ class MetalTransactionService {
 
     if (isReversal) {
       // Check if party has sufficient balances to reverse the transaction
-      const goldBalance = party.balances.goldBalance.totalGrams || 0;
+      // Get division from transaction or party's first preciousMetal division
+      const divisionId = transaction.division?.toString() || 
+                        party.acDefinition?.preciousMetal?.[0]?.division?.toString() || 
+                        null;
+      
+      let goldBalance = 0;
+      if (divisionId) {
+        const pmBalance = party.balances.preciousMetalBalance?.find(
+          (pmb) => pmb.division?.toString() === divisionId
+        );
+        goldBalance = pmBalance?.totalGrams || 0;
+      }
       const cashBalance = party.balances.cashBalance.amount || 0;
 
       // For reversal, negate the balance changes
@@ -14297,13 +14965,19 @@ class MetalTransactionService {
 
     const sign = -1; // always reverse
 
-    // 1️⃣ Reverse GOLD
+    // 1️⃣ Reverse GOLD (division-based)
     if (ch.goldBalance !== 0 || ch.goldValue !== 0) {
+      // Get division from transaction, or from party's first preciousMetal division
+      const divisionId = transaction.division?.toString() || 
+                        party.acDefinition?.preciousMetal?.[0]?.division?.toString() || 
+                        null;
+      
       await this.incGold(
         party._id,
         sign * ch.goldBalance,
         sign * ch.goldValue,
-        session
+        session,
+        divisionId
       );
     }
 
@@ -15150,13 +15824,19 @@ class MetalTransactionService {
     );
     const sign = isReversal ? -1 : 1;
 
-    // GOLD
+    // GOLD (division-based)
     if (ch.goldBalance !== 0 || ch.goldValue !== 0) {
+      // Get division from transaction, or from party's first preciousMetal division
+      const divisionId = transaction.division?.toString() || 
+                        party.acDefinition?.preciousMetal?.[0]?.division?.toString() || 
+                        null;
+      
       await this.incGold(
         partyId,
         sign * (ch.goldBalance || 0),
         sign * (ch.goldValue || 0),
-        session
+        session,
+        divisionId
       );
     }
 
@@ -15188,7 +15868,7 @@ class MetalTransactionService {
   // Get party balance summary
   static async getPartyBalanceSummary(partyId) {
     const party = await Account.findById(partyId)
-      .populate("balances.goldBalance.currency", "code symbol")
+      .populate("balances.preciousMetalBalance.division", "divisionCode divisionName")
       .populate("balances.cashBalance.currency", "code symbol");
 
     if (!party || !party.isActive) {
@@ -15202,15 +15882,15 @@ class MetalTransactionService {
     return {
       partyInfo: {
         id: party._id,
-        name: party.name,
-        code: party.code,
+        name: party.customerName || party.name,
+        code: party.accountCode || party.code,
         email: party.email,
         phone: party.phone,
       },
-      goldBalance: party.balances.goldBalance,
-      cashBalance: party.balances.cashBalance,
-      summary: party.balances.summary,
-      lastTransactionDate: party.balances.lastTransactionDate,
+      preciousMetalBalance: party.balances.preciousMetalBalance || [],
+      cashBalance: party.balances.cashBalance || [],
+      totalOutstanding: party.balances.totalOutstanding || 0,
+      lastBalanceUpdate: party.balances.lastBalanceUpdate,
     };
   }
 

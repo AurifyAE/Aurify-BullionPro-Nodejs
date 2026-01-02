@@ -53,6 +53,12 @@ const RegistrySchema = new mongoose.Schema(
       default: null,
       uppercase: true,
     },
+    division: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "DivisionMaster",
+      default: null,
+      index: true,
+    },
     type: {
       type: String,
       required: [true, "Transaction type is required"],
@@ -186,9 +192,11 @@ const RegistrySchema = new mongoose.Schema(
 // Indexes for better performance
 RegistrySchema.index({ transactionId: 1 });
 RegistrySchema.index({ costCenter: 1 });
+RegistrySchema.index({ division: 1 });
 RegistrySchema.index({ type: 1 });
 RegistrySchema.index({ transactionDate: -1 });
 RegistrySchema.index({ costCenter: 1, transactionDate: -1 });
+RegistrySchema.index({ division: 1, transactionDate: -1 });
 RegistrySchema.index({ status: 1 });
 RegistrySchema.index({ createdAt: -1 });
 

@@ -11,6 +11,7 @@ import {
 import AccountMode from "../../models/modules/AccountMode.js";
 import Registry from "../../models/modules/Registry.js";
 import CurrencyMaster from "../../models/modules/CurrencyMaster.js";
+import DivisionMaster from "../../models/modules/DivisionMaster.js";
 import mongoose from "mongoose";
 
 class AccountTypeService {
@@ -143,7 +144,44 @@ class AccountTypeService {
         }
       });
 
-      // 7. Initialize balances from acDefinition.currencies
+      // 7. Validate and initialize preciousMetal divisions
+      if (debtorData.acDefinition?.preciousMetal?.length > 0) {
+        const divisionIds = debtorData.acDefinition.preciousMetal
+          .map((pm) => pm.division?._id || pm.division)
+          .filter(Boolean);
+
+        // Validate all division IDs exist
+        if (divisionIds.length > 0) {
+          const divisions = await DivisionMaster.find({
+            _id: { $in: divisionIds },
+          }).select("_id").lean();
+
+          const foundDivisionIds = divisions.map((d) => d._id.toString());
+          const missingDivisions = divisionIds.filter(
+            (id) => !foundDivisionIds.includes(id.toString())
+          );
+
+          if (missingDivisions.length > 0) {
+            throw createAppError(
+              `Invalid division IDs: ${missingDivisions.join(", ")}`,
+              400,
+              "INVALID_DIVISION_IDS"
+            );
+          }
+
+          // Check for duplicate divisions
+          const uniqueDivisionIds = [...new Set(divisionIds.map((id) => id.toString()))];
+          if (uniqueDivisionIds.length !== divisionIds.length) {
+            throw createAppError(
+              "Duplicate divisions found in preciousMetal array",
+              400,
+              "DUPLICATE_DIVISIONS"
+            );
+          }
+        }
+      }
+
+      // 8. Initialize balances from acDefinition.currencies and preciousMetal
       if (debtorData.acDefinition?.currencies?.length > 0) {
         const cashBalance = debtorData.acDefinition.currencies.map((c) => ({
           currency: c.currency?._id || c.currency,
@@ -153,16 +191,63 @@ class AccountTypeService {
           lastUpdated: new Date(),
         }));
 
+        // Initialize precious metal balances from acDefinition.preciousMetal
+        const preciousMetalBalance =
+          debtorData.acDefinition?.preciousMetal?.length > 0
+            ? debtorData.acDefinition.preciousMetal.map((pm) => {
+                const divisionId = pm.division?._id || pm.division;
+                if (!divisionId) {
+                  throw createAppError(
+                    "Division ID is required for preciousMetal entries",
+                    400,
+                    "MISSING_DIVISION_ID"
+                  );
+                }
+                return {
+                  division: divisionId,
+                  totalGrams: 0,
+                  totalValue: 0,
+                  draftBalance: 0,
+                  lastUpdated: new Date(),
+                };
+              })
+            : [];
+
         debtorData.balances = {
-          goldBalance: {
-            totalGrams: 0,
-            totalValue: 0,
-            lastUpdated: new Date(),
-          },
           cashBalance,
+          preciousMetalBalance,
           totalOutstanding: 0,
           lastBalanceUpdate: new Date(),
         };
+
+        // Cross-check: Ensure preciousMetalBalance matches acDefinition.preciousMetal
+        const pmDivisionIds = preciousMetalBalance.map((pmb) =>
+          pmb.division?.toString()
+        );
+        const acDefDivisionIds = debtorData.acDefinition.preciousMetal?.map(
+          (pm) => (pm.division?._id || pm.division)?.toString()
+        ) || [];
+
+        if (pmDivisionIds.length !== acDefDivisionIds.length) {
+          throw createAppError(
+            "preciousMetalBalance count does not match acDefinition.preciousMetal count",
+            400,
+            "PRECIOUS_METAL_MISMATCH"
+          );
+        }
+
+        // Verify all divisions match
+        const sortedPmIds = [...pmDivisionIds].sort();
+        const sortedAcDefIds = [...acDefDivisionIds].sort();
+        if (
+          sortedPmIds.some((id, idx) => id !== sortedAcDefIds[idx])
+        ) {
+          throw createAppError(
+            "preciousMetalBalance divisions do not match acDefinition.preciousMetal",
+            400,
+            "PRECIOUS_METAL_DIVISION_MISMATCH"
+          );
+        }
       }
 
       // 8. Create document
@@ -180,6 +265,10 @@ class AccountTypeService {
           select: "branchCode branchName address",
         },
         {
+          path: "acDefinition.preciousMetal.division",
+          select: "divisionCode divisionName",
+        },
+        {
           path: "bankDetails.pdcIssue",
           select: "_id accountCode customerName",
         },
@@ -190,6 +279,10 @@ class AccountTypeService {
         {
           path: "balances.cashBalance.currency",
           select: "currencyCode currencyName symbol",
+        },
+        {
+          path: "balances.preciousMetalBalance.division",
+          select: "divisionCode divisionName",
         },
         { path: "limitsMargins.currency", select: "currencyCode" },
         { path: "createdBy", select: "name email role" },
@@ -367,92 +460,202 @@ class AccountTypeService {
           });
       }
 
-      // 5. Update cash balances if currencies changed (PRESERVE EXISTING BALANCES)
-      if (updateData.acDefinition?.currencies?.length > 0) {
+      // 5. Validate preciousMetal divisions if provided
+      if (updateData.acDefinition?.preciousMetal?.length > 0) {
+        const divisionIds = updateData.acDefinition.preciousMetal
+          .map((pm) => pm.division?._id || pm.division)
+          .filter(Boolean);
+
+        // Validate all division IDs exist
+        if (divisionIds.length > 0) {
+          const divisions = await DivisionMaster.find({
+            _id: { $in: divisionIds },
+          }).select("_id").lean();
+
+          const foundDivisionIds = divisions.map((d) => d._id.toString());
+          const missingDivisions = divisionIds.filter(
+            (id) => !foundDivisionIds.includes(id.toString())
+          );
+
+          if (missingDivisions.length > 0) {
+            throw createAppError(
+              `Invalid division IDs: ${missingDivisions.join(", ")}`,
+              400,
+              "INVALID_DIVISION_IDS"
+            );
+          }
+
+          // Check for duplicate divisions
+          const uniqueDivisionIds = [...new Set(divisionIds.map((id) => id.toString()))];
+          if (uniqueDivisionIds.length !== divisionIds.length) {
+            throw createAppError(
+              "Duplicate divisions found in preciousMetal array",
+              400,
+              "DUPLICATE_DIVISIONS"
+            );
+          }
+        }
+      }
+
+      // 6. Update cash balances and precious metal balances if currencies/preciousMetal changed (PRESERVE EXISTING BALANCES)
+      if (
+        updateData.acDefinition?.currencies?.length > 0 ||
+        updateData.acDefinition?.preciousMetal?.length > 0
+      ) {
         const existingCashBalance = tradeDebtor.balances?.cashBalance || [];
-        const existingGoldBalance = tradeDebtor.balances?.goldBalance || {
-          totalGrams: 0,
-          totalValue: 0,
-          lastUpdated: new Date(),
-        };
+        const existingPreciousMetalBalance =
+          tradeDebtor.balances?.preciousMetalBalance || [];
         const existingTotalOutstanding =
           tradeDebtor.balances?.totalOutstanding || 0;
 
-        // Fetch currency codes for all currencies in the update
-        const currencyIds = updateData.acDefinition.currencies
-          .map((c) => c.currency?._id || c.currency)
-          .filter(Boolean);
+        // Update cash balances if currencies changed
+        let newCashBalance = existingCashBalance;
+        if (updateData.acDefinition?.currencies?.length > 0) {
+          // Fetch currency codes for all currencies in the update
+          const currencyIds = updateData.acDefinition.currencies
+            .map((c) => c.currency?._id || c.currency)
+            .filter(Boolean);
 
-        const currencies = await CurrencyMaster.find({
-          _id: { $in: currencyIds },
-        })
-          .select("_id currencyCode")
-          .lean();
+          const currencies = await CurrencyMaster.find({
+            _id: { $in: currencyIds },
+          })
+            .select("_id currencyCode")
+            .lean();
 
-        // Create a map of currencyId -> currencyCode for quick lookup
-        const currencyCodeMap = {};
-        currencies.forEach((curr) => {
-          currencyCodeMap[curr._id.toString()] = curr.currencyCode;
-        });
-
-        // Build new cashBalance array preserving existing amounts
-        const newCashBalance = updateData.acDefinition.currencies.map((c) => {
-          const currencyId = c.currency?._id || c.currency;
-          const currencyIdStr = currencyId?.toString();
-
-          // Get currency code from map or existing balance
-          const currencyCode = currencyCodeMap[currencyIdStr] || null;
-
-          // Find existing balance for this currency
-          const existingBalance = existingCashBalance.find((cb) => {
-            const cbCurrencyId =
-              cb.currency?.toString?.() || cb.currency?.toString() || "";
-            return cbCurrencyId === currencyIdStr;
+          // Create a map of currencyId -> currencyCode for quick lookup
+          const currencyCodeMap = {};
+          currencies.forEach((curr) => {
+            currencyCodeMap[curr._id.toString()] = curr.currencyCode;
           });
 
-          if (existingBalance) {
-            // Preserve existing balance data, only update isDefault if changed
-            return {
-              currency: currencyId, // Keep as ObjectId reference
-              code: existingBalance.code || currencyCode || null, // Use fetched code if existing doesn't have one
-              amount: existingBalance.amount || 0, // PRESERVE EXISTING AMOUNT
-              isDefault: !!c.isDefault,
-              lastUpdated: existingBalance.lastUpdated || new Date(),
-            };
-          } else {
-            // New currency - initialize with 0 amount
-            return {
-              currency: currencyId, // Keep as ObjectId reference
-              code: currencyCode || null, // Use fetched currency code
-              amount: 0,
-              isDefault: !!c.isDefault,
-              lastUpdated: new Date(),
-            };
+          // Build new cashBalance array preserving existing amounts
+          newCashBalance = updateData.acDefinition.currencies.map((c) => {
+            const currencyId = c.currency?._id || c.currency;
+            const currencyIdStr = currencyId?.toString();
+
+            // Get currency code from map or existing balance
+            const currencyCode = currencyCodeMap[currencyIdStr] || null;
+
+            // Find existing balance for this currency
+            const existingBalance = existingCashBalance.find((cb) => {
+              const cbCurrencyId =
+                cb.currency?.toString?.() || cb.currency?.toString() || "";
+              return cbCurrencyId === currencyIdStr;
+            });
+
+            if (existingBalance) {
+              // Preserve existing balance data, only update isDefault if changed
+              return {
+                currency: currencyId, // Keep as ObjectId reference
+                code: existingBalance.code || currencyCode || null, // Use fetched code if existing doesn't have one
+                amount: existingBalance.amount || 0, // PRESERVE EXISTING AMOUNT
+                isDefault: !!c.isDefault,
+                lastUpdated: existingBalance.lastUpdated || new Date(),
+              };
+            } else {
+              // New currency - initialize with 0 amount
+              return {
+                currency: currencyId, // Keep as ObjectId reference
+                code: currencyCode || null, // Use fetched currency code
+                amount: 0,
+                isDefault: !!c.isDefault,
+                lastUpdated: new Date(),
+              };
+            }
+          });
+        }
+
+        // Update precious metal balances if preciousMetal changed
+        let newPreciousMetalBalance = existingPreciousMetalBalance;
+        if (updateData.acDefinition?.preciousMetal?.length > 0) {
+          // Build new preciousMetalBalance array preserving existing amounts
+          newPreciousMetalBalance = updateData.acDefinition.preciousMetal.map(
+            (pm) => {
+              const divisionId = pm.division?._id || pm.division;
+              if (!divisionId) {
+                throw createAppError(
+                  "Division ID is required for preciousMetal entries",
+                  400,
+                  "MISSING_DIVISION_ID"
+                );
+              }
+              const divisionIdStr = divisionId.toString();
+
+              // Find existing balance for this division
+              const existingBalance = existingPreciousMetalBalance.find((pmb) => {
+                const pmbDivisionId =
+                  pmb.division?.toString?.() || pmb.division?.toString() || "";
+                return pmbDivisionId === divisionIdStr;
+              });
+
+              if (existingBalance) {
+                // Preserve existing balance data
+                return {
+                  division: divisionId, // Keep as ObjectId reference
+                  totalGrams: existingBalance.totalGrams || 0,
+                  totalValue: existingBalance.totalValue || 0,
+                  draftBalance: existingBalance.draftBalance || 0,
+                  lastUpdated: existingBalance.lastUpdated || new Date(),
+                };
+              } else {
+                // New division - initialize with 0 values
+                return {
+                  division: divisionId, // Keep as ObjectId reference
+                  totalGrams: 0,
+                  totalValue: 0,
+                  draftBalance: 0,
+                  lastUpdated: new Date(),
+                };
+              }
+            }
+          );
+
+          // Cross-check: Ensure preciousMetalBalance matches acDefinition.preciousMetal
+          const pmDivisionIds = newPreciousMetalBalance.map((pmb) =>
+            pmb.division?.toString()
+          );
+          const acDefDivisionIds = updateData.acDefinition.preciousMetal.map(
+            (pm) => (pm.division?._id || pm.division)?.toString()
+          );
+
+          if (pmDivisionIds.length !== acDefDivisionIds.length) {
+            throw createAppError(
+              "preciousMetalBalance count does not match acDefinition.preciousMetal count",
+              400,
+              "PRECIOUS_METAL_MISMATCH"
+            );
           }
-        });
+
+          // Verify all divisions match
+          const sortedPmIds = [...pmDivisionIds].sort();
+          const sortedAcDefIds = [...acDefDivisionIds].sort();
+          if (sortedPmIds.some((id, idx) => id !== sortedAcDefIds[idx])) {
+            throw createAppError(
+              "preciousMetalBalance divisions do not match acDefinition.preciousMetal",
+              400,
+              "PRECIOUS_METAL_DIVISION_MISMATCH"
+            );
+          }
+        }
 
         // Preserve existing balances structure
         updateData.balances = {
           cashBalance: newCashBalance,
-          goldBalance: {
-            totalGrams: existingGoldBalance.totalGrams || 0,
-            totalValue: existingGoldBalance.totalValue || 0,
-            lastUpdated: existingGoldBalance.lastUpdated || new Date(),
-          },
+          preciousMetalBalance: newPreciousMetalBalance,
           totalOutstanding: existingTotalOutstanding,
           lastBalanceUpdate:
             tradeDebtor.balances?.lastBalanceUpdate || new Date(),
         };
       }
 
-      // 6. Set audit fields
+      // 7. Set audit fields
       updateData.updatedBy = adminId;
       updateData.updatedAt = new Date();
 
-      // 7. Collect S3 keys to delete
+      // 8. Collect S3 keys to delete
       const filesToDelete = this.getFilesToDelete(tradeDebtor, updateData);
 
-      // 8. Update DB
+      // 9. Update DB
       const updated = await AccountType.findByIdAndUpdate(id, updateData, {
         new: true,
         runValidators: true,
@@ -466,15 +669,23 @@ class AccountTypeService {
           select: "branchCode branchName address",
         },
         {
+          path: "acDefinition.preciousMetal.division",
+          select: "divisionCode divisionName",
+        },
+        {
           path: "balances.cashBalance.currency",
           select: "currencyCode currencyName symbol",
+        },
+        {
+          path: "balances.preciousMetalBalance.division",
+          select: "divisionCode divisionName",
         },
         { path: "limitsMargins.currency", select: "currencyCode" },
         { path: "createdBy", select: "name email role" },
         { path: "updatedBy", select: "name email role" },
       ]);
 
-      // 9. Delete old S3 files
+      // 10. Delete old S3 files
       let s3Result = { successful: [], failed: [] };
       if (filesToDelete.length > 0) {
         try {
@@ -677,6 +888,14 @@ class AccountTypeService {
               select: "name prefix",
             },
             { path: "acDefinition.branches.branch", select: "code name" },
+            {
+              path: "acDefinition.preciousMetal.division",
+              select: "divisionCode divisionName",
+            },
+            {
+              path: "balances.preciousMetalBalance.division",
+              select: "divisionCode divisionName",
+            },
             { path: "createdBy", select: "name email" },
             { path: "updatedBy", select: "name email" },
             {
@@ -719,11 +938,21 @@ class AccountTypeService {
           select: "currencyCode description conversionRate symbol",
         },
         {
+          path: "acDefinition.branches.branch",
+          select: "code name",
+        },
+        {
+          path: "acDefinition.preciousMetal.division",
+          select: "divisionCode divisionName",
+        },
+        {
           path: "balances.cashBalance.currency",
-          select: "currencyCode conversionRate description ",
           select: "currencyCode description conversionRate symbol",
         },
-        { path: "acDefinition.branches.branch", select: "code name" },
+        {
+          path: "balances.preciousMetalBalance.division",
+          select: "divisionCode divisionName",
+        },
         { path: "createdBy", select: "name email" },
         { path: "updatedBy", select: "name email" },
         { path: "accountType", select: "name" },
