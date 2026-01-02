@@ -126,8 +126,8 @@ class EntryService {
           EntryTransactionId: entry._id,
           type: "GOLD_STOCK",
           description: desc,
-          value: item.grossWeight,
-          debit: item.grossWeight, // Receipt: GOLD_STOCK is debited (stock increases)
+          value: item.purityWeight,
+          debit: item.purityWeight, // Receipt: GOLD_STOCK is debited (stock increases)
           credit: 0,
           grossWeight: item.grossWeight,
           pureWeight: item.purityWeight,
@@ -188,6 +188,8 @@ class EntryService {
           voucherDate: entry.voucherDate || new Date(),
           transactionType: "metalReceipt",
           createdBy: entry.enteredBy,
+          isDraft: entry.isDraft || false,
+          draftId: entry.draftId || null,
           stockItems: [
             {
               stockCode: { _id: item.stock },
@@ -235,8 +237,8 @@ class EntryService {
           EntryTransactionId: entry._id,
           type: "GOLD_STOCK",
           description: desc,
-          value: item.grossWeight,
-          credit: item.grossWeight, // Payment: GOLD_STOCK is credited (stock decreases)
+          value: item.purityWeight,
+          credit: item.purityWeight, // Payment: GOLD_STOCK is credited (stock decreases)
           debit: 0,
           grossWeight: item.grossWeight,
           pureWeight: item.purityWeight,
@@ -297,6 +299,8 @@ class EntryService {
           voucherDate: entry.voucherDate || new Date(),
           transactionType: "metalPayment",
           createdBy: entry.enteredBy,
+          isDraft: entry.isDraft || false,
+          draftId: entry.draftId || null,
           stockItems: [
             {
               stockCode: { _id: item.stock },
@@ -816,6 +820,8 @@ class EntryService {
           voucherDate: entry.voucherDate || new Date(),
           transactionType: isReceipt ? "metalPayment" : "metalReceipt",
           createdBy: entry.enteredBy,
+          isDraft: entry.isDraft || false,
+          draftId: entry.draftId || null,
           stockItems: [
             {
               stockCode: { _id: item.stock },
