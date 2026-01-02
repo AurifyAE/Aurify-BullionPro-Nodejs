@@ -154,7 +154,7 @@ class RegistryService {
     })
       .populate("party", "customerName accountCode")
       .populate("createdBy", "name")
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!registries || registries.length === 0) return null;
@@ -517,7 +517,7 @@ class RegistryService {
     })
       .populate("party", "customerName accountCode")
       .populate("createdBy", "name")
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!registries || registries.length === 0) return null;
@@ -757,7 +757,7 @@ class RegistryService {
     })
       .populate("party", "customerName accountCode")
       .populate("createdBy", "name")
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!registries || registries.length === 0) return null;
@@ -1742,7 +1742,9 @@ class RegistryService {
     const registries = await Registry.find({
       EntryTransactionId: new mongoose.Types.ObjectId(entryTransactionId),
       isActive: true,
-    }).populate("party", "customerName accountCode");
+    })
+      .populate("party", "customerName accountCode")
+      .sort({ createdAt: -1 });
 
     if (!registries.length) return null;
 
@@ -1928,6 +1930,205 @@ class RegistryService {
     };
   }
 
+  // ------------------------------------------------------------------------
+  // GENERATE AUDIT TRAIL FOR METAL RECEIPT/PAYMENT ENTRY TRANSACTIONS
+  // ------------------------------------------------------------------------
+  static async generateMetalEntryAuditTrail(entryTransactionId) {
+    if (!mongoose.Types.ObjectId.isValid(entryTransactionId)) return null;
+
+    // Fetch registries linked to entry transaction
+    const registries = await Registry.find({
+      EntryTransactionId: new mongoose.Types.ObjectId(entryTransactionId),
+      isActive: true,
+    })
+      .populate("party", "customerName accountCode")
+      .sort({ createdAt: -1 });
+
+    if (!registries.length) return null;
+
+    // Find main party entry
+    let main = registries[0];
+    registries.forEach((r) => {
+      if (r.type === "PARTY_GOLD_BALANCE") {
+        main = r;
+      }
+    });
+    const party = main.party;
+
+    // -----------------------------------------------------
+    // 📌 FILTER METAL ENTRIES (PARTY_GOLD_BALANCE and GOLD_STOCK)
+    // -----------------------------------------------------
+    const metalRegistries = registries.filter((r) => {
+      return ["PARTY_GOLD_BALANCE", "GOLD_STOCK"].includes(r.type);
+    });
+
+    if (metalRegistries.length === 0) {
+      return {
+        entryTransactionId,
+        transactionId: main.transactionId,
+        reference: main.reference,
+        date: main.transactionDate,
+        party: {
+          name: party?.customerName || "Walk-in Customer",
+          code: party?.accountCode || "PARTY001",
+        },
+        entries: [],
+        totals: {
+          metalDebit: 0,
+          metalCredit: 0,
+        },
+      };
+    }
+
+    // -----------------------------------------------------
+    // 📌 1) TYPE RULES FOR METAL ENTRIES
+    // -----------------------------------------------------
+    const TYPE_RULES = {
+      PARTY_GOLD: {
+        types: ["PARTY_GOLD_BALANCE"],
+        mode: "party",
+      },
+      BULLION_GOLD: {
+        types: ["GOLD_STOCK"],
+        mode: "bullion",
+      },
+    };
+
+    function getTypeMode(type) {
+      for (const rule of Object.values(TYPE_RULES)) {
+        if (rule.types.includes(type)) return rule.mode;
+      }
+      return null;
+    }
+
+    // -----------------------------------------------------
+    // 📌 2) RESULT LINES HOLDER
+    // -----------------------------------------------------
+    const lines = [];
+    const addedKeySet = new Set();
+
+    const addLine = (desc, accCode, goldDr = 0, goldCr = 0) => {
+      const key = `${desc}-${accCode}-${goldDr}-${goldCr}`;
+      if (addedKeySet.has(key)) return;
+      addedKeySet.add(key);
+
+      lines.push({
+        accCode,
+        description: desc,
+        metalDebit: Number(goldDr.toFixed(3)),
+        metalCredit: Number(goldCr.toFixed(3)),
+      });
+    };
+
+    // -----------------------------------------------------
+    // 📌 3) PARTY SUMMARY ACCUMULATORS
+    // -----------------------------------------------------
+    let partyGoldDebit = 0;
+    let partyGoldCredit = 0;
+
+    // -----------------------------------------------------
+    // 📌 4) PROCESS EACH REGISTRY
+    // -----------------------------------------------------
+    for (const reg of metalRegistries) {
+      const t = reg.type;
+      const mode = getTypeMode(t);
+
+      // Use type-based description
+      let desc = t.replace(/[_-]/g, " ").toUpperCase();
+
+      const partyName = reg.party?.customerName || party?.customerName || "Walk-in Customer";
+
+      if (t === "GOLD_STOCK") {
+        desc = "GOLD STOCK";
+      } else if (t === "PARTY_GOLD_BALANCE") {
+        desc = partyName;
+      }
+
+      const prefix = t
+        .replace(/[^A-Za-z]/g, "")
+        .substring(0, 3)
+        .toUpperCase();
+      const accCode = reg.party?.accountCode || prefix + "001";
+
+      switch (mode) {
+        case "party":
+          partyGoldDebit += reg.goldDebit || reg.debit || 0;
+          partyGoldCredit += reg.goldCredit || reg.credit || 0;
+          break;
+
+        case "bullion": // GOLD_STOCK
+          addLine(
+            desc,
+            accCode,
+            reg.goldDebit || reg.debit || 0,
+            reg.goldCredit || reg.credit || 0
+          );
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    // -----------------------------------------------------
+    // 📌 5) PARTY SUMMARY ENTRY (ALWAYS SHOW)
+    // -----------------------------------------------------
+    if (party) {
+      const netGold = partyGoldDebit - partyGoldCredit;
+
+      const metalDebit = netGold > 0 ? netGold : 0;
+      const metalCredit = netGold < 0 ? Math.abs(netGold) : 0;
+
+      // Party entry must ALWAYS be added – bypass duplicate prevention
+      lines.push({
+        accCode: party.accountCode || "PARTY001",
+        description: party.customerName,
+        metalDebit: Number(metalDebit.toFixed(3)),
+        metalCredit: Number(metalCredit.toFixed(3)),
+      });
+    }
+
+    // -----------------------------------------------------
+    // 📌 6) TOTALS
+    // -----------------------------------------------------
+    const totals = lines.reduce(
+      (a, l) => {
+        a.metalDebit += l.metalDebit;
+        a.metalCredit += l.metalCredit;
+        return a;
+      },
+      { metalDebit: 0, metalCredit: 0 }
+    );
+
+    const metalBalance = totals.metalDebit - totals.metalCredit;
+
+    function normalizeBalance(value, decimals = 3) {
+      if (Math.abs(value) < 0.0001) return 0;
+      return Number(value.toFixed(decimals));
+    }
+
+    // -----------------------------------------------------
+    // 📌 7) FINAL RETURN RESPONSE
+    // -----------------------------------------------------
+    return {
+      entryTransactionId,
+      transactionId: main.transactionId,
+      reference: main.reference,
+      date: main.transactionDate,
+      transactionType: main.transactionType,
+      party: {
+        name: party?.customerName || "Walk-in Customer",
+        code: party?.accountCode || "PARTY001",
+      },
+      entries: lines,
+      totals: {
+        metalDebit: Number(totals.metalDebit.toFixed(3)),
+        metalCredit: Number(totals.metalCredit.toFixed(3)),
+        metalBalance: normalizeBalance(metalBalance, 3),
+      },
+    };
+  }
+
   static async generateStockAdjustmentAuditTrail(stockTransactionId) {
     if (!mongoose.Types.ObjectId.isValid(stockTransactionId)) return null;
 
@@ -1935,7 +2136,7 @@ class RegistryService {
       transactionId: stockTransactionId,
       isActive: true,
     })
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!registries.length) return null;
@@ -2113,7 +2314,7 @@ class RegistryService {
       reference,          // eg: MOP0001
       isActive: true,
     })
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!registries.length) return null;
@@ -2204,7 +2405,7 @@ class RegistryService {
       reference,
       isActive: true,
     })
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1 })
       .lean();
 
     if (!registries.length) return null;

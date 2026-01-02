@@ -21,6 +21,7 @@ import {
   getRegistryHedgeAuditTrailById,
   getRegistryFixingTransaction,
   getCashEntryAuditTrail,
+  getMetalEntryAuditTrail,
   getStockAdjustmentAuditTrail,
   getOpeningFixingAuditTrail,
   getOpeningStockAuditTrail,
@@ -87,6 +88,7 @@ router.get("/transaction/:metalTransactionId", getRegistryAuditTrailById);
 router.get("/hedge/:metalTransactionId", getRegistryHedgeAuditTrailById);
 router.get("/fixing/:fixingTransactionId", getRegistryFixingTransaction);
 router.get("/cash-entry/:entryTransactionId", getCashEntryAuditTrail);
+router.get("/metal-entry/:entryTransactionId", getMetalEntryAuditTrail);
 
 router.get("/stock-adjustment/:stockAdjustmentId", getStockAdjustmentAuditTrail);
 router.get("/opening-fixing/:purchaseFixingId", getOpeningFixingAuditTrail);

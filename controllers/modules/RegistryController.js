@@ -210,6 +210,33 @@ export const getCashEntryAuditTrail = async (req, res, next) => {
   }
 };
 
+// Get Metal Entry Audit Trail
+export const getMetalEntryAuditTrail = async (req, res, next) => {
+  try {
+    const { entryTransactionId } = req.params;
+
+    const registry = await RegistryService.generateMetalEntryAuditTrail(
+      entryTransactionId
+    );
+
+    if (!registry) {
+      throw createAppError(
+        "Registry entry not found",
+        404,
+        "REGISTRY_NOT_FOUND"
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Metal entry audit trail retrieved successfully",
+      data: registry,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getStockAdjustmentAuditTrail = async (req, res, next) => {
   try {
     console.log(req.params)
