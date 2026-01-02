@@ -140,6 +140,9 @@ class RegistryService {
   }
   // services/RegistryService.js
   static async generateVoucherByMetalTransaction(metalTransactionId) {
+    try {
+      
+  
     if (!mongoose.Types.ObjectId.isValid(metalTransactionId)) return null;
 
     // Fetch registries
@@ -349,13 +352,32 @@ class RegistryService {
 
       switch (mode) {
         case "party-cash":
-          const partyCashDr = reg.debit || 0;
-          const partyCashCr = reg.credit || 0;
+          // For OTHER-CHARGE, check both debit/credit and cashDebit/cashCredit to ensure we capture both sides
+          let partyCashDr, partyCashCr;
+          if (t === "OTHER-CHARGE") {
+            // OTHER-CHARGE entries may store values in either debit/credit or cashDebit/cashCredit
+            // Prefer cashDebit/cashCredit, fall back to debit/credit
+            partyCashDr = reg.cashDebit || reg.debit || 0;
+            partyCashCr = reg.cashCredit || reg.credit || 0;
+          } else {
+            partyCashDr = reg.debit || 0;
+            partyCashCr = reg.credit || 0;
+          }
           partyCurrencyDebit += partyCashDr;
           partyCurrencyCredit += partyCashCr;
           // Track total cash
           totalCashDebit += partyCashDr;
           totalCashCredit += partyCashCr;
+          // OTHER-CHARGE entries need to be added to separate groups for debit and credit
+          if (t === "OTHER-CHARGE") {
+            // Create separate entries for debit and credit to show both sides clearly
+            if (partyCashDr > 0) {
+              addToGroup("OTHER-CHARGE-DEBIT", "OTHER CHARGE ", accCode, partyCashDr, 0, 0, 0);
+            }
+            if (partyCashCr > 0) {
+              addToGroup("OTHER-CHARGE-CREDIT", "OTHER CHARGE ", accCode, 0, partyCashCr, 0, 0);
+            }
+          }
           break;
 
         case "party-gold":
@@ -391,6 +413,9 @@ class RegistryService {
           break;
 
         case "cash-only":
+          // Prefer cashDebit/cashCredit, fall back to debit/credit
+          // const cashOnlyDr = reg.cashDebit || reg.debit || 0;
+          // const cashOnlyCr = reg.cashCredit || reg.credit || 0;
           const cashOnlyDr = reg.debit || 0;
           const cashOnlyCr = reg.credit || 0;
           // Track total cash
@@ -501,6 +526,10 @@ class RegistryService {
         },
       },
     };
+  } catch (error) {
+      console.log("🔴 [generateVoucherByMetalTransaction] error:", error);
+      throw error;
+  }
   }
 
   static async generateHedgeVoucherByMetalTransaction(metalTransactionId) {
