@@ -3655,16 +3655,16 @@ export class ReportService {
       transactionType: { $ne: "initial" }, // Exclude INITIAL transaction type
     };
 
-    // Date filter - use voucherDate for FIFO ordering
+    // Date filter - filter by voucherDate (fromDate to toDate)
+    const dateFilter = {};
     if (filters.startDate || filters.endDate) {
-      matchConditions.voucherDate = {};
       if (filters.startDate) {
-        matchConditions.voucherDate.$gte = filters.startDate instanceof Date 
+        dateFilter.$gte = filters.startDate instanceof Date 
           ? filters.startDate 
           : new Date(filters.startDate);
       }
       if (filters.endDate) {
-        matchConditions.voucherDate.$lte = filters.endDate instanceof Date 
+        dateFilter.$lte = filters.endDate instanceof Date 
           ? filters.endDate 
           : new Date(filters.endDate);
       }
@@ -3680,23 +3680,47 @@ export class ReportService {
     }
 
     // Voucher filter
+    const voucherFilterConditions = [];
     if (filters.voucher?.length) {
-      const voucherTypes = filters.voucher.map(v => v.voucherType || v.type);
-      const voucherPrefixes = filters.voucher.map(v => v.prefix);
+      const voucherTypes = filters.voucher.map(v => v.voucherType || v.type).filter(Boolean);
+      const voucherPrefixes = filters.voucher.map(v => v.prefix).filter(Boolean);
       
-      const voucherMatch = [];
       if (voucherTypes.length > 0) {
-        voucherMatch.push({ voucherType: { $in: voucherTypes } });
+        voucherFilterConditions.push({ voucherType: { $in: voucherTypes } });
       }
       if (voucherPrefixes.length > 0) {
         const regexFilters = voucherPrefixes.map(prefix => ({
           voucherCode: { $regex: `^${prefix}`, $options: "i" }
         }));
-        voucherMatch.push({ $or: regexFilters });
+        voucherFilterConditions.push({ $or: regexFilters });
       }
-      
-      if (voucherMatch.length > 0) {
-        matchConditions.$or = voucherMatch;
+    }
+    
+    // Combine date and voucher filters
+    const combinedConditions = [];
+    
+    // Add date filter if exists
+    if (Object.keys(dateFilter).length > 0) {
+      combinedConditions.push({ voucherDate: dateFilter });
+    }
+    
+    // Add voucher filter (OR of all voucher conditions)
+    if (voucherFilterConditions.length > 0) {
+      if (voucherFilterConditions.length === 1) {
+        combinedConditions.push(voucherFilterConditions[0]);
+      } else {
+        combinedConditions.push({ $or: voucherFilterConditions });
+      }
+    }
+    
+    // Combine all conditions with AND if we have multiple conditions
+    if (combinedConditions.length > 0) {
+      if (matchConditions.$and) {
+        matchConditions.$and.push(...combinedConditions);
+      } else if (combinedConditions.length === 1) {
+        Object.assign(matchConditions, combinedConditions[0]);
+      } else {
+        matchConditions.$and = combinedConditions;
       }
     }
 
@@ -3742,21 +3766,16 @@ export class ReportService {
       });
     }
 
-    // Lookup karat purity from karatmasters
+    // Calculate pureWeight = grossWeight * standardPurity (from MetalStock, already in decimal 0-1)
+    // Use standardPurity from MetalStock directly, do NOT divide by 100
     pipeline.push({
-      $lookup: {
-        from: "karatmasters",
-        localField: "stockDetails.karat",
-        foreignField: "_id",
-        as: "karatDetails"
-      }
-    });
-
-    // Unwind the karatDetails array
-    pipeline.push({
-      $unwind: {
-        path: "$karatDetails",
-        preserveNullAndEmptyArrays: true
+      $addFields: {
+        pureWeight: {
+          $multiply: [
+            { $toDouble: { $ifNull: ["$grossWeight", 0] } },
+            { $toDouble: { $ifNull: ["$stockDetails.standardPurity", 0] } }
+          ]
+        }
       }
     });
 
@@ -3773,324 +3792,885 @@ export class ReportService {
       });
     }
 
-    // FIFO Sorting: Sort by stockCode, voucherDate (ascending), timestamp (ascending), _id (ascending)
+    // Sort by stockCode, voucherDate for consistent grouping
     pipeline.push({
       $sort: {
-        stockCode: 1,      // Group by stock code first
-        voucherDate: 1,    // Ascending for FIFO
-        timestamp: 1,       // Secondary sort by timestamp for same date
-        _id: 1             // Tertiary sort by _id for consistent ordering
+        stockCode: 1,
+        voucherDate: 1,
+        timestamp: 1,
+        _id: 1
       }
     });
 
-    // Group by stockCode to calculate totals with detailed categorization
+    // Group by stockCode to calculate totals with detailed categorization by transactionType
+    // Note: MongoDB $group doesn't allow nested accumulator objects, so we use flat fields
     pipeline.push({
       $group: {
         _id: "$stockCode",
         stockId: { $first: "$stockDetails._id" },
         code: { $first: "$stockDetails.code" },
-        purity: { $first: "$karatDetails.standardPurity" },
         description: { $first: "$stockDetails.description" },
         totalValue: { $first: "$stockDetails.totalValue" },
         pcs: { $first: "$stockDetails.pcs" },
-        // Opening Balance
-        openingBalance: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "opening"] },
-                "$grossWeight",
-                0
-              ]
-            },
+        // Opening Balance - flat fields
+        openingPcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "opening"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
           }
         },
-        // Opening Adjustment (METAL STOCK ADJUSTMENT with prefix MSA or OPENING-STOCK-BALANCE with prefix OSB)
-        openingAdjustment: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$transactionType", "adjustment"] },
-                    {
-                      $or: [
-                        { $eq: ["$voucherType", "METAL STOCK ADJUSTMENT"] },
-                        { $eq: ["$voucherType", "OPENING-STOCK-BALANCE"] },
-                        {
-                          $and: [
-                            { $ne: ["$voucherCode", null] },
-                            { $ne: ["$voucherCode", ""] },
-                            {
-                              $or: [
-                                { $eq: [{ $toUpper: { $substr: [{ $ifNull: ["$voucherCode", ""] }, 0, 3] } }, "MSA"] },
-                                { $eq: [{ $toUpper: { $substr: [{ $ifNull: ["$voucherCode", ""] }, 0, 3] } }, "OSB"] }
-                              ]
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                },
-                "$grossWeight",
-                0
-              ]
-            },
+        openingGrossWeight: {
+          $sum: {
+            $cond: [
+              { $eq: ["$transactionType", "opening"] },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
           }
         },
-        // Purchase (regular purchase)
-        purchase: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "purchase"] },
-                "$grossWeight",
-                0
-              ]
-            },
+        openingPureWeight: {
+          $sum: {
+            $cond: [
+              { $eq: ["$transactionType", "opening"] },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
           }
         },
-        // Import Purchase
-        importPurchase: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "importPurchase"] },
-                "$grossWeight",
-                0
-              ]
-            },
+        // Adjustment - flat fields (sum based on action)
+        adjustmentPcs: {
+          $sum: {
+            $cond: [
+              { $eq: ["$transactionType", "adjustment"] },
+              {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $ifNull: ["$pcs", 0] },
+                  { $multiply: [{ $ifNull: ["$pcs", 0] }, -1] }
+                ]
+              },
+              0
+            ]
           }
         },
-        // Purchase Return
-        purchaseReturn: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "purchaseReturn"] },
-                { $multiply: ["$grossWeight", -1] },
-                0
-              ]
-            },
+        adjustmentGrossWeight: {
+          $sum: {
+            $cond: [
+              { $eq: ["$transactionType", "adjustment"] },
+              {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $ifNull: ["$grossWeight", 0] },
+                  { $multiply: [{ $ifNull: ["$grossWeight", 0] }, -1] }
+                ]
+              },
+              0
+            ]
           }
         },
-        // Import Purchase Return
-        importPurchaseReturn: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "importPurchaseReturn"] },
-                { $multiply: ["$grossWeight", -1] },
-                0
-              ]
-            },
+        adjustmentPureWeight: {
+          $sum: {
+            $cond: [
+              { $eq: ["$transactionType", "adjustment"] },
+              {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $ifNull: ["$pureWeight", 0] },
+                  { $multiply: [{ $ifNull: ["$pureWeight", 0] }, -1] }
+                ]
+              },
+              0
+            ]
           }
         },
-        // Payment (metalPayment, hedgeMetalPayment)
-        payment: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $switch: {
-                branches: [
-                  { case: { $eq: ["$transactionType", "metalPayment"] }, then: "$grossWeight" },
-                  { case: { $eq: ["$transactionType", "hedgeMetalPayment"] }, then: "$grossWeight" },
-                ],
-                default: 0
-              }
-            },
+        // Purchase - flat fields
+        purchasePcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
           }
         },
-        // Receipt (metalReceipt, hedgeMetalReceipt)
-        receipt: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $switch: {
-                branches: [
-                  { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                  { case: { $eq: ["$transactionType", "hedgeMetalReceipt"] }, then: "$grossWeight" },
-                  { case: { $eq: ["$transactionType", "hedgeMetalReciept"] }, then: "$grossWeight" },
-                ],
-                default: 0
-              }
-            },
+        purchaseGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
           }
         },
-        // Sale (regular sale)
-        sale: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "sale"] },
-                { $multiply: ["$grossWeight", -1] },
-                0
-              ]
-            },
+        purchasePureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
           }
         },
-        // Export Sale
-        exportSale: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "exportSale"] },
-                { $multiply: ["$grossWeight", -1] },
-                0
-              ]
-            },
+        // Purchase Return - flat fields (action="remove" for purchase return)
+        purchaseReturnPcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
           }
         },
-        // Sale Return
-        saleReturn: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "saleReturn"] },
-                "$grossWeight",
-                0
-              ]
-            },
+        purchaseReturnGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
           }
         },
-        // Export Sale Return
-        exportSaleReturn: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $cond: [
-                { $eq: ["$transactionType", "exportSaleReturn"] },
-                "$grossWeight",
-                0
-              ]
-            },
+        purchaseReturnPureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
           }
         },
+        // Import Purchase - flat fields
+        importPurchasePcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        importPurchaseGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        importPurchasePureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Import Purchase Return - flat fields (action="remove")
+        importPurchaseReturnPcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        importPurchaseReturnGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        importPurchaseReturnPureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Payment (metalPayment, hedgeMetalPayment) - flat fields
+        paymentPcs: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalPayment", "hedgeMetalPayment"]] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        paymentGrossWeight: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalPayment", "hedgeMetalPayment"]] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        paymentPureWeight: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalPayment", "hedgeMetalPayment"]] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Receipt (metalReceipt, hedgeMetalReceipt) - flat fields
+        receiptPcs: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalReceipt", "hedgeMetalReceipt", "hedgeMetalReciept"]] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        receiptGrossWeight: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalReceipt", "hedgeMetalReceipt", "hedgeMetalReciept"]] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        receiptPureWeight: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalReceipt", "hedgeMetalReceipt", "hedgeMetalReciept"]] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Sale - flat fields
+        salePcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "sale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        saleGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "sale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        salePureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "sale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Sale Return - flat fields (action="add")
+        saleReturnPcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "saleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        saleReturnGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "saleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        saleReturnPureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "saleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Export Sale - flat fields (action="remove")
+        exportSalePcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        exportSaleGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        exportSalePureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Export Sale Return - flat fields (action="add")
+        exportSaleReturnPcs: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSaleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        exportSaleReturnGrossWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSaleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        exportSaleReturnPureWeight: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSaleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        // Calculate total "add" and "remove" for closing balance
+        totalGrossWeightAdd: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "add"] },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        totalGrossWeightRemove: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "remove"] },
+              { $ifNull: ["$grossWeight", 0] },
+              0
+            ]
+          }
+        },
+        totalPureWeightAdd: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "add"] },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        totalPureWeightRemove: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "remove"] },
+              { $ifNull: ["$pureWeight", 0] },
+              0
+            ]
+          }
+        },
+        totalPcsAdd: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "add"] },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        totalPcsRemove: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "remove"] },
+              { $ifNull: ["$pcs", 0] },
+              0
+            ]
+          }
+        },
+        // Making Value calculations - sum of avgMakingAmount for each transaction type
+        openingMakingAmount: {
+          $sum: {
+            $cond: [
+              { $eq: ["$transactionType", "opening"] },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        purchaseMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        purchaseReturnMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "purchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        importPurchaseMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchase"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        importPurchaseReturnMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "importPurchaseReturn"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        saleMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "sale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        saleReturnMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "saleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        exportSaleMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSale"] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        exportSaleReturnMakingAmount: {
+          $sum: {
+            $cond: [
+              { 
+                $and: [
+                  { $eq: ["$transactionType", "exportSaleReturn"] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        paymentMakingAmount: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalPayment", "hedgeMetalPayment"]] },
+                  { $eq: ["$action", "remove"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        receiptMakingAmount: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $in: ["$transactionType", ["metalReceipt", "hedgeMetalReceipt", "hedgeMetalReciept"]] },
+                  { $eq: ["$action", "add"] }
+                ]
+              },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        adjustmentMakingAmount: {
+          $sum: {
+            $cond: [
+              { $eq: ["$transactionType", "adjustment"] },
+              {
+                $cond: [
+                  { $eq: ["$action", "add"] },
+                  { $ifNull: ["$avgMakingAmount", 0] },
+                  { $multiply: [{ $ifNull: ["$avgMakingAmount", 0] }, -1] }
+                ]
+              },
+              0
+            ]
+          }
+        },
+        // Total making amount for closing balance
+        totalMakingAmountAdd: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "add"] },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        totalMakingAmountRemove: {
+          $sum: {
+            $cond: [
+              { $eq: ["$action", "remove"] },
+              { $ifNull: ["$avgMakingAmount", 0] },
+              0
+            ]
+          }
+        },
+        // Average making rate (use first for now - can be weighted average if needed)
+        avgMakingRate: { $avg: { $ifNull: ["$avgMakingRate", 0] } },
       },
     });
 
-    // Project to reshape the result with all categories
+    // Project to reshape the result - convert flat fields to nested objects
     pipeline.push({
       $project: {
         stockId: 1,
         code: 1,
-        purity: 1,
         description: 1,
         totalValue: 1,
         pcs: 1,
+        avgMakingRate: { $ifNull: ["$avgMakingRate", 0] },
         opening: {
-          grossWeight: { $sum: "$openingBalance.grossWeight" },
-          pcs: { $sum: "$openingBalance.pcs" },
+          pcs: { $ifNull: ["$openingPcs", 0] },
+          grossWeight: { $ifNull: ["$openingGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$openingPureWeight", 0] },
+          makingAmount: { $ifNull: ["$openingMakingAmount", 0] }
         },
-        openingAdjustment: {
-          grossWeight: { $sum: "$openingAdjustment.grossWeight" },
-          pcs: { $sum: "$openingAdjustment.pcs" },
+        adjustment: {
+          pcs: { $ifNull: ["$adjustmentPcs", 0] },
+          grossWeight: { $ifNull: ["$adjustmentGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$adjustmentPureWeight", 0] },
+          makingAmount: { $ifNull: ["$adjustmentMakingAmount", 0] }
         },
         purchase: {
-          grossWeight: {
-            $add: [
-              { $sum: "$purchase.grossWeight" },
-              { $sum: "$purchaseReturn.grossWeight" }
-            ]
-          },
-          pcs: {
-            $add: [
-              { $sum: "$purchase.pcs" },
-              { $sum: "$purchaseReturn.pcs" }
-            ]
-          },
+          pcs: { $ifNull: ["$purchasePcs", 0] },
+          grossWeight: { $ifNull: ["$purchaseGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$purchasePureWeight", 0] },
+          makingAmount: { $ifNull: ["$purchaseMakingAmount", 0] }
+        },
+        purchaseReturn: {
+          pcs: { $ifNull: ["$purchaseReturnPcs", 0] },
+          grossWeight: { $ifNull: ["$purchaseReturnGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$purchaseReturnPureWeight", 0] },
+          makingAmount: { $ifNull: ["$purchaseReturnMakingAmount", 0] }
         },
         importPurchase: {
-          grossWeight: {
-            $add: [
-              { $sum: "$importPurchase.grossWeight" },
-              { $sum: "$importPurchaseReturn.grossWeight" }
-            ]
-          },
-          pcs: {
-            $add: [
-              { $sum: "$importPurchase.pcs" },
-              { $sum: "$importPurchaseReturn.pcs" }
-            ]
-          },
+          pcs: { $ifNull: ["$importPurchasePcs", 0] },
+          grossWeight: { $ifNull: ["$importPurchaseGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$importPurchasePureWeight", 0] },
+          makingAmount: { $ifNull: ["$importPurchaseMakingAmount", 0] }
+        },
+        importPurchaseReturn: {
+          pcs: { $ifNull: ["$importPurchaseReturnPcs", 0] },
+          grossWeight: { $ifNull: ["$importPurchaseReturnGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$importPurchaseReturnPureWeight", 0] },
+          makingAmount: { $ifNull: ["$importPurchaseReturnMakingAmount", 0] }
         },
         payment: {
-          grossWeight: { $sum: "$payment.grossWeight" },
-          pcs: { $sum: "$payment.pcs" },
+          pcs: { $ifNull: ["$paymentPcs", 0] },
+          grossWeight: { $ifNull: ["$paymentGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$paymentPureWeight", 0] },
+          makingAmount: { $ifNull: ["$paymentMakingAmount", 0] }
         },
         receipt: {
-          grossWeight: { $sum: "$receipt.grossWeight" },
-          pcs: { $sum: "$receipt.pcs" },
+          pcs: { $ifNull: ["$receiptPcs", 0] },
+          grossWeight: { $ifNull: ["$receiptGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$receiptPureWeight", 0] },
+          makingAmount: { $ifNull: ["$receiptMakingAmount", 0] }
         },
         sale: {
-          grossWeight: {
-            $add: [
-              { $sum: "$sale.grossWeight" },
-              { $sum: "$saleReturn.grossWeight" }
-            ]
-          },
-          pcs: {
-            $add: [
-              { $sum: "$sale.pcs" },
-              { $sum: "$saleReturn.pcs" }
-            ]
-          },
+          pcs: { $ifNull: ["$salePcs", 0] },
+          grossWeight: { $ifNull: ["$saleGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$salePureWeight", 0] },
+          makingAmount: { $ifNull: ["$saleMakingAmount", 0] }
+        },
+        saleReturn: {
+          pcs: { $ifNull: ["$saleReturnPcs", 0] },
+          grossWeight: { $ifNull: ["$saleReturnGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$saleReturnPureWeight", 0] },
+          makingAmount: { $ifNull: ["$saleReturnMakingAmount", 0] }
         },
         exportSale: {
-          grossWeight: {
-            $add: [
-              { $sum: "$exportSale.grossWeight" },
-              { $sum: "$exportSaleReturn.grossWeight" }
-            ]
-          },
-          pcs: {
-            $add: [
-              { $sum: "$exportSale.pcs" },
-              { $sum: "$exportSaleReturn.pcs" }
-            ]
-          },
+          pcs: { $ifNull: ["$exportSalePcs", 0] },
+          grossWeight: { $ifNull: ["$exportSaleGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$exportSalePureWeight", 0] },
+          makingAmount: { $ifNull: ["$exportSaleMakingAmount", 0] }
+        },
+        exportSaleReturn: {
+          pcs: { $ifNull: ["$exportSaleReturnPcs", 0] },
+          grossWeight: { $ifNull: ["$exportSaleReturnGrossWeight", 0] },
+          pureWeight: { $ifNull: ["$exportSaleReturnPureWeight", 0] },
+          makingAmount: { $ifNull: ["$exportSaleReturnMakingAmount", 0] }
         },
         closing: {
+          // Closing balance = All "add" actions - All "remove" actions
+          // This includes opening balance (which has action="add")
           grossWeight: {
-            $add: [
-              { $sum: "$openingBalance.grossWeight" },
-              { $sum: "$openingAdjustment.grossWeight" },
-              { $sum: "$purchase.grossWeight" },
-              { $sum: "$purchaseReturn.grossWeight" },
-              { $sum: "$importPurchase.grossWeight" },
-              { $sum: "$importPurchaseReturn.grossWeight" },
-              { $sum: "$payment.grossWeight" },
-              { $sum: "$receipt.grossWeight" },
-              { $sum: "$sale.grossWeight" },
-              { $sum: "$saleReturn.grossWeight" },
-              { $sum: "$exportSale.grossWeight" },
-              { $sum: "$exportSaleReturn.grossWeight" },
+            $subtract: [
+              { $ifNull: ["$totalGrossWeightAdd", 0] },
+              { $ifNull: ["$totalGrossWeightRemove", 0] }
+            ]
+          },
+          pureWeight: {
+            $subtract: [
+              { $ifNull: ["$totalPureWeightAdd", 0] },
+              { $ifNull: ["$totalPureWeightRemove", 0] }
             ]
           },
           pcs: {
-            $add: [
-              { $sum: "$openingBalance.pcs" },
-              { $sum: "$openingAdjustment.pcs" },
-              { $sum: "$purchase.pcs" },
-              { $sum: "$purchaseReturn.pcs" },
-              { $sum: "$importPurchase.pcs" },
-              { $sum: "$importPurchaseReturn.pcs" },
-              { $sum: "$payment.pcs" },
-              { $sum: "$receipt.pcs" },
-              { $sum: "$sale.pcs" },
-              { $sum: "$saleReturn.pcs" },
-              { $sum: "$exportSale.pcs" },
-              { $sum: "$exportSaleReturn.pcs" },
+            $subtract: [
+              { $ifNull: ["$totalPcsAdd", 0] },
+              { $ifNull: ["$totalPcsRemove", 0] }
+            ]
+          },
+          makingAmount: {
+            $subtract: [
+              { $ifNull: ["$totalMakingAmountAdd", 0] },
+              { $ifNull: ["$totalMakingAmountRemove", 0] }
             ]
           },
         },
@@ -4102,13 +4682,17 @@ export class ReportService {
       $match: {
         $or: [
           { "opening.grossWeight": { $ne: 0 } },
-          { "openingAdjustment.grossWeight": { $ne: 0 } },
+          { "adjustment.grossWeight": { $ne: 0 } },
           { "purchase.grossWeight": { $ne: 0 } },
+          { "purchaseReturn.grossWeight": { $ne: 0 } },
           { "importPurchase.grossWeight": { $ne: 0 } },
+          { "importPurchaseReturn.grossWeight": { $ne: 0 } },
           { "payment.grossWeight": { $ne: 0 } },
           { "receipt.grossWeight": { $ne: 0 } },
           { "sale.grossWeight": { $ne: 0 } },
+          { "saleReturn.grossWeight": { $ne: 0 } },
           { "exportSale.grossWeight": { $ne: 0 } },
+          { "exportSaleReturn.grossWeight": { $ne: 0 } },
           { "closing.grossWeight": { $ne: 0 } },
         ],
       },
@@ -4133,48 +4717,135 @@ export class ReportService {
     }
 
     return reportData.map((item) => {
+      // Calculate net purchase: purchase + importPurchase - purchaseReturn - importPurchaseReturn
+      const netPurchaseGross = (item.purchase?.grossWeight || 0) + 
+                              (item.importPurchase?.grossWeight || 0) - 
+                              (item.purchaseReturn?.grossWeight || 0) - 
+                              (item.importPurchaseReturn?.grossWeight || 0);
+      
+      const netPurchasePure = (item.purchase?.pureWeight || 0) + 
+                             (item.importPurchase?.pureWeight || 0) - 
+                             (item.purchaseReturn?.pureWeight || 0) - 
+                             (item.importPurchaseReturn?.pureWeight || 0);
+      
+      const netPurchaseMaking = (item.purchase?.makingAmount || 0) + 
+                               (item.importPurchase?.makingAmount || 0) - 
+                               (item.purchaseReturn?.makingAmount || 0) - 
+                               (item.importPurchaseReturn?.makingAmount || 0);
+      
+      // Calculate net sale: sale + exportSale - saleReturn - exportSaleReturn (all negative for sales)
+      const netSaleGross = -((item.sale?.grossWeight || 0) + 
+                             (item.exportSale?.grossWeight || 0) - 
+                             (item.saleReturn?.grossWeight || 0) - 
+                             (item.exportSaleReturn?.grossWeight || 0));
+      
+      const netSalePure = -((item.sale?.pureWeight || 0) + 
+                            (item.exportSale?.pureWeight || 0) - 
+                            (item.saleReturn?.pureWeight || 0) - 
+                            (item.exportSaleReturn?.pureWeight || 0));
+      
+      const netSaleMaking = -((item.sale?.makingAmount || 0) + 
+                              (item.exportSale?.makingAmount || 0) - 
+                              (item.saleReturn?.makingAmount || 0) - 
+                              (item.exportSaleReturn?.makingAmount || 0));
+      
       const formattedItem = {
         id: item.stockId || item._id,
         stockCode: item.code,
         stockName: item.description,
         pcs: item.pcs || false,
         totalValue: item.totalValue || 0,
+        avgMakingRate: item.avgMakingRate || 0,
         stock: {
           opening: {
             grossWt: item.opening?.grossWeight || 0,
+            pureWt: item.opening?.pureWeight || 0,
             pcs: item.opening?.pcs || 0,
+            makingAmount: item.opening?.makingAmount || 0,
           },
-          openingAdjustment: {
-            grossWt: item.openingAdjustment?.grossWeight || 0,
-            pcs: item.openingAdjustment?.pcs || 0,
+          adjustment: {
+            grossWt: item.adjustment?.grossWeight || 0,
+            pureWt: item.adjustment?.pureWeight || 0,
+            pcs: item.adjustment?.pcs || 0,
+            makingAmount: item.adjustment?.makingAmount || 0,
           },
           purchase: {
             grossWt: item.purchase?.grossWeight || 0,
+            pureWt: item.purchase?.pureWeight || 0,
             pcs: item.purchase?.pcs || 0,
+            makingAmount: item.purchase?.makingAmount || 0,
+          },
+          purchaseReturn: {
+            grossWt: item.purchaseReturn?.grossWeight || 0,
+            pureWt: item.purchaseReturn?.pureWeight || 0,
+            pcs: item.purchaseReturn?.pcs || 0,
+            makingAmount: item.purchaseReturn?.makingAmount || 0,
           },
           importPurchase: {
             grossWt: item.importPurchase?.grossWeight || 0,
+            pureWt: item.importPurchase?.pureWeight || 0,
             pcs: item.importPurchase?.pcs || 0,
+            makingAmount: item.importPurchase?.makingAmount || 0,
+          },
+          importPurchaseReturn: {
+            grossWt: item.importPurchaseReturn?.grossWeight || 0,
+            pureWt: item.importPurchaseReturn?.pureWeight || 0,
+            pcs: item.importPurchaseReturn?.pcs || 0,
+            makingAmount: item.importPurchaseReturn?.makingAmount || 0,
           },
           payment: {
             grossWt: item.payment?.grossWeight || 0,
+            pureWt: item.payment?.pureWeight || 0,
             pcs: item.payment?.pcs || 0,
+            makingAmount: item.payment?.makingAmount || 0,
           },
           receipt: {
             grossWt: item.receipt?.grossWeight || 0,
+            pureWt: item.receipt?.pureWeight || 0,
             pcs: item.receipt?.pcs || 0,
+            makingAmount: item.receipt?.makingAmount || 0,
           },
           sale: {
-            grossWt: item.sale?.grossWeight || 0,
+            grossWt: -(item.sale?.grossWeight || 0), // Negative for sales
+            pureWt: -(item.sale?.pureWeight || 0), // Negative for sales
             pcs: item.sale?.pcs || 0,
+            makingAmount: -(item.sale?.makingAmount || 0), // Negative for sales
+          },
+          saleReturn: {
+            grossWt: item.saleReturn?.grossWeight || 0, // Positive (adds back)
+            pureWt: item.saleReturn?.pureWeight || 0, // Positive (adds back)
+            pcs: item.saleReturn?.pcs || 0,
+            makingAmount: item.saleReturn?.makingAmount || 0,
           },
           exportSale: {
-            grossWt: item.exportSale?.grossWeight || 0,
+            grossWt: -(item.exportSale?.grossWeight || 0), // Negative for sales
+            pureWt: -(item.exportSale?.pureWeight || 0), // Negative for sales
             pcs: item.exportSale?.pcs || 0,
+            makingAmount: -(item.exportSale?.makingAmount || 0), // Negative for sales
+          },
+          exportSaleReturn: {
+            grossWt: item.exportSaleReturn?.grossWeight || 0, // Positive (adds back)
+            pureWt: item.exportSaleReturn?.pureWeight || 0, // Positive (adds back)
+            pcs: item.exportSaleReturn?.pcs || 0,
+            makingAmount: item.exportSaleReturn?.makingAmount || 0,
+          },
+          netPurchase: {
+            grossWt: netPurchaseGross,
+            pureWt: netPurchasePure,
+            pcs: (item.purchase?.pcs || 0) + (item.importPurchase?.pcs || 0) - (item.purchaseReturn?.pcs || 0) - (item.importPurchaseReturn?.pcs || 0),
+            makingAmount: netPurchaseMaking,
+          },
+          netSale: {
+            grossWt: netSaleGross,
+            pureWt: netSalePure,
+            pcs: -((item.sale?.pcs || 0) + (item.exportSale?.pcs || 0) - (item.saleReturn?.pcs || 0) - (item.exportSaleReturn?.pcs || 0)),
+            makingAmount: netSaleMaking,
           },
           closing: {
             grossWt: item.closing?.grossWeight || 0,
+            pureWt: item.closing?.pureWeight || 0,
             pcs: item.closing?.pcs || 0,
+            makingAmount: item.closing?.makingAmount || 0,
           },
         },
       };
