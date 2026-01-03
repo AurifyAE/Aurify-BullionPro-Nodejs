@@ -26,8 +26,6 @@ class AccountFixingService {
                 metalValue
             } = body;
 
-            console.log(body)
-
             // 1️⃣ Fetch metal rate (authoritative)
             const metalRate = await MetalRate.findById(metalRateId).session(session);
             if (!metalRate) {
@@ -40,8 +38,6 @@ class AccountFixingService {
             }
 
             // 2️⃣ Calculate value (BACKEND AUTHORITY)
-
-            console.log(position)
 
             let accountingImpact;
             if (position === "PURCHASE") {
@@ -71,7 +67,7 @@ class AccountFixingService {
                         weightOz,
 
                         metalRate: metalRateId,
-                        metalRateValue,
+                        metalRateValue: metalRateValue,
                         metalValue,
 
                         accountingImpact,
@@ -84,13 +80,13 @@ class AccountFixingService {
             // 4️⃣ Ledger logic
             const isPurchase = position === "PURCHASE";
 
-            // PURCHASE: cashDebit and goldCredit
-            // SALE: cashCredit and goldDebit
-            const goldDebit = isPurchase ? 0 : pureWeight; // SALE: goldDebit
-            const goldCredit = isPurchase ? pureWeight : 0; // PURCHASE: goldCredit
+            // PURCHASE: goldDebit (gold increases) and cashCredit (cash decreases)
+            // SALE: goldCredit (gold decreases) and cashDebit (cash increases)
+            const goldDebit = isPurchase ? pureWeight : 0; // PURCHASE: goldDebit
+            const goldCredit = isPurchase ? 0 : pureWeight; // SALE: goldCredit
 
-            const cashDebit = isPurchase ? metalValue : 0; // PURCHASE: cashDebit
-            const cashCredit = isPurchase ? 0 : metalValue; // SALE: cashCredit
+            const cashDebit = isPurchase ? 0 : metalValue; // SALE: cashDebit
+            const cashCredit = isPurchase ? metalValue : 0; // PURCHASE: cashCredit
 
             // 5️⃣ Registry entry
             await Registry.create(
@@ -205,14 +201,7 @@ class AccountFixingService {
                 throw createAppError("Invalid metal rate", 400);
             }
 
-            const convFactGms = Number(metalRate.convFactGms || 0);
-            if (!convFactGms) {
-                throw createAppError("Conversion factor missing in metal rate", 400);
-            }
-
-            // 2️⃣ Recalculate value (BACKEND AUTHORITY)
-            // const metalValue = Number(pureWeight) * convFactGms;
-
+            // 2️⃣ Accounting impact (ONLY LOGIC BACKEND OWNS)
             let accountingImpact;
             if (position === "PURCHASE") {
                 accountingImpact = { gold: "DEBIT", cash: "CREDIT" };
@@ -239,8 +228,8 @@ class AccountFixingService {
                     pureWeight,
                     weightOz,
                     metalRate: metalRateId,
-                    metalRateValue,
-                    metalValue,
+                    metalRateValue,   // ✅ keep actual rate
+                    metalValue,       // ✅ keep actual value
                     bidvalue,
                     accountingImpact,
                     updatedBy: adminId,
@@ -251,13 +240,13 @@ class AccountFixingService {
             // 5️⃣ Recreate registry
             const isPurchase = position === "PURCHASE";
 
-               // PURCHASE: cashDebit and goldCredit
-            // SALE: cashCredit and goldDebit
-            const goldDebit = isPurchase ? 0 : pureWeight; // SALE: goldDebit
-            const goldCredit = isPurchase ? pureWeight : 0; // PURCHASE: goldCredit
+            // PURCHASE: goldDebit (gold increases) and cashCredit (cash decreases)
+            // SALE: goldCredit (gold decreases) and cashDebit (cash increases)
+            const goldDebit = isPurchase ? pureWeight : 0; // PURCHASE: goldDebit
+            const goldCredit = isPurchase ? 0 : pureWeight; // SALE: goldCredit
 
-            const cashDebit = isPurchase ? metalValue : 0; // PURCHASE: cashDebit
-            const cashCredit = isPurchase ? 0 : metalValue; // SALE: cashCredit
+            const cashDebit = isPurchase ? 0 : metalValue; // SALE: cashDebit
+            const cashCredit = isPurchase ? metalValue : 0; // PURCHASE: cashCredit
 
             await Registry.create(
                 [

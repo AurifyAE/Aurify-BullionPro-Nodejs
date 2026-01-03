@@ -2323,7 +2323,7 @@ class MetalTransactionService {
     // 3) MAKING CHARGES
     // ============================================================
     if (totals.makingCharges > 0) {
-      // Party making charges (credit)
+      // Making Charges Value (credit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -2332,7 +2332,7 @@ class MetalTransactionService {
           "002",
           "PARTY_MAKING_CHARGES",
           this.formatDescriptionWithRemarks(
-            `Party making charges - Purchase from ${partyName}`,
+            `Making Charges Value - Purchase from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -2590,7 +2590,7 @@ class MetalTransactionService {
           "009",
           "PARTY_VAT_AMOUNT",
           this.formatDescriptionWithRemarks(
-            `Party VAT amount - Purchase from ${partyName}`,
+            ` VAT amount - Purchase from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -2657,7 +2657,7 @@ class MetalTransactionService {
           "003",
           "PARTY_PREMIUM",
           this.formatDescriptionWithRemarks(
-            `Party premium - Purchase from ${partyName}`,
+            `Premium Value - Purchase from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -2720,7 +2720,7 @@ class MetalTransactionService {
           "007",
           "PARTY_DISCOUNT",
           this.formatDescriptionWithRemarks(
-            `Party discount - Purchase from ${partyName}`,
+            `Discount Value - Purchase from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -2991,7 +2991,7 @@ class MetalTransactionService {
           "002",
           "PARTY_MAKING_CHARGES",
           this.formatDescriptionWithRemarks(
-            `Party making charges - Purchase from ${partyName}`,
+            `Making Charges Value - Purchase from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -3180,7 +3180,7 @@ class MetalTransactionService {
           "009",
           "PARTY_VAT_AMOUNT",
           this.formatDescriptionWithRemarks(
-            `Party VAT amount - Purchase from ${partyName}`,
+            ` VAT amount - Purchase from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -3239,7 +3239,7 @@ class MetalTransactionService {
     // 6) PREMIUM / DISCOUNT
     // ============================================================
     if (totals.premium > 0) {
-      // Party premium (credit)
+      // Premium Value (credit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -3247,7 +3247,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase from ${partyName}`,
+          `Premium Value - Purchase from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -3294,7 +3294,7 @@ class MetalTransactionService {
     }
 
     if (totals.discount > 0) {
-      // Party discount (debit)
+      // Discount Value (debit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -3302,7 +3302,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase from ${partyName}`,
+          `Discount Value - Purchase from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -3583,7 +3583,7 @@ class MetalTransactionService {
           "002",
           "PARTY_MAKING_CHARGES",
           this.formatDescriptionWithRemarks(
-            `Party making charges - Purchase from ${partyName}`,
+            `Making Charges Value - Purchase from ${partyName}`,
             true, // isPartyEntry - use transaction remarks
             transactionRemarks,
             this.getItemRemarks(item)
@@ -3868,7 +3868,7 @@ class MetalTransactionService {
             "009",
             "PARTY_VAT_AMOUNT",
             this.formatDescriptionWithRemarks(
-              `Party VAT amount - Purchase from ${partyName}`,
+              ` VAT amount - Purchase from ${partyName}`,
               true, // isPartyEntry
               transactionRemarks,
               this.getItemRemarks(item)
@@ -3936,7 +3936,7 @@ class MetalTransactionService {
           "003",
           "PARTY_PREMIUM",
           this.formatDescriptionWithRemarks(
-            `Party premium - Purchase from ${partyName}`,
+            `Premium Value - Purchase from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -3998,7 +3998,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase from ${partyName}`,
+          `Discount Value - Purchase from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -4024,7 +4024,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Purchase from ${partyName}`,
+          `Discount Value - Purchase from ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -4252,7 +4252,7 @@ class MetalTransactionService {
           "002",
           "PARTY_MAKING_CHARGES",
           this.formatDescriptionWithRemarks(
-            `Party making charges - Purchase from ${partyName}`,
+            `Making Charges Value - Purchase from ${partyName}`,
             true, // isPartyEntry - use transaction remarks
             transactionRemarks,
             this.getItemRemarks(item)
@@ -4443,7 +4443,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "PARTY_VAT_AMOUNT",
-            `Party VAT amount - Purchase from ${partyName}`,
+            `VAT amount - Purchase from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -4501,7 +4501,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase from ${partyName}`,
+          `Premium Value - Purchase from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -4526,7 +4526,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Purchase from ${partyName}`,
+          `Premium Value - Purchase from ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -4554,7 +4554,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase from ${partyName}`,
+          `Discount Value - Purchase from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -4580,7 +4580,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Purchase from ${partyName}`,
+          `Discount Value - Purchase from ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -4797,7 +4797,7 @@ class MetalTransactionService {
     // 3) MAKING CHARGES
     // ------------------------------
     if (totals.makingCharges > 0) {
-      // Party making charges (debit)
+      // Making Charges Value (debit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -4832,7 +4832,7 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "MAKING_CHARGES",
-          `Party making charges - Purchase return from ${partyName}`,
+          `Making Charges Value - Purchase return from ${partyName}`,
           party._id,
           false,
           totals.makingCharges,
@@ -5048,7 +5048,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `Party VAT amount - Purchase return from ${partyName}`,
+            `VAT amount - Purchase return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -5107,7 +5107,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Purchase return from ${partyName}`,
+          `Premium Value - Purchase return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -5133,7 +5133,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase return from ${partyName}`,
+          `Premium Value - Purchase return from ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -5162,7 +5162,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Purchase return from ${partyName}`,
+          `Discount Value - Purchase return from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -5189,7 +5189,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase return from ${partyName}`,
+          `Discount Value - Purchase return from ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -5537,7 +5537,7 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "MAKING_CHARGES",
-          `Party making charges - Purchase Return from ${partyName}`,
+          `Making Charges Value - Purchase Return from ${partyName}`,
           party._id,
           false,
           totals.makingCharges,
@@ -5751,7 +5751,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `Party VAT amount - Purchase Return from ${partyName}`,
+            ` VAT amount - Purchase Return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -5810,7 +5810,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Purchase Return from ${partyName}`,
+          `Premium Value - Purchase Return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -5836,7 +5836,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase Return from ${partyName}`,
+          `Premium Value - Purchase Return from ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -5865,7 +5865,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Purchase Return from ${partyName}`,
+          `Discount Value - Purchase Return from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -5892,7 +5892,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase Return from ${partyName}`,
+          `Discount Value - Purchase Return from ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -6131,7 +6131,7 @@ class MetalTransactionService {
     // 3) MAKING CHARGES
     // ------------------------------
     if (totals.makingCharges > 0) {
-      // Party making charges (debit)
+      // Making Charges Value (debit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -6140,7 +6140,7 @@ class MetalTransactionService {
           "003",
           "PARTY_MAKING_CHARGES",
           this.formatDescriptionWithRemarks(
-            `Party making charges - Purchase return from ${partyName}`,
+            `Making Charges Value - Purchase return from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -6402,7 +6402,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `Party VAT amount - Purchase return from ${partyName}`,
+            ` VAT amount - Purchase return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -6461,7 +6461,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Purchase return from ${partyName}`,
+          `Premium Value - Purchase return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -6487,7 +6487,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase return from ${partyName}`,
+          `Premium Value - Purchase return from ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -6516,7 +6516,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Purchase return from ${partyName}`,
+          `Discount Value - Purchase return from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -6543,7 +6543,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase return from ${partyName}`,
+          `Discount Value - Purchase return from ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -6904,7 +6904,7 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "MAKING_CHARGES",
-          `Party making charges - Purchase Return from ${partyName}`,
+          `Making Charges Value - Purchase Return from ${partyName}`,
           party._id,
           false,
           totals.makingCharges,
@@ -7118,7 +7118,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `Party VAT amount - Purchase Return from ${partyName}`,
+            ` VAT amount - Purchase Return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -7177,7 +7177,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Purchase Return from ${partyName}`,
+          `Premium Value - Purchase Return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -7203,7 +7203,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Purchase Return from ${partyName}`,
+          `Premium Value - Purchase Return from ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -7232,7 +7232,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Purchase Return from ${partyName}`,
+          `Discount Value - Purchase Return from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -7259,7 +7259,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Purchase Return from ${partyName}`,
+          `Discount Value - Purchase Return from ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -7536,7 +7536,7 @@ class MetalTransactionService {
           "002",
           "MAKING_CHARGES",
           this.formatDescriptionWithRemarks(
-            `Party making charges - Export Sale to ${partyName}`,
+            `Making Charges Value - Export Sale to ${partyName}`,
             false, // isPartyEntry - use item remarks
             transactionRemarks,
             this.getItemRemarks(item)
@@ -7766,7 +7766,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `Party VAT amount - Export Sale to ${partyName}`,
+            ` VAT amount - Export Sale to ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -7825,7 +7825,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Export Sale to ${partyName}`,
+          `Premium Value - Export Sale to ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -7851,7 +7851,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Export Sale to ${partyName}`,
+          `Premium Value - Export Sale to ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -7880,7 +7880,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Export Sale to ${partyName}`,
+          `Discount Value - Export Sale to ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -7907,7 +7907,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Export Sale to ${partyName}`,
+          `Discount Value - Export Sale to ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -8212,7 +8212,7 @@ class MetalTransactionService {
     // 3) Making Charges
     // =====================================================
     if (totals.makingCharges > 0) {
-      // Debit party making charges
+      // Debit Making Charges Value
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -8843,7 +8843,7 @@ class MetalTransactionService {
     // 3) MAKING CHARGES
     // ------------------------------
     if (totals.makingCharges > 0) {
-      // Party making charges (debit)
+      // Making Charges Value (debit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -9094,7 +9094,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `Party VAT amount - Sale to ${partyName}`,
+            ` VAT amount - Sale to ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -9152,7 +9152,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Sale to ${partyName}`,
+          `Premium Value - Sale to ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -9177,7 +9177,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Sale to ${partyName}`,
+          `Premium Value - Sale to ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -9205,7 +9205,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Sale to ${partyName}`,
+          `Discount Value - Sale to ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -9231,7 +9231,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Sale to ${partyName}`,
+          `Discount Value - Sale to ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -9692,7 +9692,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "VAT_AMOUNT",
-            `Party VAT amount - Sale to ${partyName}`,
+            `VAT amount - Sale to ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -9750,7 +9750,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PREMIUM",
-          `Party premium - Sale to ${partyName}`,
+          `Premium Value - Sale to ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -9775,7 +9775,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Sale to ${partyName}`,
+          `Premium Value - Sale to ${partyName}`,
           party._id,
           true,
           totals.premium,
@@ -9803,7 +9803,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "DISCOUNT",
-          `Party discount - Sale to ${partyName}`,
+          `Discount Value - Sale to ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -9829,7 +9829,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Sale to ${partyName}`,
+          `Discount Value - Sale to ${partyName}`,
           party._id,
           true,
           totals.discount,
@@ -10142,7 +10142,7 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Sale return from ${partyName}`,
+          `Making Charges Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.makingCharges,
@@ -10323,7 +10323,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "PARTY_VAT_AMOUNT",
-            `Party VAT amount - Sale return from ${partyName}`,
+            ` VAT amount - Sale return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -10382,7 +10382,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Sale return from ${partyName}`,
+          `Premium Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -10437,7 +10437,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Sale return from ${partyName}`,
+          `Discount Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -10687,7 +10687,7 @@ class MetalTransactionService {
     // 3) MAKING CHARGES
     // ============================================================
     if (totals.makingCharges > 0) {
-      // Party making charges (credit)
+      // Making Charges Value (credit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -10695,7 +10695,7 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Sale return from ${partyName}`,
+          `Making Charges Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.makingCharges,
@@ -10937,7 +10937,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "PARTY_VAT_AMOUNT",
-            `Party VAT amount - Sale return from ${partyName}`,
+            ` VAT amount - Sale return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -10996,7 +10996,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Sale return from ${partyName}`,
+          `Premium Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -11051,7 +11051,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Sale return from ${partyName}`,
+          `Discount Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -11399,7 +11399,7 @@ class MetalTransactionService {
           metalTransactionId,
           "002",
           "PARTY_MAKING_CHARGES",
-          `Party making charges - Sale return from ${partyName}`,
+          `Making Charges Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.makingCharges,
@@ -11580,7 +11580,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "PARTY_VAT_AMOUNT",
-            `Party VAT amount - Sale return from ${partyName}`,
+            ` VAT amount - Sale return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -11639,7 +11639,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Sale return from ${partyName}`,
+          `Premium Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -11694,7 +11694,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Sale return from ${partyName}`,
+          `Discount Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.discount,
@@ -11953,7 +11953,7 @@ class MetalTransactionService {
     // 3) MAKING CHARGES
     // ============================================================
     if (totals.makingCharges > 0) {
-      // Party making charges (credit)
+      // Making Charges Value (credit)
       entries.push(
         this.createRegistryEntry(
           transactionType,
@@ -11962,7 +11962,7 @@ class MetalTransactionService {
           "002",
           "PARTY_MAKING_CHARGES",
           this.formatDescriptionWithRemarks(
-            `Party making charges - Sale return from ${partyName}`,
+            `Making Charges Value - Sale return from ${partyName}`,
             true, // isPartyEntry
             transactionRemarks,
             this.getItemRemarks(item)
@@ -12223,7 +12223,7 @@ class MetalTransactionService {
             metalTransactionId,
             "009",
             "PARTY_VAT_AMOUNT",
-            `Party VAT amount - Sale return from ${partyName}`,
+            ` VAT amount - Sale return from ${partyName}`,
             party._id,
             false,
             totals.vatAmount,
@@ -12282,7 +12282,7 @@ class MetalTransactionService {
           metalTransactionId,
           "003",
           "PARTY_PREMIUM",
-          `Party premium - Sale return from ${partyName}`,
+          `Premium Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.premium,
@@ -12337,7 +12337,7 @@ class MetalTransactionService {
           metalTransactionId,
           "007",
           "PARTY_DISCOUNT",
-          `Party discount - Sale return from ${partyName}`,
+          `Discount Value - Sale return from ${partyName}`,
           party._id,
           false,
           totals.discount,
