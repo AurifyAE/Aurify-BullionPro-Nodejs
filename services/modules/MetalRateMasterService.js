@@ -24,15 +24,27 @@ class MetalRateMasterService {
         metalRateData.rateType = metalRateData.rateType.trim().toUpperCase();
       }
 
-      // Check if metal rate combination already exists
-      const existingMetalRate = await MetalRateMaster.isMetalRateExists(
-        metalRateData.metal,
-        metalRateData.rateType
-      );
+      // Validate required fields before checking duplicates
+      if (!metalRateData.metal || !metalRateData.rateType) {
+        throw createAppError(
+          "Metal (division) and Rate Type are required",
+          400,
+          "REQUIRED_FIELDS_MISSING"
+        );
+      }
+
+      // Check if metal rate combination already exists (check ALL records, regardless of isActive status)
+      // This prevents duplicates even if previous record is inactive or soft-deleted
+      const existingMetalRate = await MetalRateMaster.findOne({
+        metal: metalRateData.metal,
+        rateType: metalRateData.rateType,
+      });
 
       if (existingMetalRate) {
+        const divisionCode = division.code || division.description || "Unknown";
+        const statusText = existingMetalRate.isActive ? "active" : "inactive";
         throw createAppError(
-          "Metal rate with this combination already exists",
+          `Metal rate with combination (Division: ${divisionCode}, Rate Type: ${metalRateData.rateType}) already exists (Status: ${statusText}). Duplicate combinations are not allowed.`,
           409,
           "METAL_RATE_EXISTS"
         );
@@ -175,19 +187,23 @@ class MetalRateMasterService {
       }
 
       // Check for duplicate metal rate combination (if key fields are being updated)
-      if (updateData.metal ||  updateData.rateType) {
+      if (updateData.metal || updateData.rateType) {
         const checkMetal = updateData.metal || metalRate.metal;
         const checkRateType = updateData.rateType || metalRate.rateType;
 
-        const existingMetalRate = await MetalRateMaster.isMetalRateExists(
-          checkMetal,
-          checkRateType,
-          id
-        );
+        // Check if combination already exists (excluding current record, check ALL records)
+        const existingMetalRate = await MetalRateMaster.findOne({
+          _id: { $ne: id },
+          metal: checkMetal,
+          rateType: checkRateType,
+        });
 
         if (existingMetalRate) {
+          const division = await DivisionMaster.findById(checkMetal);
+          const divisionCode = division?.code || division?.description || "Unknown";
+          const statusText = existingMetalRate.isActive ? "active" : "inactive";
           throw createAppError(
-            "Metal rate with this combination already exists",
+            `Metal rate with combination (Division: ${divisionCode}, Rate Type: ${checkRateType}) already exists (Status: ${statusText}). Duplicate combinations are not allowed.`,
             409,
             "METAL_RATE_EXISTS"
           );
@@ -271,12 +287,14 @@ class MetalRateMasterService {
   static async getActiveMetalRatesByDivision(divisionId) {
     try {
       const metalRates = await MetalRateMaster.find({
-        divisionId: divisionId,
-        status: "active",
+        metal: divisionId,
         isActive: true,
       })
-        .populate([{ path: "currencyId", select: "code name symbol" }])
-        .sort({ metal: 1 });
+        .populate([
+          { path: "metal", select: "code description" },
+          { path: "currencyId", select: "code name symbol" }
+        ])
+        .sort({ isDefault: -1, rateType: 1 }); // Sort by isDefault first (true first), then by rateType
 
       return metalRates;
     } catch (error) {

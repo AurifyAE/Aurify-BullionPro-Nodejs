@@ -97,10 +97,11 @@ MetalRateMasterSchema.index({ isActive: 1 });
 MetalRateMasterSchema.index({ isDefault: 1 });
 MetalRateMasterSchema.index({ createdAt: -1 });
 
-// Compound indexes
+// Compound indexes - unique constraint for metal + rateType combination
+// This ensures no duplicate combinations exist regardless of isActive status
 MetalRateMasterSchema.index(
   { metal: 1, rateType: 1 },
-  { unique: true, partialFilterExpression: { isActive: true } }
+  { unique: true }
 );
 
 // Pre-save middleware for validation and business logic
