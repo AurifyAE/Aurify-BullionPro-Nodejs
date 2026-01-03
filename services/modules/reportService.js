@@ -853,13 +853,13 @@ export class ReportService {
       const reportData = await InventoryLog.aggregate(pipeline);
 
       // Format the retrieved data for response
-      const formattedData = this.formatReportData(reportData, validatedFilters);
+      const formattedData = this.formatStockMovementData(reportData, validatedFilters);
 
       return {
         success: true,
-        data: reportData,
+        data: formattedData,
         filters: validatedFilters,
-        totalRecords: reportData.length,
+        totalRecords: formattedData.length,
       };
     } catch (error) {
       throw new Error(
@@ -2335,12 +2335,14 @@ export class ReportService {
       },
     });
 
-    // Step 11: Sort by stock code, then date (FIFO - First In First Out) - ascending order
+    // Step 11: Sort by stock code, then date and time (FIFO - First In First Out) - ascending order
+    // Sort by voucherDate (includes time) and timestamp to ensure proper FIFO ordering
     pipeline.push({
       $sort: { 
         stockCode: 1,    // Group by stock code first
-        voucherDate: 1,  // Ascending for FIFO
-        timestamp: 1      // Secondary sort by timestamp for same date
+        voucherDate: 1,  // Ascending for FIFO (voucherDate includes time component)
+        timestamp: 1,    // Secondary sort by timestamp for same date/time
+        _id: 1           // Tertiary sort by _id for consistent ordering
       }
     });
 
@@ -2510,7 +2512,9 @@ export class ReportService {
         code: item.code,
         voucherCode: item.voucherCode || "N/A",
         voucherType: item.voucherType || "N/A",
-        voucherDate: item.voucherDate ? moment(item.voucherDate).format("DD/MM/YYYY") : "N/A",
+        // Keep original voucherDate as ISO string for proper time-based sorting (FIFO)
+        voucherDate: item.voucherDate ? (item.voucherDate instanceof Date ? item.voucherDate.toISOString() : new Date(item.voucherDate).toISOString()) : null,
+        voucherDateFormatted: item.voucherDate ? moment(item.voucherDate).format("DD/MM/YYYY") : "N/A", // Formatted date for display
         transactionType: item.transactionType,
         action: item.action,
         partyId: item.partyId,
@@ -2564,7 +2568,9 @@ export class ReportService {
         purityDifferenceLoss: mergedPurityDifferenceLoss, // Merged from purity difference entry if exists
         pcs: item.pcs,
         note: item.note || "",
-        timestamp: item.timestamp ? moment(item.timestamp).format("DD/MM/YYYY HH:mm:ss") : "N/A",
+        // Keep original timestamp as ISO string for proper time-based sorting
+        timestamp: item.timestamp ? (item.timestamp instanceof Date ? item.timestamp.toISOString() : new Date(item.timestamp).toISOString()) : null,
+        timestampFormatted: item.timestamp ? moment(item.timestamp).format("DD/MM/YYYY HH:mm:ss") : "N/A", // Formatted timestamp for display
       };
 
       // Add transaction to stock group
@@ -3641,27 +3647,66 @@ export class ReportService {
   }
 
   buildStockMovementPipeline(filters) {
-
     const pipeline = [];
 
-    const matchConditions = {};
+    // Base match conditions
+    const matchConditions = {
+      isDraft: false, // Exclude draft entries
+      transactionType: { $ne: "initial" }, // Exclude INITIAL transaction type
+    };
 
+    // Date filter - use voucherDate for FIFO ordering
     if (filters.startDate || filters.endDate) {
-      matchConditions.createdAt = {};
+      matchConditions.voucherDate = {};
       if (filters.startDate) {
-        matchConditions.createdAt.$gte = new Date(filters.startDate);
+        matchConditions.voucherDate.$gte = filters.startDate instanceof Date 
+          ? filters.startDate 
+          : new Date(filters.startDate);
       }
       if (filters.endDate) {
-        matchConditions.createdAt.$lte = new Date(filters.endDate);
+        matchConditions.voucherDate.$lte = filters.endDate instanceof Date 
+          ? filters.endDate 
+          : new Date(filters.endDate);
       }
     }
+
+    // Stock filter - filter by stockCode from groupByRange
     if (filters.groupByRange?.stockCode?.length) {
-      matchConditions.stockCode = { $in: filters.groupByRange.stockCode };
+      matchConditions.stockCode = { 
+        $in: filters.groupByRange.stockCode.map(id => 
+          mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+        )
+      };
     }
 
+    // Voucher filter
     if (filters.voucher?.length) {
-      const regexFilters = filters.voucher.map(v => new RegExp(`^${v.prefix}`, "i"));
-      matchConditions.voucherCode = { $in: regexFilters };
+      const voucherTypes = filters.voucher.map(v => v.voucherType || v.type);
+      const voucherPrefixes = filters.voucher.map(v => v.prefix);
+      
+      const voucherMatch = [];
+      if (voucherTypes.length > 0) {
+        voucherMatch.push({ voucherType: { $in: voucherTypes } });
+      }
+      if (voucherPrefixes.length > 0) {
+        const regexFilters = voucherPrefixes.map(prefix => ({
+          voucherCode: { $regex: `^${prefix}`, $options: "i" }
+        }));
+        voucherMatch.push({ $or: regexFilters });
+      }
+      
+      if (voucherMatch.length > 0) {
+        matchConditions.$or = voucherMatch;
+      }
+    }
+
+    // Account type filter
+    if (filters.accountType?.length > 0) {
+      matchConditions.party = {
+        $in: filters.accountType.map(id =>
+          mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+        )
+      };
     }
 
     pipeline.push({ $match: matchConditions });
@@ -3680,9 +3725,23 @@ export class ReportService {
     pipeline.push({
       $unwind: {
         path: "$stockDetails",
-        preserveNullAndEmptyArrays: true,
+        preserveNullAndEmptyArrays: false, // Only include entries with valid stock
       },
     });
+
+    // Filter by division - using metalType from MetalStock
+    if (filters.division?.length) {
+      pipeline.push({
+        $match: {
+          "stockDetails.metalType": {
+            $in: filters.division.map(id =>
+              mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+            )
+          }
+        }
+      });
+    }
+
     // Lookup karat purity from karatmasters
     pipeline.push({
       $lookup: {
@@ -3701,23 +3760,30 @@ export class ReportService {
       }
     });
 
+    // Filter by karat if specified
     if (filters.groupByRange?.karat?.length) {
       pipeline.push({
         $match: {
-          "stockDetails.karat": { $in: filters.groupByRange.karat }
+          "stockDetails.karat": {
+            $in: filters.groupByRange.karat.map(id =>
+              mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+            )
+          }
         }
       });
     }
 
-    if (filters.division?.length) {
-      pipeline.push({
-        $match: {
-          "karatDetails.division": { $in: filters.division }
-        }
-      });
-    }
+    // FIFO Sorting: Sort by stockCode, voucherDate (ascending), timestamp (ascending), _id (ascending)
+    pipeline.push({
+      $sort: {
+        stockCode: 1,      // Group by stock code first
+        voucherDate: 1,    // Ascending for FIFO
+        timestamp: 1,       // Secondary sort by timestamp for same date
+        _id: 1             // Tertiary sort by _id for consistent ordering
+      }
+    });
 
-    // Group by stockCode to calculate totals
+    // Group by stockCode to calculate totals with detailed categorization
     pipeline.push({
       $group: {
         _id: "$stockCode",
@@ -3727,87 +3793,193 @@ export class ReportService {
         description: { $first: "$stockDetails.description" },
         totalValue: { $first: "$stockDetails.totalValue" },
         pcs: { $first: "$stockDetails.pcs" },
-        weightData: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $switch: {
-                branches: [
-                  { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                  { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
-                  { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                  { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
-                  { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
-                  { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                  { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" }
-                ],
-                default: 0
-              }
-            },
-            pureWeight: {
-              $multiply: [
-                {
-                  $switch: {
-                    branches: [
-                      { case: { $eq: ["$transactionType", "sale"] }, then: { $multiply: ["$grossWeight", -1] } },
-                      { case: { $eq: ["$transactionType", "metalPayment"] }, then: { $multiply: ["$grossWeight", -1] } },
-                      { case: { $eq: ["$transactionType", "purchaseReturn"] }, then: { $multiply: ["$grossWeight", -1] } },
-                      { case: { $eq: ["$transactionType", "saleReturn"] }, then: "$grossWeight" },
-                      { case: { $eq: ["$transactionType", "purchase"] }, then: "$grossWeight" },
-                      { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                      { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" }
-                    ],
-                    default: 0
-                  }
-                },
-                "$karatDetails.standardPurity"
-              ]
-            }
-          }
-        },
-        metalReceipt: {
-          $push: {
-            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
-            grossWeight: {
-              $switch: {
-                branches: [
-                  { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
-                ],
-                default: 0
-              }
-            },
-          }
-        },
+        // Opening Balance
         openingBalance: {
           $push: {
             pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
             grossWeight: {
-              $switch: {
-                branches: [
-                  { case: { $eq: ["$transactionType", "opening"] }, then: "$grossWeight" },
-                ],
-                default: 0
-              }
+              $cond: [
+                { $eq: ["$transactionType", "opening"] },
+                "$grossWeight",
+                0
+              ]
             },
           }
         },
-        metalPayment: {
+        // Opening Adjustment (METAL STOCK ADJUSTMENT with prefix MSA or OPENING-STOCK-BALANCE with prefix OSB)
+        openingAdjustment: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$transactionType", "adjustment"] },
+                    {
+                      $or: [
+                        { $eq: ["$voucherType", "METAL STOCK ADJUSTMENT"] },
+                        { $eq: ["$voucherType", "OPENING-STOCK-BALANCE"] },
+                        {
+                          $and: [
+                            { $ne: ["$voucherCode", null] },
+                            { $ne: ["$voucherCode", ""] },
+                            {
+                              $or: [
+                                { $eq: [{ $toUpper: { $substr: [{ $ifNull: ["$voucherCode", ""] }, 0, 3] } }, "MSA"] },
+                                { $eq: [{ $toUpper: { $substr: [{ $ifNull: ["$voucherCode", ""] }, 0, 3] } }, "OSB"] }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "$grossWeight",
+                0
+              ]
+            },
+          }
+        },
+        // Purchase (regular purchase)
+        purchase: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "purchase"] },
+                "$grossWeight",
+                0
+              ]
+            },
+          }
+        },
+        // Import Purchase
+        importPurchase: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "importPurchase"] },
+                "$grossWeight",
+                0
+              ]
+            },
+          }
+        },
+        // Purchase Return
+        purchaseReturn: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "purchaseReturn"] },
+                { $multiply: ["$grossWeight", -1] },
+                0
+              ]
+            },
+          }
+        },
+        // Import Purchase Return
+        importPurchaseReturn: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "importPurchaseReturn"] },
+                { $multiply: ["$grossWeight", -1] },
+                0
+              ]
+            },
+          }
+        },
+        // Payment (metalPayment, hedgeMetalPayment)
+        payment: {
           $push: {
             pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
             grossWeight: {
               $switch: {
                 branches: [
                   { case: { $eq: ["$transactionType", "metalPayment"] }, then: "$grossWeight" },
+                  { case: { $eq: ["$transactionType", "hedgeMetalPayment"] }, then: "$grossWeight" },
                 ],
                 default: 0
               }
             },
           }
-        }
+        },
+        // Receipt (metalReceipt, hedgeMetalReceipt)
+        receipt: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $switch: {
+                branches: [
+                  { case: { $eq: ["$transactionType", "metalReceipt"] }, then: "$grossWeight" },
+                  { case: { $eq: ["$transactionType", "hedgeMetalReceipt"] }, then: "$grossWeight" },
+                  { case: { $eq: ["$transactionType", "hedgeMetalReciept"] }, then: "$grossWeight" },
+                ],
+                default: 0
+              }
+            },
+          }
+        },
+        // Sale (regular sale)
+        sale: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "sale"] },
+                { $multiply: ["$grossWeight", -1] },
+                0
+              ]
+            },
+          }
+        },
+        // Export Sale
+        exportSale: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "exportSale"] },
+                { $multiply: ["$grossWeight", -1] },
+                0
+              ]
+            },
+          }
+        },
+        // Sale Return
+        saleReturn: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "saleReturn"] },
+                "$grossWeight",
+                0
+              ]
+            },
+          }
+        },
+        // Export Sale Return
+        exportSaleReturn: {
+          $push: {
+            pcs: { $cond: [{ $eq: ["$pcs", true] }, 1, 0] },
+            grossWeight: {
+              $cond: [
+                { $eq: ["$transactionType", "exportSaleReturn"] },
+                "$grossWeight",
+                0
+              ]
+            },
+          }
+        },
       },
     });
 
-    // Project to reshape the result
+    // Project to reshape the result with all categories
     pipeline.push({
       $project: {
         stockId: 1,
@@ -3818,30 +3990,109 @@ export class ReportService {
         pcs: 1,
         opening: {
           grossWeight: { $sum: "$openingBalance.grossWeight" },
-          pcs: { $sum: "$weightData.pcs" },
+          pcs: { $sum: "$openingBalance.pcs" },
         },
-        Weight: {
-          pcs: { $sum: "$weightData.pcs" },
-          grossWeight: { $sum: "$weightData.grossWeight" },
-          pureWeight: { $sum: "$weightData.pureWeight" },
-          net: { $sum: "$weightData.pureWeight" },
+        openingAdjustment: {
+          grossWeight: { $sum: "$openingAdjustment.grossWeight" },
+          pcs: { $sum: "$openingAdjustment.pcs" },
         },
-        netPurchase: {
-          pcs: null,
-          grossWeight: { $sum: "$weightData.grossWeight" }
+        purchase: {
+          grossWeight: {
+            $add: [
+              { $sum: "$purchase.grossWeight" },
+              { $sum: "$purchaseReturn.grossWeight" }
+            ]
+          },
+          pcs: {
+            $add: [
+              { $sum: "$purchase.pcs" },
+              { $sum: "$purchaseReturn.pcs" }
+            ]
+          },
         },
-        receipt: {
-          pcs: null,
-          grossWeight: { $sum: "$metalReceipt.grossWeight" },
+        importPurchase: {
+          grossWeight: {
+            $add: [
+              { $sum: "$importPurchase.grossWeight" },
+              { $sum: "$importPurchaseReturn.grossWeight" }
+            ]
+          },
+          pcs: {
+            $add: [
+              { $sum: "$importPurchase.pcs" },
+              { $sum: "$importPurchaseReturn.pcs" }
+            ]
+          },
         },
         payment: {
-          pcs: null,
-          grossWeight: { $sum: "$metalPayment.grossWeight" },
+          grossWeight: { $sum: "$payment.grossWeight" },
+          pcs: { $sum: "$payment.pcs" },
+        },
+        receipt: {
+          grossWeight: { $sum: "$receipt.grossWeight" },
+          pcs: { $sum: "$receipt.pcs" },
+        },
+        sale: {
+          grossWeight: {
+            $add: [
+              { $sum: "$sale.grossWeight" },
+              { $sum: "$saleReturn.grossWeight" }
+            ]
+          },
+          pcs: {
+            $add: [
+              { $sum: "$sale.pcs" },
+              { $sum: "$saleReturn.pcs" }
+            ]
+          },
+        },
+        exportSale: {
+          grossWeight: {
+            $add: [
+              { $sum: "$exportSale.grossWeight" },
+              { $sum: "$exportSaleReturn.grossWeight" }
+            ]
+          },
+          pcs: {
+            $add: [
+              { $sum: "$exportSale.pcs" },
+              { $sum: "$exportSaleReturn.pcs" }
+            ]
+          },
         },
         closing: {
-          pcs: null,
-          grossWeight: { $sum: "$weightData.grossWeight" },
-          pureWeight: { $sum: "$weightData.pureWeight" },
+          grossWeight: {
+            $add: [
+              { $sum: "$openingBalance.grossWeight" },
+              { $sum: "$openingAdjustment.grossWeight" },
+              { $sum: "$purchase.grossWeight" },
+              { $sum: "$purchaseReturn.grossWeight" },
+              { $sum: "$importPurchase.grossWeight" },
+              { $sum: "$importPurchaseReturn.grossWeight" },
+              { $sum: "$payment.grossWeight" },
+              { $sum: "$receipt.grossWeight" },
+              { $sum: "$sale.grossWeight" },
+              { $sum: "$saleReturn.grossWeight" },
+              { $sum: "$exportSale.grossWeight" },
+              { $sum: "$exportSaleReturn.grossWeight" },
+            ]
+          },
+          pcs: {
+            $add: [
+              { $sum: "$openingBalance.pcs" },
+              { $sum: "$openingAdjustment.pcs" },
+              { $sum: "$purchase.pcs" },
+              { $sum: "$purchaseReturn.pcs" },
+              { $sum: "$importPurchase.pcs" },
+              { $sum: "$importPurchaseReturn.pcs" },
+              { $sum: "$payment.pcs" },
+              { $sum: "$receipt.pcs" },
+              { $sum: "$sale.pcs" },
+              { $sum: "$saleReturn.pcs" },
+              { $sum: "$exportSale.pcs" },
+              { $sum: "$exportSaleReturn.pcs" },
+            ]
+          },
         },
       },
     });
@@ -3851,15 +4102,85 @@ export class ReportService {
       $match: {
         $or: [
           { "opening.grossWeight": { $ne: 0 } },
-          { "Weight.grossWeight": { $ne: 0 } },
+          { "openingAdjustment.grossWeight": { $ne: 0 } },
+          { "purchase.grossWeight": { $ne: 0 } },
+          { "importPurchase.grossWeight": { $ne: 0 } },
           { "payment.grossWeight": { $ne: 0 } },
           { "receipt.grossWeight": { $ne: 0 } },
+          { "sale.grossWeight": { $ne: 0 } },
+          { "exportSale.grossWeight": { $ne: 0 } },
           { "closing.grossWeight": { $ne: 0 } },
         ],
       },
     });
 
+    // Final sort by stock code for consistent output
+    pipeline.push({
+      $sort: {
+        code: 1
+      }
+    });
+
     return pipeline;
+  }
+
+  /**
+   * Format stock movement report data
+   */
+  formatStockMovementData(reportData, filters) {
+    if (!reportData || reportData.length === 0) {
+      return [];
+    }
+
+    return reportData.map((item) => {
+      const formattedItem = {
+        id: item.stockId || item._id,
+        stockCode: item.code,
+        stockName: item.description,
+        pcs: item.pcs || false,
+        totalValue: item.totalValue || 0,
+        stock: {
+          opening: {
+            grossWt: item.opening?.grossWeight || 0,
+            pcs: item.opening?.pcs || 0,
+          },
+          openingAdjustment: {
+            grossWt: item.openingAdjustment?.grossWeight || 0,
+            pcs: item.openingAdjustment?.pcs || 0,
+          },
+          purchase: {
+            grossWt: item.purchase?.grossWeight || 0,
+            pcs: item.purchase?.pcs || 0,
+          },
+          importPurchase: {
+            grossWt: item.importPurchase?.grossWeight || 0,
+            pcs: item.importPurchase?.pcs || 0,
+          },
+          payment: {
+            grossWt: item.payment?.grossWeight || 0,
+            pcs: item.payment?.pcs || 0,
+          },
+          receipt: {
+            grossWt: item.receipt?.grossWeight || 0,
+            pcs: item.receipt?.pcs || 0,
+          },
+          sale: {
+            grossWt: item.sale?.grossWeight || 0,
+            pcs: item.sale?.pcs || 0,
+          },
+          exportSale: {
+            grossWt: item.exportSale?.grossWeight || 0,
+            pcs: item.exportSale?.pcs || 0,
+          },
+          closing: {
+            grossWt: item.closing?.grossWeight || 0,
+            pcs: item.closing?.pcs || 0,
+          },
+        },
+      };
+
+      return formattedItem;
+    });
   }
 
   buildStockPipeline(filters) {

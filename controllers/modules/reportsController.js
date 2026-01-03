@@ -196,6 +196,7 @@ export const getSalesAnalysis = async (req, res) => {
 export const getStockMovement = async (req, res) => {
   try {
     const filters = req.body;
+    console.log(filters,'filters')
     // Call service to get report data
     const reportData = await reportService.getStockMovementReport(filters);
     // Return success response (even if no data found)
